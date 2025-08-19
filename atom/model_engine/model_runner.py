@@ -31,7 +31,7 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
-        self.model = Qwen3ForCausalLM(hf_config)
+        self.model = Qwen3ForCausalLM(hf_config, config.kv_cache_dtype)
         load_model(self.model, config.model)
         self.sampler = Sampler()
         self.warmup_model()
@@ -136,12 +136,10 @@ class ModelRunner:
             self.block_size,
             num_kv_heads,
             hf_config.head_dim,
-            dtype=dtypes.fp8,
+            dtype=dtypes.fp8 if config.kv_cache_dtype == "fp8" else dtypes.bf16,
             device="cuda"
         )
-        # kv_scale_shape = (config.num_kvcache_blocks, num_kv_heads, self.block_size)
-        # self.k_scale = torch.empty(kv_scale_shape)
-        # self.v_scale = torch.empty_like(self.k_scale)
+
         self.kv_scale = torch.zeros(
             2,
             hf_config.num_hidden_layers,
@@ -169,12 +167,10 @@ class ModelRunner:
                     hf_config.head_dim,
                     self.block_size,
                 )
-                # module.k_scale = self.k_scale
-                # module.v_scale = self.v_scale
-                module.k_scale = self.kv_scale[0, layer_id]
-                module.v_scale = self.kv_scale[1, layer_id]
                 module.max_model_len = self.config.max_model_len
-                # module.max_model_len = 256
+                if config.kv_cache_dtype == "fp8":
+                    module.k_scale = self.kv_scale[0, layer_id]
+                    module.v_scale = self.kv_scale[1, layer_id]
 
                 layer_id += 1
 
@@ -324,18 +320,18 @@ class ModelRunner:
     ):
         torch.cuda.empty_cache()
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
-            # print('input_ids', input_ids.size(0))
             return self.model.compute_logits(self.model(input_ids, positions))
         else:
-            # print('input_ids 2222', input_ids.shape)
-
             bs = input_ids.size(0)
+            graph_bs = next(x for x in self.graph_bs if x >= bs)
+
             context = get_context()
-            graph = self.graphs[next(x for x in self.graph_bs if x >= bs)]
+            graph = self.graphs[graph_bs]
             graph_vars = self.graph_vars
             for k, v in graph_vars.items():
                 if k != "outputs":
                     v.zero_()
+            graph_vars["slot_mapping"][bs:graph_bs] = -1
             graph_vars["input_ids"][:bs] = input_ids
             graph_vars["positions"][:bs] = positions
             graph_vars["slot_mapping"][:bs] = context.slot_mapping
@@ -371,13 +367,6 @@ class ModelRunner:
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
 
-        cu_seqlens_q = torch.arange(max_bs + 1, dtype=torch.int32)
-        cu_seqlens_k = torch.arange(max_bs + 1, dtype=torch.int32)
-        max_seqlen_q = 0
-        max_seqlen_k = 0
-        min_seqlen_q = 0
-        dropout_p = 0.0
-
         self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
         self.graphs = {}
         self.graph_pool = None
@@ -385,7 +374,6 @@ class ModelRunner:
         for bs in reversed(self.graph_bs):
             graph = torch.cuda.CUDAGraph()
             set_context(False, slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs])
-
 
             outputs[:bs] = self.model(input_ids[:bs], positions[:bs])  # warmup
             with torch.cuda.graph(graph, self.graph_pool):

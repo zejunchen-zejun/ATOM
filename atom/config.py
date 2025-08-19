@@ -16,6 +16,7 @@ class Config:
     eos: int = -1
     kvcache_block_size: int = 16
     num_kvcache_blocks: int = -1
+    kv_cache_dtype: str = "bf16"
 
     def __post_init__(self):
         assert os.path.isdir(self.model)

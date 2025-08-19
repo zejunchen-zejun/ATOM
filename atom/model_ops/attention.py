@@ -17,18 +17,17 @@ class Attention(nn.Module):
         head_dim,
         scale,
         num_kv_heads,
-        # max_model_len=None,
+        kv_cache_dtype="bf16",
     ):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.scale = scale
         self.num_kv_heads = num_kv_heads
-        # self.max_model_len = max_model_len
         self.k_cache = self.v_cache = torch.tensor([])
-        # self.k_scale = self.v_scale = None
+        self.kv_cache_dtype = kv_cache_dtype
         self.max_model_len = 0
-        self.k_scale = self.v_scale = torch.tensor(1.0, dtype=torch.float32)
+        self.k_scale = self.v_scale = None
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         o: torch.Tensor
@@ -38,22 +37,23 @@ class Attention(nn.Module):
         context = get_context()
         k_cache, v_cache = self.k_cache, self.v_cache
         if k_cache.numel() and v_cache.numel() and context.slot_mapping is not None:
-            # aiter.reshape_and_cache(
-            #     k,
-            #     v,
-            #     k_cache,
-            #     v_cache,
-            #     context.slot_mapping,
-            #     kv_cache_dtype="auto",
-            #     k_scale=None,
-            #     v_scale=None,
-            #     asm_layout=False,
-            # )
-            # k_scale = self.k_scale
-            # v_scale = self.v_scale
-            aiter.reshape_and_cache_with_pertoken_quant(
-            k, v, k_cache, v_cache, self.k_scale, self.v_scale, context.slot_mapping, asm_layout=True
-        )
+            if self.kv_cache_dtype == "fp8":
+                aiter.reshape_and_cache_with_pertoken_quant(
+                k, v, k_cache, v_cache, self.k_scale, self.v_scale, context.slot_mapping, asm_layout=True
+            )
+            else:
+                aiter.reshape_and_cache(
+                    k,
+                    v,
+                    k_cache,
+                    v_cache,
+                    context.slot_mapping,
+                    kv_cache_dtype="auto",
+                    k_scale=None,
+                    v_scale=None,
+                    asm_layout=True,
+                )
+
 
         if context.is_prefill:
             # if context.block_tables is not None:  # prefix cache
@@ -73,30 +73,6 @@ class Attention(nn.Module):
             )
         else:  # decode
 
-            # print(f"{context.block_tables=}")
-            # print(f"{context.context_lens=}")
-            kvcache_block_size = self.k_cache.shape[-2]
-            max_num_blocks = (
-                self.max_model_len + kvcache_block_size - 1
-            ) // kvcache_block_size
-            # print(q.shape)
-            # print(k_cache.shape)
-            # print(v_cache.shape)
-            # print(context.context_lens.shape)
-            # print(context.block_tables.shape)
-            # print(max_num_blocks)
-            # print(self.k_scale.shape)
-            # print(self.v_scale.shape)
-
-            # print('=================================')
-            # def asm_V_shuffle(VC):
-            #     # [num_blocks, num_kv_heads, head_size, block_size]
-            #     x = 16 // VC.element_size()
-            #     num_blocks, num_kv_heads, head_size, block_size = VC.shape
-            #     VC = VC.view(num_blocks, num_kv_heads, head_size, block_size // x, x)
-            #     # [num_blocks, num_kv_heads, block_size/X, head_size, X]
-            #     VC = VC.permute(0, 1, 3, 2, 4).contiguous()
-            #     return VC
 
             o = aiter.pa_fwd_asm(
                 q.contiguous(),
@@ -104,17 +80,13 @@ class Attention(nn.Module):
                 v_cache,
                 context.block_tables,
                 context.context_lens,
-                max_num_blocks,
+                context.block_tables.stride(0),
                 K_QScale=self.k_scale,
                 V_QScale=self.v_scale,
                 out_=None,
                 high_precision=0
             )
-            # self.k_scale = self.k_scale.to(q.device)
-            # self.v_scale = self.v_scale.to(q.device)
-            # print(f"{self.k_scale}")
-            # print(f"{self.k_scale}")
-    
+
             # o = PagedAttention.forward_decode(
             #     q,
             #     k_cache,
