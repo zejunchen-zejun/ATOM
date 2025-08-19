@@ -3,15 +3,24 @@ from glob import glob
 import torch
 from torch import nn
 from safetensors import safe_open
+from .weight_utils import download_weights_from_hf
+from tqdm import tqdm
 
 
 def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):
     param.data.copy_(loaded_weight)
 
 
-def load_model(model: nn.Module, path: str):
+def load_model(model: nn.Module, model_name_or_path: str):
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
-    for file in glob(os.path.join(path, "*.safetensors")):
+    is_path = os.path.isdir(model_name_or_path)
+    path = (
+        model_name_or_path
+        if is_path
+        else download_weights_from_hf(model_name_or_path, None, ["*.safetensors"])
+    )
+    for file in tqdm(glob(os.path.join(path, "*.safetensors"))):
+        print(f"Loading weights from {file}")
         with safe_open(file, "pt", "cpu") as f:
             for weight_name in f.keys():
                 for k in packed_modules_mapping:

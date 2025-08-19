@@ -19,7 +19,7 @@ class Config:
     kv_cache_dtype: str = "bf16"
 
     def __post_init__(self):
-        assert os.path.isdir(self.model)
+        # assert os.path.isdir(self.model)
         assert self.kvcache_block_size % 16 == 0
         assert 1 <= self.tensor_parallel_size <= 8
         self.hf_config = AutoConfig.from_pretrained(self.model)

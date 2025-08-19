@@ -328,9 +328,9 @@ class ModelRunner:
             context = get_context()
             graph = self.graphs[graph_bs]
             graph_vars = self.graph_vars
-            for k, v in graph_vars.items():
-                if k != "outputs":
-                    v.zero_()
+            # for k, v in graph_vars.items():
+            #     if k != "outputs":
+            #         v.zero_()
             graph_vars["slot_mapping"][bs:graph_bs] = -1
             graph_vars["input_ids"][:bs] = input_ids
             graph_vars["positions"][:bs] = positions
