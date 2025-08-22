@@ -1,6 +1,9 @@
 import pickle
+import os
 import torch
 import torch.distributed as dist
+from aiter import init_dist_env
+from aiter.dist.parallel_state import destroy_distributed_environment
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from aiter import dtypes
@@ -23,10 +26,11 @@ class ModelRunner:
         self.rank = rank
         self.event = event
 
-        dist.init_process_group(
-            "nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank
-        )
-        torch.cuda.set_device(rank)
+        device = torch.device(f"cuda:{rank}")
+        torch.cuda.set_device(device)
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+        os.environ["MASTER_PORT"] = str(self.config.port)
+        init_dist_env(self.world_size, rankID=rank)
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
@@ -59,7 +63,8 @@ class ModelRunner:
         if not self.enforce_eager:
             del self.graphs, self.graph_pool
         torch.cuda.synchronize()
-        dist.destroy_process_group()
+        # dist.destroy_process_group()
+        destroy_distributed_environment()
 
     def loop(self):
         while True:

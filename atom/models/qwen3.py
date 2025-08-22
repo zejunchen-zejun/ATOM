@@ -1,6 +1,8 @@
 import torch
 from torch import nn
-import torch.distributed as dist
+
+# import torch.distributed as dist
+from aiter.dist.parallel_state import get_tp_group
 from transformers import Qwen3Config
 
 from atom.model_ops.activation import SiluAndMul
@@ -29,10 +31,10 @@ class Qwen3Attention(nn.Module):
         qkv_bias: bool = False,
         rope_theta: float = 10000,
         rope_scaling: tuple | None = None,
-        kv_cache_dtype: str = "fp16"
+        kv_cache_dtype: str = "fp16",
     ) -> None:
         super().__init__()
-        tp_size = dist.get_world_size()
+        tp_size = get_tp_group().world_size
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
         self.num_heads = self.total_num_heads // tp_size
@@ -123,11 +125,7 @@ class Qwen3MLP(nn.Module):
 
 class Qwen3DecoderLayer(nn.Module):
 
-    def __init__(
-        self,
-        config: Qwen3Config,
-        kv_cache_dtype: str
-    ) -> None:
+    def __init__(self, config: Qwen3Config, kv_cache_dtype: str) -> None:
         super().__init__()
         self.self_attn = Qwen3Attention(
             hidden_size=config.hidden_size,
@@ -170,17 +168,16 @@ class Qwen3DecoderLayer(nn.Module):
 
 class Qwen3Model(nn.Module):
 
-    def __init__(
-        self,
-        config: Qwen3Config,
-        kv_cache_dtype: str
-    ) -> None:
+    def __init__(self, config: Qwen3Config, kv_cache_dtype: str) -> None:
         super().__init__()
         self.embed_tokens = VocabParallelEmbedding(
             config.vocab_size, config.hidden_size
         )
         self.layers = nn.ModuleList(
-            [Qwen3DecoderLayer(config, kv_cache_dtype) for _ in range(config.num_hidden_layers)]
+            [
+                Qwen3DecoderLayer(config, kv_cache_dtype)
+                for _ in range(config.num_hidden_layers)
+            ]
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 

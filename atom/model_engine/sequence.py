@@ -13,6 +13,7 @@ class SequenceStatus(Enum):
 
 class Sequence:
     counter = count()
+    block_size = 16
 
     def __init__(
         self, token_ids: list[int], block_size: int, sampling_params=SamplingParams()

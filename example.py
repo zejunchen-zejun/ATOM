@@ -21,6 +21,14 @@ parser.add_argument(
     "--model", type=str, default="Qwen/Qwen3-0.6B", help="Model name or path."
 )
 
+parser.add_argument("--tensor-parallel-size", "-tp", type=int, default=2)
+
+parser.add_argument(
+    "--enforce-eager", action="store_true", help="Enforce eager mode execution."
+)
+
+parser.add_argument("--port", type=int, default=8006, help="API server port")
+
 
 def main():
     args = parser.parse_args()
@@ -28,9 +36,10 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     llm = LLMEngine(
         model_name_or_path,
-        enforce_eager=False,
-        tensor_parallel_size=1,
+        enforce_eager=args.enforce_eager,
+        tensor_parallel_size=args.tensor_parallel_size,
         kv_cache_dtype=args.kv_cache_dtype,
+        port=args.port,
     )
 
     sampling_params = SamplingParams(temperature=0.6, max_tokens=256)

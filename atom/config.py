@@ -17,6 +17,7 @@ class Config:
     kvcache_block_size: int = 16
     num_kvcache_blocks: int = -1
     kv_cache_dtype: str = "bf16"
+    port: int = 8006
 
     def __post_init__(self):
         # assert os.path.isdir(self.model)
