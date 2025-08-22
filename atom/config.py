@@ -18,6 +18,7 @@ class Config:
     num_kvcache_blocks: int = -1
     kv_cache_dtype: str = "bf16"
     port: int = 8006
+    torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
 
     def __post_init__(self):
         # assert os.path.isdir(self.model)
@@ -28,3 +29,6 @@ class Config:
             self.max_model_len, self.hf_config.max_position_embeddings
         )
         assert self.max_num_batched_tokens >= self.max_model_len
+        assert self.torch_profiler_dir is None or os.path.isdir(
+            self.torch_profiler_dir
+        ), f"torch_profiler_dir {self.torch_profiler_dir} is not a valid directory"

@@ -4,12 +4,21 @@ from time import perf_counter
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 import torch.multiprocessing as mp
+import torch.profiler as torch_profiler
 
 from atom.config import Config
 from atom.sampling_params import SamplingParams
 from atom.model_engine.sequence import Sequence
 from atom.model_engine.scheduler import Scheduler
 from atom.model_engine.model_runner import ModelRunner
+
+
+class EmptyContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
 
 
 class LLMEngine:
@@ -31,6 +40,22 @@ class LLMEngine:
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
         self.scheduler = Scheduler(config)
+        self.profiler = (
+            EmptyContext()
+            if config.torch_profiler_dir is None
+            else torch_profiler.profile(
+                activities=[
+                    torch_profiler.ProfilerActivity.CPU,
+                    torch_profiler.ProfilerActivity.CUDA,
+                ],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                on_trace_ready=torch_profiler.tensorboard_trace_handler(
+                    str(config.torch_profiler_dir)
+                ),
+            )
+        )
         atexit.register(self.exit)
 
     def exit(self):
@@ -72,24 +97,25 @@ class LLMEngine:
             self.add_request(prompt, sp)
         outputs = {}
         prefill_throughput = decode_throughput = 0.0
-        while not self.is_finished():
-            t = perf_counter()
-            output, num_tokens = self.step()
-            if use_tqdm:
-                if num_tokens > 0:
-                    prefill_throughput = num_tokens / (perf_counter() - t)
-                else:
-                    decode_throughput = -num_tokens / (perf_counter() - t)
-                pbar.set_postfix(
-                    {
-                        "Prefill": f"{int(prefill_throughput)}tok/s",
-                        "Decode": f"{int(decode_throughput)}tok/s",
-                    }
-                )
-            for seq_id, token_ids in output:
-                outputs[seq_id] = token_ids
+        with self.profiler:
+            while not self.is_finished():
+                t = perf_counter()
+                output, num_tokens = self.step()
                 if use_tqdm:
-                    pbar.update(1)
+                    if num_tokens > 0:
+                        prefill_throughput = num_tokens / (perf_counter() - t)
+                    else:
+                        decode_throughput = -num_tokens / (perf_counter() - t)
+                    pbar.set_postfix(
+                        {
+                            "Prefill": f"{int(prefill_throughput)}tok/s",
+                            "Decode": f"{int(decode_throughput)}tok/s",
+                        }
+                    )
+                for seq_id, token_ids in output:
+                    outputs[seq_id] = token_ids
+                    if use_tqdm:
+                        pbar.update(1)
         outputs = [outputs[seq_id] for seq_id in sorted(outputs)]
         outputs = [
             {"text": self.tokenizer.decode(token_ids), "token_ids": token_ids}
