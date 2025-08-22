@@ -2,8 +2,7 @@ import pickle
 import os
 import torch
 import torch.distributed as dist
-from aiter import init_dist_env
-from aiter.dist.parallel_state import destroy_distributed_environment
+from aiter import init_dist_env, destroy_dist_env
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from aiter import dtypes
@@ -63,8 +62,7 @@ class ModelRunner:
         if not self.enforce_eager:
             del self.graphs, self.graph_pool
         torch.cuda.synchronize()
-        # dist.destroy_process_group()
-        destroy_distributed_environment()
+        destroy_dist_env()
 
     def loop(self):
         while True:
