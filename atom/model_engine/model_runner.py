@@ -2,6 +2,7 @@ import pickle
 import os
 import torch
 import torch.distributed as dist
+import torch.profiler as torch_profiler
 import tqdm
 from aiter import dtypes
 from aiter import init_dist_env, destroy_dist_env
@@ -34,6 +35,14 @@ class ModelRunner:
         self.world_size = config.tensor_parallel_size
         self.rank = rank
         self.event = event
+        
+        # Initialize profiler for this rank
+        self.profiler = None
+        self.profiler_dir = None
+        if config.torch_profiler_dir is not None:
+            # Create rank-specific profiler directory
+            self.profiler_dir = os.path.join(config.torch_profiler_dir, f"rank_{rank}")
+            os.makedirs(self.profiler_dir, exist_ok=True)
 
         device = torch.device(f"cuda:{rank}")
         torch.cuda.set_device(device)
@@ -104,6 +113,29 @@ class ModelRunner:
             self.write_shm(method_name, *args)
         method = getattr(self, method_name, None)
         return method(*args)
+    
+    def start_profiler(self):
+        """Start profiling for this rank"""
+        if self.profiler_dir is not None and self.profiler is None:
+            self.profiler = torch_profiler.profile(
+                activities=[
+                    torch_profiler.ProfilerActivity.CPU,
+                    torch_profiler.ProfilerActivity.CUDA,
+                ],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                on_trace_ready=torch_profiler.tensorboard_trace_handler(
+                    self.profiler_dir, use_gzip=True
+                ),
+            )
+            self.profiler.__enter__()
+    
+    def stop_profiler(self):
+        """Stop profiling for this rank"""
+        if self.profiler is not None:
+            self.profiler.__exit__(None, None, None)
+            self.profiler = None
 
     def warmup_model(self):
         torch.cuda.empty_cache()
