@@ -1,9 +1,10 @@
 from collections import deque
-import xxhash
-import numpy as np
 
-from atom.model_engine.sequence import Sequence
+import numpy as np
+import xxhash
+
 from atom.config import Config
+from atom.model_engine.sequence import Sequence
 
 
 class Block:

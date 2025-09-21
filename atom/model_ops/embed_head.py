@@ -1,8 +1,9 @@
 import torch
-from torch import nn
-import torch.nn.functional as F
 import torch.distributed as dist
+import torch.nn.functional as F
+from aiter.dist.communication_op import tensor_model_parallel_all_gather
 from aiter.dist.parallel_state import get_tp_group
+from torch import nn
 
 from atom.utils.context import get_context
 
@@ -69,11 +70,12 @@ class ParallelLMHead(VocabParallelEmbedding):
             x = x[last_indices].contiguous()
         logits = F.linear(x, self.weight, self.bias)
         if self.tp_size > 1:
-            all_logits = (
-                [torch.empty_like(logits) for _ in range(self.tp_size)]
-                if self.tp_rank == 0
-                else None
-            )
-            dist.gather(logits, all_logits, 0)
-            logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
+            logits = tensor_model_parallel_all_gather(logits)
+            # all_logits = (
+            #     [torch.empty_like(logits) for _ in range(self.tp_size)]
+            #     if self.tp_rank == 0
+            #     else None
+            # )
+            # dist.gather(logits, all_logits, 0)
+            # logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
         return logits

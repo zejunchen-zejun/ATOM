@@ -9,16 +9,22 @@ class SequenceStatus(Enum):
     WAITING = auto()
     RUNNING = auto()
     FINISHED = auto()
+    EXIT_ENGINE = auto()
+
+
+def get_exit_sequence():
+    exit_seq = Sequence([-1], 0)
+    exit_seq.status = SequenceStatus.EXIT_ENGINE
+    return exit_seq
 
 
 class Sequence:
     counter = count()
-    block_size = 16
 
     def __init__(
         self, token_ids: list[int], block_size: int, sampling_params=SamplingParams()
     ):
-        self.seq_id = next(Sequence.counter)
+        self.id = next(Sequence.counter)
         self.status = SequenceStatus.WAITING
         self.token_ids = copy(token_ids)
         self.last_token = token_ids[-1]
@@ -30,6 +36,11 @@ class Sequence:
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
         self.block_size = block_size
+
+        # statistics fields
+        self.arrive_time = 0.0
+        self.leave_time = 0.0
+        self.leave_reason = ""
 
     def __len__(self):
         return self.num_tokens
@@ -74,23 +85,23 @@ class Sequence:
         self.last_token = token_id
         self.num_tokens += 1
 
-    def __getstate__(self):
-        return (
-            self.num_tokens,
-            self.num_prompt_tokens,
-            self.num_cached_tokens,
-            self.block_table,
-            self.token_ids if self.num_completion_tokens == 0 else self.last_token,
-        )
+    # def __getstate__(self):
+    #     return (
+    #         self.num_tokens,
+    #         self.num_prompt_tokens,
+    #         self.num_cached_tokens,
+    #         self.block_table,
+    #         self.token_ids if self.num_completion_tokens == 0 else self.last_token,
+    #     )
 
-    def __setstate__(self, state):
-        (
-            self.num_tokens,
-            self.num_prompt_tokens,
-            self.num_cached_tokens,
-            self.block_table,
-        ) = state[:-1]
-        if self.num_completion_tokens == 0:
-            self.token_ids = state[-1]
-        else:
-            self.last_token = state[-1]
+    # def __setstate__(self, state):
+    #     (
+    #         self.num_tokens,
+    #         self.num_prompt_tokens,
+    #         self.num_cached_tokens,
+    #         self.block_table,
+    #     ) = state[:-1]
+    #     if self.num_completion_tokens == 0:
+    #         self.token_ids = state[-1]
+    #     else:
+    #         self.last_token = state[-1]

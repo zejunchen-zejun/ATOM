@@ -1,13 +1,12 @@
 import os
-import torch
 import re
-from dataclasses import dataclass
-from transformers import AutoConfig
+from dataclasses import dataclass, field
 from typing import Optional
-from dataclasses import field
+
+import torch
 from aiter import QuantType
-from transformers import PretrainedConfig
 from aiter.utility.dtypes import d_dtypes
+from transformers import AutoConfig, PretrainedConfig
 
 
 @dataclass
@@ -122,7 +121,7 @@ class Config:
     tensor_parallel_size: int = 1
     enforce_eager: bool = False
     hf_config: AutoConfig | None = None
-    eos: int = -1
+    eos_token_id: int = -1
     kvcache_block_size: int = 16
     num_kvcache_blocks: int = -1
     kv_cache_dtype: str = "bf16"
@@ -131,6 +130,8 @@ class Config:
     torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
     compilation_config: CompilationConfig = field(default_factory=CompilationConfig)
     quant_config: QuantizationConfig = field(default_factory=lambda: QuantizationConfig())
+    asyncio_mode: bool = False
+    master_addr: str = "127.0.0.1"
 
     def __post_init__(self):
         # assert os.path.isdir(self.model)
