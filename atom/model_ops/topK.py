@@ -62,7 +62,7 @@ def rocm_aiter_topk_softmax_impl(
     topk: int,
     renormalize: bool,
     num_fused_shared_experts: int = 0,
-) -> None:
+) -> tuple[torch.Tensor, torch.Tensor]:
     from aiter import topk_softmax
 
     token = gating_output.shape[0]
@@ -103,9 +103,13 @@ def rocm_aiter_topk_softmax_fake(
     gating_output: torch.Tensor,
     topk: int,
     renormalize: bool,
-    num_fused_shared_experts: int,
-) -> None:
-    pass
+    num_fused_shared_experts: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    token = gating_output.shape[0]
+    device = gating_output.device
+    topk_ids = torch.empty((token, topk), dtype=torch.int32, device=device)
+    topk_weights = torch.empty((token, topk), dtype=torch.float32, device=device)
+    return topk_weights, topk_ids
 
 
 def rocm_aiter_biased_grouped_topk_impl(

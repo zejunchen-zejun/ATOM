@@ -20,8 +20,7 @@ from atom.model_loader.loader import load_model
 from atom.model_ops.sampler import Sampler
 from atom.models.llama import LlamaForCausalLM
 from atom.models.qwen3 import Qwen3ForCausalLM
-
-# from atom.models.mixtral import MixtralForCausalLM
+from atom.models.mixtral import MixtralForCausalLM
 from atom.utils.context import get_context, reset_context, set_context
 
 logger = logging.getLogger("atom")
@@ -29,7 +28,7 @@ logger = logging.getLogger("atom")
 suppot_model_arch_dict = {
     "Qwen3ForCausalLM": Qwen3ForCausalLM,
     "LlamaForCausalLM": LlamaForCausalLM,
-    # "MixtralForCausalLM": MixtralForCausalLM,
+    "MixtralForCausalLM": MixtralForCausalLM,
 }
 
 
@@ -179,6 +178,8 @@ class ModelRunner:
     def allocate_kv_cache(self):
         config = self.config
         hf_config = config.hf_config
+        if not hasattr(hf_config, "head_dim"):
+            hf_config.head_dim = hf_config.hidden_size // hf_config.num_attention_heads
         free, total = torch.cuda.mem_get_info()
         used = total - free
         peak = torch.cuda.memory_stats()["allocated_bytes.all.peak"]

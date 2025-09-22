@@ -272,14 +272,13 @@ class MixtralModel(nn.Module):
         config = atom_config.hf_config
         self.config = config
         cache_config = atom_config.kv_cache_dtype
-        quant_config = config.quant_config
+        quant_config = atom_config.quant_config
         self.vocab_size = config.vocab_size
         self.org_vocab_size = config.vocab_size
 
         self.embed_tokens = VocabParallelEmbedding(
             self.vocab_size,
             config.hidden_size,
-            org_num_embeddings=config.vocab_size,
         )
 
         self.start_layer, self.end_layer, self.layers = make_layers(
@@ -340,8 +339,6 @@ class MixtralForCausalLM(nn.Module):
         "q_proj": ("qkv_proj", "q"),
         "k_proj": ("qkv_proj", "k"),
         "v_proj": ("qkv_proj", "v"),
-        "gate_proj": ("gate_up_proj", 0),
-        "up_proj": ("gate_up_proj", 1),
     }
 
     def __init__(self, atom_config: Config, prefix: str = ""):
@@ -357,7 +354,7 @@ class MixtralForCausalLM(nn.Module):
             config.hidden_size,
             org_num_embeddings=config.vocab_size,
         )
-        if self.config.tie_word_embeddings:
+        if config.tie_word_embeddings:
             self.lm_head.weight = self.model.embed_tokens.weight
 
         self.make_empty_intermediate_tensors = (
