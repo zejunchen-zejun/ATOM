@@ -1,8 +1,10 @@
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from aiter import logger
 from aiter.dist.communication_op import tensor_model_parallel_all_gather
 from aiter.dist.parallel_state import get_tp_group
+from aiter.tuned_gemm import tgemm
 from torch import nn
 
 from atom.utils.context import get_context
@@ -42,7 +44,7 @@ class VocabParallelEmbedding(nn.Module):
             x = mask * (x - self.vocab_start_idx)
         y = F.embedding(x, self.weight)
         if self.tp_size > 1:
-            y = mask.unsqueeze(1) * y
+            y.masked_fill_(~mask.unsqueeze(1), 0)
             y = get_tp_group().all_reduce(y, ca_fp8_quant=False)
         return y
 
@@ -68,7 +70,7 @@ class ParallelLMHead(VocabParallelEmbedding):
         if context.is_prefill:
             last_indices = context.cu_seqlens_q[1:] - 1
             x = x[last_indices].contiguous()
-        logits = F.linear(x, self.weight, self.bias)
+        logits = tgemm.mm(x, self.weight, self.bias)
         if self.tp_size > 1:
             logits = tensor_model_parallel_all_gather(logits)
             # all_logits = (

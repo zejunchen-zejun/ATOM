@@ -1,22 +1,25 @@
-import torch
-from torch import nn
-import torch.nn.functional as F
+from functools import partial as functools_partial
+from typing import Callable, Optional
 
-# import torch.distributed as dist
-from aiter.dist.parallel_state import get_tp_group
+import torch
+import torch.nn.functional as F
 from aiter import (
     QuantType,
     dtypes,
-    gemm_a8w8,
-    gemm_a8w8_bpreshuffle,
-    gemm_a8w8_blockscale,
     gemm_a4w4,
+    gemm_a8w8,
+    gemm_a8w8_blockscale,
+    gemm_a8w8_bpreshuffle,
+    get_hip_quant,
+    get_triton_quant,
 )
+
+# import torch.distributed as dist
+from aiter.dist.parallel_state import get_tp_group
 from aiter.ops.shuffle import shuffle_weight
 from aiter.tuned_gemm import tgemm
-from aiter import get_hip_quant, get_triton_quant
-from typing import Optional, Callable
-from functools import partial as functools_partial
+from torch import nn
+
 from atom.config import QuantizationConfig
 from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_max_scale
 

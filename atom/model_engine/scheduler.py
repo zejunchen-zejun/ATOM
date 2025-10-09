@@ -10,7 +10,7 @@ from atom.model_engine.sequence import Sequence, SequenceStatus
 class ScheduledBatchs:
     seqs: list[Sequence]
     is_prefill: bool
-    has_seq_out: bool
+    deferred_reqID: list[int]
 
 
 class Scheduler:
@@ -18,17 +18,21 @@ class Scheduler:
     def __init__(self, config: Config):
         self.max_num_seqs = config.max_num_seqs
         self.max_num_batched_tokens = config.max_num_batched_tokens
+        self.bos_token_id = config.bos_token_id
         self.eos_token_id = config.eos_token_id
         self.block_manager = BlockManager(config)
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
-        self.has_seq_out = False
+        self.deferred_reqID = []
 
     def is_finished(self):
         return not self.waiting and not self.running
 
     def add(self, seq: Sequence):
         self.waiting.append(seq)
+
+    def extend(self, seqs: list[Sequence]):
+        self.waiting.extend(seqs)
 
     def schedule(self) -> ScheduledBatchs:
         # prefill
@@ -38,7 +42,6 @@ class Scheduler:
         if not self.running and not self.waiting:
             self.block_manager.reset()
 
-        has_seq_out = self.has_seq_out
         while self.waiting and num_seqs < self.max_num_seqs:
             seq = self.waiting[0]
             if num_batched_tokens + len(
@@ -54,9 +57,7 @@ class Scheduler:
             scheduled_seqs.append(seq)
         if scheduled_seqs:
             return ScheduledBatchs(
-                seqs=scheduled_seqs,
-                is_prefill=True,
-                has_seq_out=has_seq_out,
+                seqs=scheduled_seqs, is_prefill=True, deferred_reqID=[]
             )
 
         # decode
@@ -74,11 +75,10 @@ class Scheduler:
                 scheduled_seqs.append(seq)
         assert scheduled_seqs
         self.running.extendleft(reversed(scheduled_seqs))
-        self.has_seq_out = False
         return ScheduledBatchs(
             seqs=scheduled_seqs,
             is_prefill=False,
-            has_seq_out=has_seq_out,
+            deferred_reqID=self.deferred_reqID,
         )
 
     def preempt(self, seq: Sequence):
@@ -86,9 +86,20 @@ class Scheduler:
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
 
-    def postprocess(self, seqs: list[Sequence], token_ids: list[int]):
-        for seq, token_id in zip(seqs, token_ids):
+    def postprocess(self, seqs: list[Sequence], prev_token_ids: list[int]):
+        # # placeholder for the each decode step
+        # token_ids = [self.eos_token_id] * len(seqs)
+        # for seq, token_id in zip(seqs, token_ids):
+        #     seq.append_token(token_id)
+
+        # if not prev_token_ids:
+        #     return
+        # update token_ids with the actual sampled token ids
+        self.unfinished_req = []
+        token_ids = prev_token_ids
+        for i, (seq, token_id) in enumerate(zip(seqs, token_ids)):
             seq.append_token(token_id)
+            # seq.token_ids[-2] = token_id
             leave_reason = None
             if not seq.ignore_eos and token_id == self.eos_token_id:
                 leave_reason = "eos"
@@ -99,4 +110,5 @@ class Scheduler:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
-                self.has_seq_out = True
+            else:
+                self.unfinished_req.append(i)

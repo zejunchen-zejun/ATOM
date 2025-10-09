@@ -1,4 +1,5 @@
 import torch
+from aiter import mixed_sample
 from aiter.ops.triton.softmax import softmax
 from aiter.ops.triton.topk import topk
 from torch import nn
@@ -15,6 +16,11 @@ class Sampler(nn.Module):
         logits: torch.Tensor,  # (token_num, vocab_size)
         temperatures: torch.Tensor,  # (token_num,)
     ) -> torch.Tensor:  # (token_num,)
+        sampled_tokens = torch.empty(
+            logits.size(0), dtype=torch.int, device=logits.device
+        )
+        mixed_sample(sampled_tokens, logits, temperatures, lambd=1.0, eps=self.eps)
+        return sampled_tokens
         logits = logits.float()
         return torch.where(
             temperatures == 0, self.greedy_sample(logits), self.random_sample(logits)

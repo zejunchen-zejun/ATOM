@@ -2,6 +2,7 @@ import os
 import time
 from random import randint, seed
 from atom import LLMEngine, SamplingParams
+from atom.config import CompilationConfig
 
 # from vllm import LLM, SamplingParams
 
@@ -13,7 +14,10 @@ def main():
     max_ouput_len = 1024
 
     path = os.path.expanduser("/mnt/raid0/lirong/Qwen3-0.6B/")
-    llm = LLMEngine(path, enforce_eager=False, max_model_len=4096)
+    llm = LLMEngine(path, enforce_eager=False, max_model_len=4096, compilation_config=CompilationConfig(
+            level = 3,
+            # cudagraph_capture_sizes=[1, 2, 4, 8] + list(range(16, 512 + 1, 16))
+    ))
 
     prompt_token_ids = [
         [randint(0, 10000) for _ in range(randint(100, max_input_len))]

@@ -60,7 +60,7 @@ def main():
     args = parser.parse_args()
     model_name_or_path = args.model
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-    # If you want to use torch.compile, please --level=3 
+    # If you want to use torch.compile, please --level=3
     llm = LLMEngine(
         model_name_or_path,
         enforce_eager=args.enforce_eager,
@@ -79,7 +79,7 @@ def main():
         "introduce yourself",
         "list all prime numbers within 100",
         "1+2+3=?",
-        # "2+3+4=?",
+        "如何在一个月内增肌10公斤",
     ]
     prompts = [
         tokenizer.apply_chat_template(
@@ -91,7 +91,7 @@ def main():
         for prompt in prompts
     ]
     print("This is prompts:", prompts)
-    
+
     # # Calculate total token number of prompts
     # prompt_token_ids = [llm.tokenizer.encode(prompt) for prompt in prompts]
     # prompt_lens = [len(token_ids) for token_ids in prompt_token_ids]
@@ -105,9 +105,9 @@ def main():
     #     warmup_prompts.append(warmup_prompt)
     # # Run warmup with the same batch structure as the actual prompts (no profiling)
     # _ = llm.generate(warmup_prompts, sampling_params)
-    
+
     # generate (with profiling)
-    outputs = llm.generate(prompts, sampling_params, enable_profiling=True)
+    outputs = llm.generate(prompts, sampling_params)
 
     for prompt, output in zip(prompts, outputs):
         print("\n")

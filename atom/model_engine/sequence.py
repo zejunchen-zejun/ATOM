@@ -13,7 +13,7 @@ class SequenceStatus(Enum):
 
 
 def get_exit_sequence():
-    exit_seq = Sequence([-1], 0)
+    exit_seq = Sequence([-1], 1)
     exit_seq.status = SequenceStatus.EXIT_ENGINE
     return exit_seq
 
@@ -24,6 +24,7 @@ class Sequence:
     def __init__(
         self, token_ids: list[int], block_size: int, sampling_params=SamplingParams()
     ):
+        self.block_size = block_size
         self.id = next(Sequence.counter)
         self.status = SequenceStatus.WAITING
         self.token_ids = copy(token_ids)
@@ -35,7 +36,6 @@ class Sequence:
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
-        self.block_size = block_size
 
         # statistics fields
         self.arrive_time = 0.0
@@ -43,10 +43,20 @@ class Sequence:
         self.leave_reason = ""
 
     def __len__(self):
-        return self.num_tokens
+        return self._num_tokens
 
     def __getitem__(self, key):
         return self.token_ids[key]
+
+    @property
+    def num_tokens(self):
+        return self._num_tokens
+
+    @num_tokens.setter
+    def num_tokens(self, value):
+        self._num_tokens = value
+        self.num_blocks = (value + self.block_size - 1) // self.block_size
+        self.last_block_num_tokens = value % self.block_size
 
     @property
     def is_finished(self):
@@ -68,13 +78,13 @@ class Sequence:
     def num_cached_blocks(self):
         return self.num_cached_tokens // self.block_size
 
-    @property
-    def num_blocks(self):
-        return (self.num_tokens + self.block_size - 1) // self.block_size
+    # @property
+    # def num_blocks(self):
+    #     return (self.num_tokens + self.block_size - 1) // self.block_size
 
-    @property
-    def last_block_num_tokens(self):
-        return self.num_tokens - (self.num_blocks - 1) * self.block_size
+    # @property
+    # def last_block_num_tokens(self):
+    #     return self.num_tokens - (self.num_blocks - 1) * self.block_size
 
     def block(self, i):
         assert 0 <= i < self.num_blocks

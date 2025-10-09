@@ -47,6 +47,7 @@ from atom.model_ops.linear import (
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 from atom.config import QuantizationConfig, Config
+from atom.utils.decorators import support_torch_compile
 
 from atom.models.utils import (
     PPMissingLayer,
@@ -116,6 +117,7 @@ class LlamaAttention(nn.Module):
         bias_o_proj: bool = False,
         cache_config: str = "bf16",
         prefix: str = "",
+        layer_num: int = 0,
     ) -> None:
         super().__init__()
         layer_idx = extract_layer_index(prefix)
@@ -146,7 +148,7 @@ class LlamaAttention(nn.Module):
         self.scaling = self.head_dim**-0.5
         self.rope_theta = rope_theta
         self.max_position_embeddings = max_position_embeddings
-
+        self.layer_num = layer_num
         self.qkv_proj = QKVParallelLinear(
             hidden_size=hidden_size,
             head_size=self.head_dim,
@@ -181,6 +183,7 @@ class LlamaAttention(nn.Module):
             self.scaling,
             num_kv_heads=self.num_kv_heads,
             kv_cache_dtype=cache_config,
+            layer_num=layer_num,
             per_layer_sliding_window=sliding_window,
             prefix=f"{prefix}.attn",
         )
@@ -227,6 +230,7 @@ class LlamaDecoderLayer(nn.Module):
         cache_config: str = "bf16",
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
+        layer_num: int = 0,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -264,6 +268,7 @@ class LlamaDecoderLayer(nn.Module):
             bias_o_proj=bias_o_proj,
             cache_config=cache_config,
             prefix=f"{prefix}.self_attn",
+            layer_num=layer_num,
         )
         self.mlp = LlamaMLP(
             hidden_size=self.hidden_size,
@@ -298,7 +303,7 @@ class LlamaDecoderLayer(nn.Module):
         return hidden_states, residual
 
 
-# @support_torch_compile
+@support_torch_compile
 class LlamaModel(nn.Module):
     def __init__(
         self,
@@ -324,13 +329,15 @@ class LlamaModel(nn.Module):
             self.embed_tokens = PPMissingLayer()
         self.start_layer, self.end_layer, self.layers = make_layers(
             config.num_hidden_layers,
-            lambda prefix: layer_type(
+            lambda prefix, layer_num=None: layer_type(
                 config=config,
                 cache_config=cache_config,
                 quant_config=quant_config,
                 prefix=prefix,
+                layer_num=layer_num
             ),
             prefix=f"{prefix}.layers",
+            layer_num_offset=0
         )
         if get_pp_group().is_last_rank:
             self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)

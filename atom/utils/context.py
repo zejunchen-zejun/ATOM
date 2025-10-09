@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
@@ -8,14 +9,14 @@ class Context:
     is_prefill: bool = False
     batch_size: int = 0
     graph_bs: int = 0
-    cu_seqlens_q: torch.Tensor | None = None
-    cu_seqlens_k: torch.Tensor | None = None
+    cu_seqlens_q: Optional[torch.Tensor] = None
+    cu_seqlens_k: Optional[torch.Tensor] = None
     max_seqlen_q: int = 0
     max_seqlen_k: int = 0
     min_seqlen_q: int = 0
-    slot_mapping: torch.Tensor | None = None
-    context_lens: torch.Tensor | None = None
-    block_tables: torch.Tensor | None = None
+    slot_mapping: Optional[torch.Tensor] = None
+    context_lens: Optional[torch.Tensor] = None
+    block_tables: Optional[torch.Tensor] = None
     dropout_p: float = 0.0
 
 
