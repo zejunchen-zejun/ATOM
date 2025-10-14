@@ -136,8 +136,8 @@ def launch_engine_core(config: Config):
     input_address = get_open_zmq_ipc_path()
     output_address = get_open_zmq_ipc_path()
     import torch
-
-    torch.multiprocessing.set_start_method("spawn")
+    if torch.multiprocessing.get_start_method(allow_none=True) is None:
+        torch.multiprocessing.set_start_method("spawn", force=False)
     process = multiprocessing.Process(
         target=EngineCore.run_engine,
         name=f"EngineCore",
