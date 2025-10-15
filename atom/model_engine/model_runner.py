@@ -3,7 +3,9 @@ import os
 import signal
 import time
 import weakref
-from typing import Optional
+from typing import Optional, Union, Any
+import queue
+from collections import deque
 
 import numpy as np
 import torch
@@ -13,7 +15,7 @@ from aiter import destroy_dist_env, dtypes, init_dist_env
 from aiter.dist.parallel_state import get_tensor_model_parallel_rank, graph_capture
 
 from atom.config import Config, set_current_atom_config
-from atom.model_engine.scheduler import ScheduledBatchs
+from atom.model_engine.scheduler import ScheduledBatchs, InputBatch
 from atom.model_engine.sequence import Sequence
 from atom.model_loader.loader import load_model
 from atom.model_ops.sampler import Sampler
@@ -26,6 +28,7 @@ from atom.utils.context import get_context, reset_context, set_context
 
 logger = logging.getLogger("atom")
 from atom.utils.forward_context import AttentionMetadata, set_forward_context
+from atom.model_engine.outputs import ModelRunnerOutput, AsyncModelRunnerOutput
 
 suppot_model_arch_dict = {
     "Qwen3ForCausalLM": Qwen3ForCausalLM,
@@ -33,6 +36,54 @@ suppot_model_arch_dict = {
     "MixtralForCausalLM": MixtralForCausalLM,
     "DeepseekV3ForCausalLM": DeepseekV2ForCausalLM,
 }
+
+# Wrapper for ModelRunnerOutput to support overlapped execution.
+class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
+
+    def __init__(
+        self,
+        # model_runner_output: ModelRunnerOutput,
+        sampled_token_ids: torch.Tensor,
+        # invalid_req_indices: list[int],
+        async_output_copy_stream: torch.cuda.Stream,
+    ):
+        # self._model_runner_output = model_runner_output
+        # self._invalid_req_indices = invalid_req_indices
+
+        # Event on the copy stream so we can synchronize the non-blocking copy.
+        # self._async_copy_ready_event = torch.cuda.Event()
+
+        # Keep a reference to the device tensor to avoid it being
+        # deallocated until we finish copying it to the host.
+        self._sampled_token_ids = sampled_token_ids
+
+        # Initiate the copy on a separate stream, but do not synchronize it.
+        default_stream = torch.cuda.current_stream()
+        with torch.cuda.stream(async_output_copy_stream):
+            async_output_copy_stream.wait_stream(default_stream)
+            self._sampled_token_ids_cpu = self._sampled_token_ids.to(
+                'cpu', non_blocking=True)
+            # self._async_copy_ready_event.record()
+
+    def get_output(self) -> ModelRunnerOutput:
+        """Copy the device tensors to the host and return a ModelRunnerOutput.
+        
+        This function blocks until the copy is finished.
+        """
+        # self._async_copy_ready_event.synchronize()
+
+        # Release the device tensor once the copy has completed
+        del self._sampled_token_ids
+
+        valid_sampled_token_ids = self._sampled_token_ids_cpu.tolist()
+        # for i in self._invalid_req_indices:
+        #     valid_sampled_token_ids[i].clear()
+
+        return valid_sampled_token_ids
+        # output = self._model_runner_output
+        # output.sampled_token_ids = valid_sampled_token_ids
+        # return output
+
 
 
 class OutputProcessor:
@@ -47,34 +98,59 @@ class OutputProcessor:
         self.token_ids_gpu: list[torch.Tensor] = []
         self.token_ids_cpu: list[torch.Tensor] = []
 
-    def send_to_cpu_async(self, gpu_tensor: torch.Tensor):
+        self.token_req_ids: list[list[int]] = []
+
+        self.pending_outputs: deque = deque()  # saving (cpu_tensor, seqs)
+
+
+    def send_to_cpu_async(self, batch: ScheduledBatchs, gpu_tensor: torch.Tensor):
         default_stream = torch.cuda.current_stream()
         with torch.cuda.stream(self.async_copy_stream):
             self.async_copy_stream.wait_stream(default_stream)
             cpu_tensor = gpu_tensor.to("cpu", non_blocking=True)
             self.async_copy_event.record(self.async_copy_stream)
-        self.token_ids_gpu.append(gpu_tensor)
+        # self.token_ids_gpu.append(gpu_tensor)
         self.token_ids_cpu.append(cpu_tensor)
+        self.pending_outputs.append((cpu_tensor, batch.seqs))
+
+    def revc_async_output_tuple(self) -> tuple[list[int], list[Sequence]]:
+        if not self.pending_outputs:
+            return [], []
+            
+        self.async_copy_event.synchronize()
+        if self.pending_outputs:
+            cpu_tensor, seqs = self.pending_outputs.popleft()
+            token_ids = cpu_tensor.tolist()
+            return token_ids, seqs
+        return [], []
 
     def recv_async_output(self) -> list[int]:
         self.async_copy_event.synchronize()
-        for _ in self.token_ids_gpu:
+        for _ in self.token_ids_cpu:
             token_ids = self.token_ids_cpu.pop(0).tolist()
             return token_ids
         return []
 
+    def clean_token(self):
+        self.token_ids_cpu: list[torch.Tensor] = []
+        self.pending_outputs.clear()
+
     def update_and_ret(
         self, batch: ScheduledBatchs, sampled_token_ids: torch.Tensor
     ) -> list[int]:
-        token_ids = self.recv_async_output()
-        self.send_to_cpu_async(sampled_token_ids)
+        # token_ids = self.recv_async_output()
+        prev_token_ids, prev_seqs = self.revc_async_output_tuple()
+        self.send_to_cpu_async(batch, sampled_token_ids)
+        # return token_ids
+        # return prev_token_ids, prev_seqs
+
         deferred_reqIDs = []
         returned_reqIDs = []
         for req in batch.seqs:
             if req.id in self.deferred_request_id:
                 returned_reqIDs.append(req.id)
             else:
-                deferred_reqIDs.append(req.id)
+                self.deferred_request_id.append(req.id)
 
         if returned_reqIDs:
             for ids in self.token_ids_cpu[:-1]:
@@ -84,11 +160,9 @@ class OutputProcessor:
                     req_index = batch.unfinished_prev_req.index(req_id)
                     batch.unfinished_prev_req.remove(req_id)
                     req = batch.seqs[req_index]
-                    req.append_token(ids_list[req_index])
-
-        self.async_copy_event.synchronize()
-
-        return []
+                    req.append_token(prev_token_ids[req_index])
+        return prev_token_ids, prev_seqs
+        # self.async_copy_event.synchronize()
 
 
 class ModelRunner:
@@ -125,6 +199,22 @@ class ModelRunner:
         torch.set_default_device("cuda")
         self.out_processor = OutputProcessor()
         self.sampler = Sampler()
+
+        self.input_batch = InputBatch(
+            max_num_reqs=self.config.max_num_seqs,
+            max_model_len=self.config.max_model_len)
+
+        self.input_ids = self._make_buffer(self.config.max_num_batched_tokens,
+                                           dtype=torch.int32)
+        self.positions = self._make_buffer(self.config.max_num_batched_tokens,
+                                           dtype=torch.int64)
+        self.use_async_scheduling = True
+        self.async_output_copy_stream = torch.cuda.Stream() if \
+            self.use_async_scheduling else None
+    
+        self.out_processor = OutputProcessor()
+
+
         self.model = suppot_model_arch_dict[hf_config.architectures[0]](config)
         torch.set_default_device(None)
         load_model(self.model, config.model, config.hf_config, config.load_dummy)
@@ -137,6 +227,21 @@ class ModelRunner:
 
         if self.config.compilation_config.level == 1:
             self.model = torch.compile(self.model, fullgraph=True, backend="eager")
+
+
+    def _make_buffer(self,
+                     *size: Union[int, torch.SymInt],
+                     dtype: torch.dtype,
+                     numpy: bool = True) -> CpuGpuBuffer:
+        # Bfloat16 torch tensors cannot be directly cast to a numpy array, so
+        # if a bfloat16 buffer is needed without a corresponding numpy array,
+        # don't bother instantiating the numpy array.
+        return CpuGpuBuffer(*size,
+                            dtype=dtype,
+                            device=self.device,
+                            pin_memory=True,
+                            with_numpy=numpy)
+
 
     def exit(self):
         if not self.still_running:
@@ -184,8 +289,17 @@ class ModelRunner:
             Sequence([0] * max_model_len, block_size=self.block_size)
             for _ in range(num_seqs)
         ]
-        dummy_batch = ScheduledBatchs(seqs, True, False)
+
+        num_scheduled_tokens: dict[str, int] = {}
+
+        for seq in seqs:
+            num_scheduled_tokens[seq.id] = seq.num_tokens
+
+        total_num_scheduled_tokens = sum(num_scheduled_tokens.values())
+        # print("total_num_scheduled_tokens dummy_batch", total_num_scheduled_tokens)
+        dummy_batch = ScheduledBatchs(seqs, True, False, seqs, num_scheduled_tokens, total_num_scheduled_tokens)
         self.forward(dummy_batch)
+        # self.out_processor.clean_token()
         torch.cuda.empty_cache()
 
     def allocate_decode_vars(self):
@@ -344,6 +458,79 @@ class ModelRunner:
             block_tables[i, : lens[i]] = seq.block_table
         return block_tables
 
+    def _prepare_input_ids(self, total_num_scheduled_tokens: int,
+                           cu_num_tokens: np.ndarray) -> None:
+        """Prepare the input IDs for the current batch.
+        
+        Carefully handles the `prev_sampled_token_ids` which can be cached
+        from the previous engine iteration, in which case those tokens on the
+        GPU need to be copied into the corresponding slots into input_ids."""
+
+        if self.input_batch.prev_sampled_token_ids is None:
+            # Normal scheduling case
+            self.input_ids.copy_to_gpu(total_num_scheduled_tokens)
+            return
+
+        # Async scheduling case, where some decode requests from the previous
+        # iteration won't have entries in input_ids_cpu and need to be copied
+        # on the GPU from prev_sampled_token_ids.
+        prev_req_id_to_index = self.input_batch.prev_req_id_to_index
+        assert prev_req_id_to_index is not None
+        flattened_indices = []
+        prev_common_req_indices = []
+        indices_match = True
+        max_flattened_index = -1
+        for req_id, cur_index in self.input_batch.req_id_to_index.items():
+            if (prev_index := prev_req_id_to_index.get(req_id)) is not None:
+                prev_common_req_indices.append(prev_index)
+                # We need to compute the flattened input_ids index of the
+                # last token in each common request.
+                flattened_index = cu_num_tokens[cur_index].item() - 1
+                # flattened_indices.append(flattened_index)
+                flattened_indices.append(prev_index)
+                indices_match &= (prev_index == flattened_index)
+                max_flattened_index = max(max_flattened_index, flattened_index)
+        num_commmon_tokens = len(flattened_indices)
+        if num_commmon_tokens < total_num_scheduled_tokens:
+            # If not all requests are decodes from the last iteration,
+            # We need to copy the input_ids_cpu to the GPU first.
+            self.input_ids.copy_to_gpu(total_num_scheduled_tokens)
+        if num_commmon_tokens == 0:
+            # No requests in common with the previous iteration
+            # So input_ids_cpu will have all the input ids.
+            return
+        if indices_match and max_flattened_index == (num_commmon_tokens - 1):
+            # Common-case optimization: the batch is unchanged
+            # and no reordering happened.
+            # The indices are both the same permutation of 0..N-1 so
+            # we can copy directly using a single slice.
+            self.input_ids.gpu[:num_commmon_tokens].copy_(
+                self.input_batch.prev_sampled_token_ids[:num_commmon_tokens,
+                                                        0],
+                non_blocking=True)
+            return
+        # Upload the index tensors asynchronously
+        # so the scatter can be non-blocking.
+        input_ids_index_tensor = torch.tensor(flattened_indices,
+                                              dtype=torch.int64,
+                                              pin_memory=True).to(
+                                                  self.device,
+                                                  non_blocking=True)
+        prev_common_req_indices_tensor = torch.tensor(
+            prev_common_req_indices,
+            dtype=torch.int64,
+            pin_memory=True).to(self.device, non_blocking=True)
+        # print('self.input_batch.prev_sampled_token_ids', self.input_batch.prev_sampled_token_ids)
+        self.input_ids.gpu.scatter_(
+            dim=0,
+            index=input_ids_index_tensor,
+            src=self.input_batch.prev_sampled_token_ids[
+            prev_common_req_indices_tensor])
+        #         prev_common_req_indices_tensor, 0])
+
+        self.positions.copy_to_gpu(total_num_scheduled_tokens)
+
+
     def prepare_prefill(self, scheduled_batchs: ScheduledBatchs):
         input_ids = []
         positions = []
@@ -484,7 +671,11 @@ class ModelRunner:
             kv_indices=var["kv_indices"].gpu,
             kv_last_page_lens=var["kv_last_page_lens"].gpu[:bs],
         )
-
+        num_scheduled_tokens = scheduled_batchs.total_num_scheduled_tokens
+        num_input_tokens = num_scheduled_tokens
+        input_ids = self.input_ids.gpu[:num_input_tokens]
+        positions = self.positions.gpu[:num_input_tokens]
+        return input_ids, positions
         return var["input_ids"].gpu[:bs], var["positions"].gpu[:bs]
 
     def _update_paged_kv_tensors(self, block_table: list[int], seq_len: int):
@@ -514,7 +705,47 @@ class ModelRunner:
         ).cuda(non_blocking=True)
         return temperatures
 
+    # def _get_cumsum_and_arange(
+    #     self,
+    #     num_tokens: np.ndarray,
+    #     cumsum_dtype: Optional[np.dtype] = None,
+    # ) -> tuple[np.ndarray, np.ndarray]:
+    #     """Get the cumulative sum and batched arange of the given array.
+    #     # E.g., [2, 5, 3] -> ([2, 7, 10], [0, 1, 0, 1, 2, 3, 4, 0, 1, 2])
+    #     # Equivalent to but faster than:
+    #     # np.concatenate([np.arange(n) for n in num_tokens])
+    #     """
+    #     # Step 1. [2, 5, 3] -> [2, 7, 10]
+    #     cu_num_tokens = np.cumsum(num_tokens, dtype=cumsum_dtype)
+    #     total_num_tokens = cu_num_tokens[-1]
+    #     # Step 2. [2, 7, 10] -> [0, 0, 2, 2, 2, 2, 2, 7, 7, 7]
+    #     cumsums_offsets = np.repeat(cu_num_tokens - num_tokens, num_tokens)
+    #     # Step 3. [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
+    #     arange = self.arange_np[:total_num_tokens] - cumsums_offsets
+
+    #     return cu_num_tokens, arange
+
+
     def prepare_model(self, scheduled_batchs: ScheduledBatchs):
+        self._update_states(scheduled_batchs)
+
+        total_num_scheduled_tokens = scheduled_batchs.total_num_scheduled_tokens
+        assert total_num_scheduled_tokens > 0
+
+        _req_ids = self.input_batch.req_ids
+        req_ids = [req_id for req_id in _req_ids if req_id is not None]
+
+        # print("scheduled_batchs.num_scheduled_tokens", scheduled_batchs.num_scheduled_tokens)
+        # print("req_ids", req_ids)
+        tokens = [scheduled_batchs.num_scheduled_tokens[i] for i in req_ids]
+        num_scheduled_tokens = np.array(tokens, dtype=np.int32)
+        # cu_num_tokens: [2, 5, 3] -> [2, 7, 10]
+        # arange: [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
+        # cu_num_tokens, arange = self._get_cumsum_and_arange(
+        #     num_scheduled_tokens)
+        cu_num_tokens = np.concatenate([np.arange(n) for n in num_scheduled_tokens])
+
+        self._prepare_input_ids(total_num_scheduled_tokens, cu_num_tokens)
         seqs = scheduled_batchs.seqs
         is_prefill = scheduled_batchs.is_prefill
         prepare_func = self.prepare_prefill if is_prefill else self.prepare_decode
@@ -543,20 +774,75 @@ class ModelRunner:
     ) -> list[int]:
         if self.rank == 0:
             sampled_tokens = self.sampler(logits, temperatures)
-            token_ids = sampled_tokens.tolist()
-            # token_ids = self.prev_sampled.update_and_ret(
-            #     batch,
-            #     sampled_tokens,
+
+            # num_sampled_tokens = sampled_tokens.shape[0]
+            sampled_token_ids = sampled_tokens
+            if  self.use_async_scheduling:
+                # assert sampled_token_ids.shape[-1] == 1
+
+                # Cache the sampled tokens on the GPU and avoid CPU sync.
+                # These will be copied into input_ids in the next step
+                # when preparing inputs.
+                # if self.input_batch.prev_sampled_token_ids is None:
+                #     output = None
+                # else:
+                #     output = self.input_batch.prev_sampled_token_ids
+
+                self.input_batch.prev_sampled_token_ids = \
+                    sampled_token_ids
+                # print("self.input_batch.prev_sampled_token_ids in postprocess", self.input_batch.prev_sampled_token_ids)
+                self.input_batch.prev_req_id_to_index = {
+                    req_id: i
+                    for i, req_id in enumerate(self.input_batch.req_ids)
+                }
+                
+
+            # output  = AsyncGPUModelRunnerOutput(
+            #     sampled_token_ids=sampled_token_ids,
+            #     # invalid_req_indices=invalid_req_indices,
+            #     async_output_copy_stream=self.async_output_copy_stream,
             # )
+
+            # .get_output()
+            # self.handle_output(output)
+
+            # token_ids = sampled_tokens.tolist()
+            output, prev_seqs = self.out_processor.update_and_ret(
+                batch,
+                sampled_tokens,
+            )
+            print("sampled_token_ids", sampled_token_ids)
+            print("prev_token_ids", output)
+            print('----------')
         else:
-            token_ids = []
-        return token_ids
+            output = None
+            prev_seqs = None
+        # self.worker_response_mq.enqueue(result)
+        return output, prev_seqs
+
+    def _update_states(self, batch: ScheduledBatchs):
+        for req_id in self.input_batch.finished_req_ids:
+            self.input_batch.remove_request(req_id)
+
+        for request in batch.seqs:
+            self.input_batch.add_request(request)
+    
+    def finish_req(self, batch: ScheduledBatchs):
+        request_id = self.input_batch.req_ids
+        for id in request_id:
+            self.input_batch.finished_req_ids.add(id)
+        # print("finish_req:", self.input_batch.finished_req_ids)
+
 
     @torch.inference_mode()
-    def forward(self, batch: ScheduledBatchs) -> list[int]:
+    def forward(self, batch: ScheduledBatchs, is_wramup = False) -> list[int]:
+        # self._update_states(batch)
         input_ids, positions, temperatures = self.prepare_model(batch)
         logits = self.run_model(input_ids, positions, batch.is_prefill)
         reset_context()
+        self.finish_req(batch)
+        # self.postprocess(batch, logits, temperatures)
+        # return self.async_get_output()
         return self.postprocess(batch, logits, temperatures)
 
     @torch.inference_mode()
