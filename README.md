@@ -78,3 +78,27 @@ ATOM demonstrates significant performance improvements over vLLM:
 | Qwen3-0.6B | vLLM | 4096 | 0.63s | 6,543.06 tok/s |
 | **Llama-3.1-8B-Instruct-FP8-KV** | ATOM | 4096 | 0.68s | **5,983.37 tok/s** |
 | Llama-3.1-8B-Instruct-FP8-KV | vLLM | 4096 | 1.68s | 2,432.62 tok/s |
+
+### Accuracy Benchmarking
+
+First, install `lm-eval` to test model accuracy:
+
+```bash
+pip install lm-eval[api]
+```
+
+Next, start an OpenAI-compatible server using `openai_server.py`:
+
+```bash
+python -m atom.entrypoints.openai_server --model meta-llama/Meta-Llama-3-8B
+```
+
+Finally, run the evaluation by choosing your datasets:
+
+```bash
+lm_eval --model local-completions \
+        --model_args model=meta-llama/Meta-Llama-3-8B,base_url=http://localhost:8000/v1/completions,num_concurrent=8,max_retries=3,tokenized_requests=False \
+        --tasks gsm8k \
+        --num_fewshot 3 \
+        --batch_size 16
+```

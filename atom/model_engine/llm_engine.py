@@ -93,7 +93,17 @@ class InputOutputProcessor:
             if isinstance(prompt_or_tokens, str)
             else prompt_or_tokens
         )
-        seq = Sequence(tokens, self.block_size, sampling_params)
+        
+        stop_token_sequences = []
+        if sampling_params.stop_strings:
+            stops = [sampling_params.stop_strings] if isinstance(sampling_params.stop_strings, str) else sampling_params.stop_strings
+            for stop_str in stops:
+                # Encode the full stop string as a sequence of tokens
+                stop_tokens = self.tokenizer.encode(stop_str, add_special_tokens=False)
+                if stop_tokens:
+                    stop_token_sequences.append(stop_tokens)
+        
+        seq = Sequence(tokens, self.block_size, sampling_params, stop_token_sequences)
         seq.arrive_time = time.time()
         self.requests[seq.id] = seq
         print(

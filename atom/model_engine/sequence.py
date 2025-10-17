@@ -22,7 +22,7 @@ class Sequence:
     counter = count()
 
     def __init__(
-        self, token_ids: list[int], block_size: int, sampling_params=SamplingParams()
+        self, token_ids: list[int], block_size: int, sampling_params=SamplingParams(), stop_token_sequences: list[list[int]] = None
     ):
         self.block_size = block_size
         self.id = next(Sequence.counter)
@@ -36,6 +36,8 @@ class Sequence:
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
+        self.stop_strings = sampling_params.stop_strings
+        self.stop_token_sequences = stop_token_sequences or []
 
         # statistics fields
         self.arrive_time = 0.0

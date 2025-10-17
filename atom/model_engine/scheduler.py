@@ -101,7 +101,16 @@ class Scheduler:
             seq.append_token(token_id)
             # seq.token_ids[-2] = token_id
             leave_reason = None
-            if not seq.ignore_eos and token_id == self.eos_token_id:
+            
+            # Check if sequence ends with any stop sequence
+            stop_matched = False
+            for stop_seq in seq.stop_token_sequences:
+                if len(seq.token_ids) >= len(stop_seq):
+                    if seq.token_ids[-len(stop_seq):] == stop_seq:
+                        stop_matched = True
+                        break
+            
+            if (not seq.ignore_eos and token_id == self.eos_token_id) or stop_matched:
                 leave_reason = "eos"
             elif seq.num_completion_tokens == seq.max_tokens:
                 leave_reason = "max_tokens"
