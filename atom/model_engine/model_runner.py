@@ -15,7 +15,7 @@ from aiter import destroy_dist_env, dtypes, init_dist_env
 from aiter.dist.parallel_state import get_tensor_model_parallel_rank, graph_capture
 
 from atom.config import Config, set_current_atom_config
-from atom.model_engine.scheduler import ScheduledBatchs, InputBatch
+from atom.model_engine.scheduler import ScheduledBatchs, PrevScheduledBatchs
 from atom.model_engine.sequence import Sequence
 from atom.model_loader.loader import load_model
 from atom.model_ops.sampler import Sampler
@@ -129,7 +129,7 @@ class ModelRunner:
         self.out_processor = OutputProcessor()
         self.sampler = Sampler()
 
-        self.input_batch = InputBatch(
+        self.input_batch = PrevScheduledBatchs(
             max_num_reqs=self.config.max_num_seqs,
             max_model_len=self.config.max_model_len)
 

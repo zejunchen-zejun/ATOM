@@ -29,7 +29,7 @@ class ScheduledBatchs:
     # prev_req_id_to_index: Optional[dict[str, int]] = None
 
 
-class InputBatch:
+class PrevScheduledBatchs:
 
     def __init__(
         self,
