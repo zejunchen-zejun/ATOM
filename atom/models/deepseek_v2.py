@@ -55,6 +55,7 @@ from atom.model_ops.topK import (
     is_rocm_aiter_fusion_shared_expert_enabled,
     is_rocm_aiter_fuse_routed_scaling_factor
 )
+from atom.utils.decorators import support_torch_compile
 
 
 class DeepseekV2MLP(nn.Module):
@@ -444,7 +445,7 @@ class DeepseekV2DecoderLayer(nn.Module):
 
         return hidden_states, residual
 
-
+@support_torch_compile
 class DeepseekV2Model(nn.Module):
     def __init__(
         self,

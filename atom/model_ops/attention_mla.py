@@ -19,6 +19,7 @@ from aiter import (
 )
 
 from aiter.mla import mla_decode_fwd
+from aiter.jit.utils.torch_guard import torch_compile_guard
 
 from typing import Optional, Tuple
 from tqdm import tqdm
@@ -94,7 +95,30 @@ def aiter_mla_decode_fwd(
         logit_cap=logit_cap,
     )
 
+def _forward_rope_fake(
+    positions: torch.Tensor,
+    # if     is_nope_first
+    # [[batch_size, seq_len, num_heads, nope_size+rope_size]
+    # if NOT is_nope_first
+    # [[batch_size, seq_len, num_heads, rope_size+nope_size],
+    query: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    is_neox_style: bool,
+    head_size: int,
+    rotary_dim: int,
+    key: Optional[torch.Tensor] = None,
+    offsets: Optional[torch.Tensor] = None,
+    is_nope_first: bool=False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    query_shape = query.shape
+    if key is not None:
+        key_shape = key.shape
+        return query.view(query_shape), key.view(key_shape)
+    else:
+        return query.view(query_shape)
 
+@torch_compile_guard(gen_fake=_forward_rope_fake)
 def _forward_rope(
     positions: torch.Tensor,
     # if     is_nope_first
@@ -109,7 +133,7 @@ def _forward_rope(
     rotary_dim: int,
     key: Optional[torch.Tensor] = None,
     offsets: Optional[torch.Tensor] = None,
-    is_nope_first=False,
+    is_nope_first: bool=False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     import aiter
 

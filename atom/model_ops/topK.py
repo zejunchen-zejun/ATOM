@@ -2,6 +2,7 @@ from functools import cache, lru_cache
 from typing import Optional
 
 import torch
+from atom.utils.custom_register import direct_register_custom_op
 
 
 def is_rocm_aiter_fusion_shared_expert_enabled():
@@ -326,6 +327,21 @@ def rocm_aiter_topk_softmax(
         gating_output, topk, renormalize, num_fused_shared_experts
     )
 
+direct_register_custom_op(
+    op_name="rocm_aiter_biased_grouped_topk_impl",
+    op_func=rocm_aiter_biased_grouped_topk_impl,
+    mutates_args=[],
+    fake_impl=rocm_aiter_biased_grouped_topk_fake,
+)
+
+direct_register_custom_op(
+    op_name="rocm_aiter_grouped_topk_impl",
+    op_func=rocm_aiter_grouped_topk_impl,
+    mutates_args=[],
+    fake_impl=rocm_aiter_grouped_topk_fake,
+)
+
+
 
 def rocm_aiter_grouped_topk(
     hidden_states: torch.Tensor,
@@ -340,7 +356,7 @@ def rocm_aiter_grouped_topk(
     routed_scaling_factor: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if e_score_correction_bias is not None:
-        return rocm_aiter_biased_grouped_topk_impl(
+        return torch.ops.aiter.rocm_aiter_biased_grouped_topk_impl(
             gating_output,
             e_score_correction_bias,
             num_expert_group,
@@ -352,7 +368,7 @@ def rocm_aiter_grouped_topk(
         )
     else:
         assert scoring_func == "softmax" or scoring_func == "sigmoid"
-        return rocm_aiter_grouped_topk_impl(
+        return torch.ops.aiter.rocm_aiter_grouped_topk_impl(
             gating_output,
             num_expert_group,
             topk_group,
