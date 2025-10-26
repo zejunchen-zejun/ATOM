@@ -608,7 +608,9 @@ class ModelRunner:
             var["kv_indptr"].np[: scheduled_bs + 1] = np.array(
                 self.kv_indptr, dtype=np.int64
             )
-            var["kv_indptr"].np[scheduled_bs + 1 : bs + 1] = var["kv_indptr"].np[bs]
+            var["kv_indptr"].np[scheduled_bs + 1 : bs + 1] = var["kv_indptr"].np[
+                scheduled_bs
+            ]
             var["kv_last_page_lens"].np[:scheduled_bs] = np.array(
                 self.kv_last_page_lens, dtype=np.int64
             )
