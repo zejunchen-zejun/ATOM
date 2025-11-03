@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Type, Tuple, Generic, Optional, List, TypeVar, Dict, Any
 from atom.model_engine.scheduler import ScheduledBatch
-from atom.utils.context import set_context
 from atom.model_ops.attention_mla import MLAModules
 
+from atom.utils.forward_context import AttentionMetaData
 import torch
 from torch import nn
 
@@ -72,6 +72,17 @@ class AttentionMetadataBuilder(ABC, Generic[T]):
     def prepare_prefill(self, batch: ScheduledBatch, forward_vars):
         raise NotImplementedError
 
+    @abstractmethod
+    def build(self,
+              batch: ScheduledBatch,
+              forward_vars,
+              bs: int):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def build_for_cudagraph_capture(self, forward_vars, bs: int) -> AttentionMetaData:
+        raise NotImplementedError
+
 
 class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
     def __init__(self, block_size: int):
@@ -119,19 +130,27 @@ class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
             ("slot_mapping", len(slot_mapping)),
         ]
         ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
-        set_context(
-            True,
-            batch_size=bs,
+        attn_metadata = AttentionMetaData(
             cu_seqlens_k=cu_seqlens_k.cuda(non_blocking=True),
-            # slot_mapping=slot_mapping.cuda(non_blocking=True),
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
             min_seqlen_q=min_seqlen_q,
             dropout_p=dropout_p,
             **ctx,
         )
-        return var["positions"].copy_to_gpu(sum_scheduled_tokens)
+        positions=var["positions"].copy_to_gpu(sum_scheduled_tokens)
 
+        return attn_metadata, positions
+        # return var["positions"].copy_to_gpu(sum_scheduled_tokens)
+
+    def build(self,
+              batch: ScheduledBatch,
+              forward_vars,
+              bs: int):
+        if batch.total_tokens_num_prefill > 0:
+            return self.prepare_prefill(batch, forward_vars)
+        else:
+            return self.prepare_decode(batch, bs, forward_vars)
 
 
 class AttentionImpl(nn.Module):

@@ -10,6 +10,24 @@ from aiter import QuantType
 from aiter.utility.dtypes import d_dtypes
 from transformers import AutoConfig, PretrainedConfig
 
+@dataclass
+class KVCacheTensor:
+    """
+    A class for specifying how the workers should initialize the KV cache.
+    """
+    layer_num: int
+    k_cache: torch.Tensor=torch.tensor([])
+    v_cache: torch.Tensor=torch.tensor([])
+    k_scale: torch.Tensor=None
+    v_scale: torch.Tensor=None
+
+@dataclass
+class KVCacheConfig:
+    """
+    The KV cache configuration of a model.
+    """
+    kv_cache_tensors: list[KVCacheTensor]
+
 
 class CUDAGraphMode(enum.Enum):
     """Constants for the cudagraph mode in CompilationConfig.

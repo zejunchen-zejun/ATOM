@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 import torch
 from torch import nn
-from atom.utils.context import get_context, Context
 from atom.utils.custom_register import direct_register_custom_op
-from atom.utils.forward_context import ForwardContext, get_forward_context
+from atom.utils.forward_context import AttentionMetaData, ForwardContext, get_forward_context
 from atom.model_ops.linear import ColumnParallelLinear, RowParallelLinear
 from atom.model_ops.utils import get_and_maybe_dequant_weights
 from aiter.rotary_embedding import RotaryEmbedding
@@ -220,7 +219,7 @@ class MLAAttention(nn.Module):
         kv_c_normed: torch.Tensor,
         k_pe: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
-        context: Context,
+        context: AttentionMetaData,
     ) -> torch.Tensor:
         assert context is not None
 
@@ -254,7 +253,7 @@ class MLAAttention(nn.Module):
         q_nope: torch.Tensor,
         q_pe: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
-        context: Context,
+        context: AttentionMetaData,
     ) -> torch.Tensor:
         assert kv_c_and_k_pe_cache.numel() > 0
         assert context is not None
@@ -289,11 +288,16 @@ class MLAAttention(nn.Module):
         positions: torch.Tensor,
     ) -> torch.Tensor:
         # kv_cache = self.kv_cache
-        context = get_context()
-        if context.slot_mapping.numel():
-            forward_context: ForwardContext = get_forward_context()
-            attn_metadata_ = forward_context.no_compile_layers[self.layer_num]
-            kv_cache = attn_metadata_.k_cache
+        forward_context: ForwardContext = get_forward_context()
+        attn_metadata = forward_context.attn_metadata
+        context = forward_context.context
+        if attn_metadata.slot_mapping.numel():
+            # not dummy run
+            kv_cache_data = forward_context.kv_cache_data
+            if f"layer_{self.layer_num}" in kv_cache_data:
+                kv_cache = kv_cache_data[f"layer_{self.layer_num}"].k_cache
+            else:
+                kv_cache = torch.tensor([])
         else:
             # dummy run before allocate kv_cache, thus we create manually
             kv_cache = torch.tensor([])
@@ -308,13 +312,13 @@ class MLAAttention(nn.Module):
                     k_c_normed,
                     k_pe.squeeze(1),
                     kv_cache,
-                    context.slot_mapping.flatten(),
+                    attn_metadata.slot_mapping.flatten(),
                     kv_cache_dtype=self.kv_cache_dtype,
                     scale=self._k_scale,
                 )
 
             output = self._forward_prefill(
-                prefill_q, k_c_normed, k_pe, kv_cache, context
+                prefill_q, k_c_normed, k_pe, kv_cache, attn_metadata
             )
         else:
             decode_ql_nope, decode_q_pe = self._q_proj_and_k_up_proj(q)
@@ -325,13 +329,13 @@ class MLAAttention(nn.Module):
                     k_c_normed,
                     k_pe.squeeze(1),
                     kv_cache,
-                    context.slot_mapping.flatten(),
+                    attn_metadata.slot_mapping.flatten(),
                     kv_cache_dtype=self.kv_cache_dtype,
                     scale=self._k_scale,
                 )
 
             output = self._forward_decode(
-                decode_ql_nope, decode_q_pe, kv_cache, context
+                decode_ql_nope, decode_q_pe, kv_cache, attn_metadata
             )
 
         return output

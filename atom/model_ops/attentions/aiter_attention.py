@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from typing import Type, Optional
+
+from atom.utils.forward_context import AttentionMetaData, Context
 from .backends import CommonAttentionBuilder, AttentionBackend
 import torch
 import numpy as np
 
 from atom.model_engine.scheduler import ScheduledBatch
-from atom.utils.context import set_context
 from atom.model_ops.attention_mha import Attention
 
 
@@ -26,7 +27,7 @@ class AiterAttentionMetadataBuilder(CommonAttentionBuilder):
     BLOCK_TABLE_EXTENDER: list[list[int]] = [[]]
 
     def __init__(self, block_size: int):
-        self.block_size = block_size
+        super().__init__(block_size)  # Call parent __init__ to initialize _cached_kv_cache_data
 
     def prepare_decode(self, batch: ScheduledBatch, bs: int, forward_vars):
         scheduled_bs = batch.total_seqs_num_decode
@@ -60,14 +61,23 @@ class AiterAttentionMetadataBuilder(CommonAttentionBuilder):
         ]
 
         ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
-        set_context(
-            False,
-            batch_size=scheduled_bs,
-            graph_bs=bs,
+        attn_metadata = AttentionMetaData(
             dropout_p=dropout_p,
             max_q_len=max_q_len,
             **ctx,
         )
-        positions = var["positions"].copy_to_gpu(sum_scheduled_tokens)
-        return positions
 
+        positions=var["positions"].copy_to_gpu(sum_scheduled_tokens)
+        return attn_metadata, positions
+
+    def build_for_cudagraph_capture(self, forward_vars, bs: int) -> AttentionMetaData:
+        attn_matadata = AttentionMetaData(
+            slot_mapping=forward_vars["slot_mapping"].gpu[:bs],
+            context_lens=forward_vars["context_lens"].gpu[:bs],
+            block_tables=forward_vars["block_tables"].gpu[:bs],
+            max_q_len=1,
+            cu_seqlens_q=forward_vars["cu_seqlens_q"].gpu[: bs + 1],
+        )
+        positions=forward_vars["positions"].copy_to_gpu(bs)
+        context = Context(positions=positions, is_prefill=False, batch_size=bs, graph_bs=bs)
+        return attn_matadata, context

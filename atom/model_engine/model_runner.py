@@ -9,7 +9,7 @@ import torch.profiler as torch_profiler
 import tqdm
 from aiter import destroy_dist_env, dtypes, init_dist_env
 from aiter.dist.parallel_state import graph_capture
-from atom.config import Config, set_current_atom_config
+from atom.config import Config, set_current_atom_config, KVCacheTensor
 from atom.model_engine.scheduler import ScheduledBatch
 from atom.model_engine.sequence import Sequence
 from atom.model_loader.loader import load_model
@@ -19,11 +19,10 @@ from atom.models.llama import LlamaForCausalLM
 from atom.models.mixtral import MixtralForCausalLM
 from atom.models.qwen3 import Qwen3ForCausalLM
 from atom.utils import CpuGpuBuffer, init_exit_handler, get_hf_text_config
-from atom.utils.context import get_context, reset_context, set_context
 from atom.utils.selector import get_attn_backend
 
 logger = logging.getLogger("atom")
-from atom.utils.forward_context import AttentionMetadata, set_forward_context
+from atom.utils.forward_context import AttentionMetaData, Context, get_forward_context, reset_forward_context, set_forward_context, set_kv_cache_data
 
 suppot_model_arch_dict = {
     "Qwen3ForCausalLM": Qwen3ForCausalLM,
@@ -377,6 +376,8 @@ class ModelRunner:
         i64_kwargs = {"dtype": torch.int64, "device": self.device}
         i32_kwargs = {"dtype": torch.int32, "device": self.device}
         f32_kwargs = {"dtype": torch.float, "device": self.device}
+
+        # TODO: remove it in forward_context
         self.forward_vars = {
             "input_ids": self.tokenID_processor.input_ids,
             "positions": CpuGpuBuffer(max_num_batched_tokens, **i64_kwargs),
@@ -440,6 +441,8 @@ class ModelRunner:
         hf_config = config.hf_config
         isMLA = hf_config.architectures[0].startswith("DeepseekV")
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
+        
+        # Allocate raw KV cache tensors
         if isMLA:
             self.kv_cache = torch.zeros(
                 hf_config.num_hidden_layers,
@@ -470,21 +473,26 @@ class ModelRunner:
                 dtype=dtypes.fp32,
                 device="cuda",
             )
-
+        # Build KVCacheConfig
+        # lirong TODO: This is a simple solution to build KVCacheConfig, 
+        # models with only one type of attention, but not support multi-type of attention models.
+        # We need to support it by kv_cache_group in the future.
+        kv_cache_tensors = []
         layer_id = 0
         x = 16 // self.kv_cache.element_size()
         for module in self.model.modules():
             # Since use attention base and there are child in attention, add base condition
             if hasattr(module, "base_attention"):
                 if hasattr(module, "use_mla") and not module.use_mla:
-                    module.k_cache = self.kv_cache[0, layer_id].view(
+                    # Non-MLA attention
+                    k_cache = self.kv_cache[0, layer_id].view(
                         config.num_kvcache_blocks,
                         num_kv_heads,
                         hf_config.head_dim // x,
                         self.block_size,
                         x,
                     )
-                    module.v_cache = self.kv_cache[1, layer_id].view(
+                    v_cache = self.kv_cache[1, layer_id].view(
                         config.num_kvcache_blocks,
                         num_kv_heads,
                         hf_config.head_dim,
@@ -494,30 +502,50 @@ class ModelRunner:
                     if config.kv_cache_dtype == "fp8":
                         module.k_scale = self.kv_scale[0, layer_id]
                         module.v_scale = self.kv_scale[1, layer_id]
-                    attention_metadata = AttentionMetadata(
-                        k_cache=module.k_cache,
-                        v_cache=module.v_cache,
-                        k_scale=module.k_scale,
-                        v_scale=module.v_scale,
+
+                    k_scale = module.k_scale
+                    v_scale = module.v_scale
+                    
+                    # Store in KVCacheTensor
+                    kv_cache_tensor = KVCacheTensor(
+                        layer_num=layer_id,
+                        k_cache=k_cache,
+                        v_cache=v_cache,
+                        k_scale=k_scale,
+                        v_scale=v_scale,
                     )
-                    set_forward_context(module.layer_num, attention_metadata)
+                    kv_cache_tensors.append(kv_cache_tensor)
+                    
+                    module.k_cache = k_cache
+                    module.v_cache = v_cache
 
                     layer_id += 1
                 elif hasattr(module, "use_mla") and module.use_mla:
-                    module.kv_cache = self.kv_cache[layer_id].view(
+                    # MLA attention
+                    kv_cache = self.kv_cache[layer_id].view(
                         config.num_kvcache_blocks * self.block_size,
                         1,
                         576,
                     )
-                    module.max_model_len = self.config.max_model_len
-                    attention_metadata = AttentionMetadata(
-                        k_cache=module.kv_cache,
+                    
+                    # Store in KVCacheTensor
+                    kv_cache_tensor = KVCacheTensor(
+                        layer_num=layer_id,
+                        k_cache=kv_cache,
                         v_cache=None,
                         k_scale=None,
                         v_scale=None,
                     )
-                    set_forward_context(module.layer_num, attention_metadata)
+                    kv_cache_tensors.append(kv_cache_tensor)
+                    
+                    module.kv_cache = kv_cache
+                    module.max_model_len = self.config.max_model_len
                     layer_id += 1
+        
+        # Store KVCacheConfig
+        kv_cache_data = {f"layer_{i}": kv_cache_tensor for i, kv_cache_tensor in enumerate(kv_cache_tensors)}
+        # vllm use register_kv_caches to register kv_cache_data. We just set it to global here
+        set_kv_cache_data(kv_cache_data)
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
         return True
@@ -546,7 +574,25 @@ class ModelRunner:
 
         return self.attn_metadata_builder.prepare_decode(batch, bs, self.forward_vars)
 
+    def prepare_intputs(self, batch: ScheduledBatch):
+        is_prefill = batch.total_tokens_num_prefill > 0
+        bs = 0
+        if not is_prefill:
+            scheduled_bs = batch.total_seqs_num_decode
+            seqs = list(batch.seqs.values())
+            seqs = seqs[batch.total_seqs_num_prefill :]
+            assert len(seqs) == scheduled_bs
+            bs = (
+                scheduled_bs
+                if self.enforce_eager
+                else next(x for x in self.graph_bs if x >= scheduled_bs)
+            )
+            assert bs >= scheduled_bs, f"current decode {scheduled_bs=} > max graph_bs{bs}"
+        attn_metadata, positions = self.attn_metadata_builder.build(batch, self.forward_vars, bs)
+        context_bs = batch.total_seqs_num_prefill if is_prefill else batch.total_seqs_num_decode
 
+        context = Context(positions=positions, is_prefill=is_prefill, batch_size=context_bs, graph_bs=bs)
+        set_forward_context(attn_metadata=attn_metadata, atom_config=self.config, context=context)
 
     def prepare_sample(self, batch: ScheduledBatch) -> torch.Tensor:
         temperatures = [seq.temperature for seq in batch.seqs.values()]
@@ -566,26 +612,25 @@ class ModelRunner:
         self.forward_vars["cu_seqlens_q"].np[1 : bs + 1] = cu_seqlens_q
 
         input_ids = self.tokenID_processor.prepare_input_ids(batch)
-        # print(f"{input_ids=}")
+        # print(f"input_ids: {input_ids}")
 
-        is_prefill = batch.total_tokens_num_prefill > 0
-        prepare_func = self.prepare_prefill if is_prefill else self.prepare_decode
-        positions = prepare_func(batch)
+        self.prepare_intputs(batch)
         temperatures = self.prepare_sample(batch)
         return (
             input_ids,
-            positions,
             temperatures,
         )
 
-    def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor):
-        ctx = get_context()
-        bs = ctx.batch_size
-        is_prefill = ctx.is_prefill
+    def run_model(self, input_ids: torch.Tensor):
+        forward_context = get_forward_context()
+        context = forward_context.context
+        bs = context.batch_size
+        is_prefill = context.is_prefill
+        positions = context.positions
         if is_prefill or self.enforce_eager or bs > self.graph_bs[-1]:
             hidden_states = self.model(input_ids, positions)
         else:
-            graph_bs = ctx.graph_bs
+            graph_bs = context.graph_bs
             self.graphs[graph_bs].replay()
             hidden_states = self.forward_vars["outputs"][:bs]
         return self.model.compute_logits(hidden_states)
@@ -607,9 +652,9 @@ class ModelRunner:
 
     @torch.inference_mode()
     def forward(self, batch: ScheduledBatch) -> dict[int, int]:
-        input_ids, positions, temperatures = self.prepare_model(batch)
-        logits = self.run_model(input_ids, positions)
-        reset_context()
+        input_ids, temperatures = self.prepare_model(batch)
+        logits = self.run_model(input_ids)
+        reset_forward_context()
         return self.postprocess(batch, logits, temperatures)
 
     @torch.inference_mode()
@@ -634,13 +679,6 @@ class ModelRunner:
         self.forward_vars["cu_seqlens_q"].copy_to_gpu(self.graph_bs[0] + 1)
         input_ids = self.forward_vars["input_ids"].gpu
         positions = self.forward_vars["positions"].gpu
-        slot_mapping = self.forward_vars["slot_mapping"].gpu
-        context_lens = self.forward_vars["context_lens"].gpu
-        block_tables = self.forward_vars["block_tables"].gpu
-        cu_seqlens_q = self.forward_vars["cu_seqlens_q"].gpu
-        kv_indptr = self.forward_vars["kv_indptr"].gpu
-        kv_indices = self.forward_vars["kv_indices"].gpu
-        kv_last_page_lens = self.forward_vars["kv_last_page_lens"].gpu
         outputs = self.forward_vars["outputs"]
 
         self.graphs: dict[int, torch.cuda.CUDAGraph] = dict()
@@ -655,18 +693,8 @@ class ModelRunner:
                     capture_range.set_description(f"Capturing {bs=}")
                 graph = torch.cuda.CUDAGraph()
 
-                set_context(
-                    False,
-                    batch_size=bs,
-                    slot_mapping=slot_mapping[:bs],
-                    context_lens=context_lens[:bs],
-                    block_tables=block_tables[:bs],
-                    max_q_len=1,
-                    cu_seqlens_q=cu_seqlens_q[: bs + 1],
-                    kv_indptr=kv_indptr[: bs + 1],
-                    kv_indices=kv_indices[:],
-                    kv_last_page_lens=kv_last_page_lens[:bs],
-                )
+                attn_metadata, context = self.attn_metadata_builder.build_for_cudagraph_capture(forward_vars=self.forward_vars, bs=bs)
+                set_forward_context(attn_metadata=attn_metadata, atom_config=self.config, context=context)
 
                 outputs[:bs] = self.model(input_ids[:bs], positions[:bs])  # warmup
 
@@ -676,6 +704,5 @@ class ModelRunner:
                     self.graph_pool = graph.pool()
                 self.graphs[bs] = graph
                 torch.cuda.synchronize()
-                reset_context()
         self.graph_bs.sort(reverse=False)
         return time.time() - start_time, self.graph_bs

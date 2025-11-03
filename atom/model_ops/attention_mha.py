@@ -8,15 +8,10 @@ import triton.language as tl
 from aiter.paged_attn import PagedAttention
 from torch import nn
 
-from atom.utils.context import get_context
-from atom.utils.custom_register import direct_register_custom_op
 from atom.utils.forward_context import (
-    AttentionMetadata,
     ForwardContext,
     get_forward_context,
-    set_forward_context,
 )
-from atom.utils import mark_spliting_op
 from .attention_mla import MLAModules
 
 
@@ -53,15 +48,17 @@ class Attention(nn.Module):
 
         # o = torch.ops.aiter.unified_attention_with_output(q, k, v, 
         #             self.scale, self.kv_cache_dtype, self.layer_num)
-        context = get_context()
-        if context.slot_mapping.numel():
+        forward_context: ForwardContext = get_forward_context()
+        attn_metadata = forward_context.attn_metadata
+        context = forward_context.context
+
+        kv_cache_data = forward_context.kv_cache_data
+        if attn_metadata.slot_mapping.numel():
             # not dummy run
-            forward_context: ForwardContext = get_forward_context()
-            attn_metadata_ = forward_context.no_compile_layers[self.layer_num]
-            k_cache = attn_metadata_.k_cache
-            v_cache = attn_metadata_.v_cache
-            k_scale = attn_metadata_.k_scale
-            v_scale = attn_metadata_.v_scale
+            k_cache = kv_cache_data[f"layer_{self.layer_num}"].k_cache
+            v_cache = kv_cache_data[f"layer_{self.layer_num}"].v_cache
+            k_scale = kv_cache_data[f"layer_{self.layer_num}"].k_scale
+            v_scale = kv_cache_data[f"layer_{self.layer_num}"].v_scale
         else:
             # dummy run before allocate kv_cache, thus we create manually
             k_cache = v_cache = torch.tensor([])
@@ -76,7 +73,7 @@ class Attention(nn.Module):
                     v_cache,
                     k_scale,
                     v_scale,
-                    context.slot_mapping,
+                    attn_metadata.slot_mapping,
                     asm_layout=True,
                 )
             else:
@@ -85,7 +82,7 @@ class Attention(nn.Module):
                     v,
                     k_cache,
                     v_cache,
-                    context.slot_mapping,
+                    attn_metadata.slot_mapping,
                     kv_cache_dtype="auto",
                     k_scale=None,
                     v_scale=None,
@@ -100,12 +97,12 @@ class Attention(nn.Module):
                 q,
                 k,
                 v,
-                cu_seqlens_q=context.cu_seqlens_q,
-                cu_seqlens_k=context.cu_seqlens_k,
-                max_seqlen_q=context.max_seqlen_q,
-                max_seqlen_k=context.max_seqlen_k,
-                min_seqlen_q=context.min_seqlen_q,
-                dropout_p=context.dropout_p,
+                cu_seqlens_q=attn_metadata.cu_seqlens_q,
+                cu_seqlens_k=attn_metadata.cu_seqlens_k,
+                max_seqlen_q=attn_metadata.max_seqlen_q,
+                max_seqlen_k=attn_metadata.max_seqlen_k,
+                min_seqlen_q=attn_metadata.min_seqlen_q,
+                dropout_p=attn_metadata.dropout_p,
                 softmax_scale=self.scale,
                 causal=True,
             )
@@ -114,15 +111,14 @@ class Attention(nn.Module):
                 q,
                 k_cache,
                 v_cache,
-                context.block_tables,
-                context.context_lens,
-                context.block_tables.stride(0),
+                attn_metadata.block_tables,
+                attn_metadata.context_lens,
+                attn_metadata.block_tables.stride(0),
                 K_QScale=k_scale,
                 V_QScale=v_scale,
                 out_=None,
                 high_precision=0,
             )
-
 
         o = o.view(-1, self.num_heads * self.head_dim)
         return o

@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 from typing import Type, Optional
+
+from atom.config import KVCacheConfig, KVCacheTensor
+from atom.utils.forward_context import AttentionMetaData, Context
 from .backends import CommonAttentionBuilder, AttentionBackend
 import torch
 import numpy as np
 
 from atom.model_engine.scheduler import ScheduledBatch
-from atom.utils.context import set_context
 from atom.model_ops.attention_mla import MLAAttention
 
 
@@ -27,7 +29,7 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
     BLOCK_TABLE_EXTENDER: list[list[int]] = [[]]
 
     def __init__(self, block_size: int):
-        self.block_size = block_size
+        super().__init__(block_size)  # Call parent __init__ to initialize _cached_kv_cache_data
         assert self.block_size == 1, "AITER MLA requires only block size 1."
 
     def prepare(self, batch: ScheduledBatch):
@@ -116,13 +118,25 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
                 ("kv_last_page_lens", bs),
             ]
         ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
-        set_context(
-            False,
-            batch_size=scheduled_bs,
-            graph_bs=bs,
+        attn_metadata = AttentionMetaData(
             dropout_p=dropout_p,
             max_q_len=max_q_len,
             **ctx,
         )
-        positions = var["positions"].copy_to_gpu(sum_scheduled_tokens)
-        return positions
+        positions=var["positions"].copy_to_gpu(sum_scheduled_tokens)
+        return attn_metadata, positions
+
+    def build_for_cudagraph_capture(self, forward_vars, bs: int) -> AttentionMetaData:
+        attn_matadata = AttentionMetaData(
+            slot_mapping=forward_vars["slot_mapping"].gpu[:bs],
+            context_lens=forward_vars["context_lens"].gpu[:bs],
+            block_tables=forward_vars["block_tables"].gpu[:bs],
+            max_q_len=1,
+            cu_seqlens_q=forward_vars["cu_seqlens_q"].gpu[: bs + 1],
+            kv_indptr=forward_vars["kv_indptr"].gpu[: bs + 1],
+            kv_indices=forward_vars["kv_indices"].gpu[:],
+            kv_last_page_lens=forward_vars["kv_last_page_lens"].gpu[:bs],
+        )
+        positions=forward_vars["positions"].copy_to_gpu(bs)
+        context = Context(positions=positions, is_prefill=False, batch_size=bs, graph_bs=bs)
+        return attn_matadata, context
