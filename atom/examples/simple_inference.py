@@ -48,8 +48,17 @@ def main():
         for prompt in prompts
     ]
     print("This is prompts:", prompts)
+    print("Warming up...")
+    _ = llm.generate(["warmup"], sampling_params)
+    print("Warm up done")
 
+    print("\n" + "=" * 70)
+    print("Starting profiling...")
+    print("=" * 70)
+
+    llm.start_profile()
     outputs = llm.generate(prompts, sampling_params)
+    llm.stop_profile()
 
     for prompt, output in zip(prompts, outputs):
         print("\n")

@@ -23,6 +23,7 @@ from atom.utils.forward_context import (
 from aiter.ops.triton.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant import (  # noqa: E501 # isort: skip
     batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant as _aiter_triton_fp8_bmm,
 )
+from aiter.ops.triton.fused_kv_cache import fused_qk_rope_cat_and_cache_mla
 
 torch.set_printoptions(threshold=10_000)
 
@@ -196,7 +197,7 @@ class MLAAttention(nn.Module):
         self,
         q: torch.Tensor,
         kv_c_normed: torch.Tensor,
-        k_pe: torch.Tensor,
+        k_rope: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: AttentionMetaData,
     ) -> torch.Tensor:
@@ -207,9 +208,9 @@ class MLAAttention(nn.Module):
         )
         k_nope, v = kv_nope.split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
 
-        if k_pe.dim() == 2:
-            k_pe = k_pe.unsqueeze(1)
-        k = torch.cat((k_nope, k_pe.expand((*k_nope.shape[:-1], -1))), dim=-1)
+        if k_rope.dim() == 2:
+            k_rope = k_rope.unsqueeze(1)
+        k = torch.cat((k_nope, k_rope.expand((*k_nope.shape[:-1], -1))), dim=-1)
 
         output = flash_attn_varlen_func(
             q=q,
@@ -229,16 +230,14 @@ class MLAAttention(nn.Module):
 
     def _forward_decode(
         self,
-        q_nope: torch.Tensor,
-        q_pe: torch.Tensor,
+        q: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: AttentionMetaData,
     ) -> torch.Tensor:
         assert kv_c_and_k_pe_cache.numel() > 0
         assert attn_metadata is not None
-        B = q_nope.shape[0]
+        B = q.shape[0]
 
-        q = torch.cat([q_nope, q_pe], dim=-1)
         o = torch.empty(
             B, self.num_heads, self.kv_lora_rank, dtype=q.dtype, device=q.device
         )
@@ -288,8 +287,8 @@ class MLAAttention(nn.Module):
     def forward(
         self,
         q: torch.Tensor,  # query in unified attn
-        k_c_normed: torch.Tensor,  # key in unified attn
-        k_pe: torch.Tensor,  # value in unified attn
+        k_nope: torch.Tensor,
+        k_rope: torch.Tensor,
         positions: torch.Tensor,
     ) -> torch.Tensor:
         # kv_cache = self.kv_cache
@@ -310,12 +309,12 @@ class MLAAttention(nn.Module):
         if context.is_prefill:
             prefill_q = self.q_proj(q).view(-1, self.num_heads, self.qk_head_dim)
             prefill_q_pe = prefill_q[..., self.qk_nope_head_dim :]
-            self.rotary_emb(positions, prefill_q_pe, k_pe)
+            self.rotary_emb(positions, prefill_q_pe, k_rope)
 
             if kv_cache.numel() > 0:
                 concat_and_cache_mla(
-                    k_c_normed,
-                    k_pe.squeeze(1),
+                    k_nope,
+                    k_rope.squeeze(1),
                     kv_cache,
                     attn_metadata.slot_mapping.flatten(),
                     kv_cache_dtype=self.kv_cache_dtype,
@@ -323,25 +322,27 @@ class MLAAttention(nn.Module):
                 )
 
             output = self._forward_prefill(
-                prefill_q, k_c_normed, k_pe, kv_cache, attn_metadata
+                prefill_q, k_nope, k_rope, kv_cache, attn_metadata
             )
         else:
-            decode_ql_nope, decode_q_pe = self._q_proj_and_k_up_proj(q)
-            self.rotary_emb(positions, decode_q_pe, k_pe)
+            q_nope, q_rope = self._q_proj_and_k_up_proj(q)
 
             if kv_cache.numel() > 0:
-                concat_and_cache_mla(
-                    k_c_normed,
-                    k_pe.squeeze(1),
+                decode_q, _, _, _ = fused_qk_rope_cat_and_cache_mla(
+                    q_nope,
+                    q_rope,
+                    k_nope.view(-1, self.num_kv_heads, self.kv_lora_rank),
+                    k_rope.view(-1, self.num_kv_heads, self.qk_rope_head_dim),
                     kv_cache,
-                    attn_metadata.slot_mapping.flatten(),
-                    kv_cache_dtype=self.kv_cache_dtype,
-                    scale=self._k_scale,
+                    attn_metadata.slot_mapping,
+                    positions,
+                    self.rotary_emb.cos_cache,
+                    self.rotary_emb.sin_cache,
+                    k_scale=self._k_scale,
+                    is_neox=self.rotary_emb.is_neox_style,
                 )
 
-            output = self._forward_decode(
-                decode_ql_nope, decode_q_pe, kv_cache, attn_metadata
-            )
+            output = self._forward_decode(decode_q, kv_cache, attn_metadata)
 
         return output
 
