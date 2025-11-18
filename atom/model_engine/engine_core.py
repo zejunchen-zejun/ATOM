@@ -44,6 +44,8 @@ class EngineCoreRequestType(enum.Enum):
     EXECUTOR_FAILED = b"\x04"
     # Sentinel used within EngineCore.
     SHUTDOWN = b"\x05"
+    # Stream output for callbacks
+    STREAM = b"\x06"
 
 
 class EngineCore:
@@ -51,6 +53,7 @@ class EngineCore:
         self.label = "Engine Core"
         self.input_queue = queue.Queue[Sequence]()
         self.output_queue = queue.Queue[List[Sequence]]()
+        self.stream_output_queue = queue.Queue()  # Queue for streaming intermediate outputs
         self.input_address = input_address
         self.output_address = output_address
         self.input_thread = threading.Thread(
@@ -138,8 +141,20 @@ class EngineCore:
         scheduled_batch = self.scheduler.schedule()
         out = self.runner_mgr.call_func("forward", scheduled_batch, wait_out=True)
         seqs = scheduled_batch.seqs.values()
-        self.scheduler.postprocess(seqs, out)
-        self.output_queue.put_nowait([seq for seq in seqs if seq.is_finished])
+        # Pass stream_output_queue to postprocess for streaming callbacks
+        finished_seqs = self.scheduler.postprocess(seqs, out, stream_output_queue=self.stream_output_queue)
+        
+        # Send stream outputs to main process via output_queue
+        try:
+            while not self.stream_output_queue.empty():
+                stream_outputs = self.stream_output_queue.get_nowait()
+                # Send stream outputs as intermediate results
+                self.output_queue.put_nowait(("STREAM", stream_outputs))
+        except queue.Empty:
+            pass
+        
+        if finished_seqs:
+            self.output_queue.put_nowait(finished_seqs)
 
     def pull_and_process_input_queue(self):
         recv_reqs = []
@@ -203,7 +218,16 @@ class EngineCore:
             logger.debug(f"{self.label}: output socket connected")
 
             while True:
-                seqs = self.output_queue.get()
+                item = self.output_queue.get()
+                if isinstance(item, tuple) and item[0] == "STREAM":
+                    # Send stream outputs
+                    stream_outputs = item[1]
+                    serialized_obj = pickle.dumps((EngineCoreRequestType.STREAM, stream_outputs))
+                    socket.send(serialized_obj)
+                    continue
+                
+                # Regular finished sequences
+                seqs = item
                 valid_seqs = [
                     seq for seq in seqs if seq.status != SequenceStatus.EXIT_ENGINE
                 ]

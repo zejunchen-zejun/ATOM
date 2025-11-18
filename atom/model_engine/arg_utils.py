@@ -1,7 +1,7 @@
 import argparse
 from typing import List
 
-from atom import LLMEngine
+from atom import LLMEngine, AsyncLLMEngine
 from atom.config import CompilationConfig
 
 
@@ -165,6 +165,26 @@ class EngineArgs:
             compilation_config=CompilationConfig(
                 level=self.level,
                 cudagraph_capture_sizes=parse_size_list(self.cudagraph_capture_sizes) if self.cudagraph_capture_sizes else None,
+            ),
+        )
+    
+    def create_async_engine(self) -> AsyncLLMEngine:
+        """Create and return an AsyncLLMEngine instance with the configured parameters."""
+        return AsyncLLMEngine(
+            self.model,
+            enforce_eager=self.enforce_eager,
+            tensor_parallel_size=self.tensor_parallel_size,
+            kv_cache_dtype=self.kv_cache_dtype,
+            kv_cache_block_size=self.block_size,
+            max_model_len=self.max_model_len,
+            port=self.port,
+            load_dummy=self.load_dummy,
+            enable_expert_parallel=self.enable_expert_parallel,
+            torch_profiler_dir=self.torch_profiler_dir,
+            asyncio_mode=True,
+            compilation_config=CompilationConfig(
+                level=self.level,
+                cudagraph_capture_sizes=parse_size_list(self.cudagraph_capture_sizes),
             ),
         )
 
