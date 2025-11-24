@@ -5,7 +5,7 @@
 ## 🚀 Features
 
 - **ROCm Optimized**: Built on AMD's ROCm platform with torch compile support
-- **Model Support**: Compatible with Qwen, Llama, and Mixtral models
+- **Model Support**: Compatible with **[Deepseek](https://huggingface.co/deepseek-ai)**, **[Qwen](https://huggingface.co/Qwen)**, **[Llama](https://huggingface.co/meta-llama)**, and **[Mixtral](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1)**.
 - **Easy Integration**: Simple API for quick deployment
 
 ## 📋 Requirements
@@ -52,7 +52,7 @@ pip install .
 
 ### Basic Example
 
-The default optimization level is 3 (running with torch compile). Supported models include **[Deepseek](https://huggingface.co/deepseek-ai)** **[Qwen](https://huggingface.co/Qwen)**, **Llama**, and **Mixtral**.
+The default optimization level is 3 (running with torch compile). Supported models include **[Deepseek](https://huggingface.co/deepseek-ai)**, **[Qwen](https://huggingface.co/Qwen)**, **[Llama](https://huggingface.co/meta-llama)**, and **[Mixtral](https://huggingface.co/mistralai/Mixtral-8x7B-v0.1)**.
 
 ```bash
 python -m atom.examples.simple_inference --model meta-llama/Meta-Llama-3-8B
@@ -144,6 +144,5 @@ Finally, run the evaluation by choosing your datasets:
 lm_eval --model local-completions \
         --model_args model=meta-llama/Meta-Llama-3-8B,base_url=http://localhost:8000/v1/completions,num_concurrent=8,max_retries=3,tokenized_requests=False \
         --tasks gsm8k \
-        --num_fewshot 3 \
-        --batch_size 16
+        --num_fewshot 3
 ```
