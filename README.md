@@ -52,7 +52,7 @@ pip install .
 
 ### Basic Example
 
-The default optimization level is 3 (running with torch compile). Supported models include **Qwen**, **Llama**, and **Mixtral**.
+The default optimization level is 3 (running with torch compile). Supported models include **[Deepseek](https://huggingface.co/deepseek-ai)** **[Qwen](https://huggingface.co/Qwen)**, **Llama**, and **Mixtral**.
 
 ```bash
 python -m atom.examples.simple_inference --model meta-llama/Meta-Llama-3-8B
