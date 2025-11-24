@@ -1,4 +1,8 @@
-# ATOM
+<div align="center" id="logo">
+<img src="docs/atom_logo.png" alt="logo" width="400" margin="10px"></img>
+</div>
+
+--------------------------------------------------------------------------------
 
 **ATOM** (AiTer Optimized Model) is a lightweight vLLM-like implementation, focusing on integration and optimization based on [aiter](https://github.com/ROCm/aiter).
 
