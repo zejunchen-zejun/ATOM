@@ -25,7 +25,9 @@ from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_m
 
 
 def divide(numerator, denominator):
-    assert numerator % denominator == 0, f"numerator {numerator} denominator {denominator}"
+    assert (
+        numerator % denominator == 0
+    ), f"numerator {numerator} denominator {denominator}"
     return numerator // denominator
 
 
@@ -63,8 +65,13 @@ class LinearBase(nn.Module):
             self.output_partition_sizes = [
                 divide(s, self.tp_size) for s in self.output_partition_sizes
             ]
+        weight_size = (
+            (self.output_size, self.input_size)
+            if params_dtype not in [dtypes.fp4x2, dtypes.i4x2]
+            else (self.output_size, self.input_size // 2)
+        )
         self.weight = nn.Parameter(
-            torch.empty((self.output_size, self.input_size), dtype=params_dtype),
+            torch.empty(weight_size, dtype=params_dtype),
             requires_grad=False,
         )
         if bias:
@@ -211,9 +218,10 @@ class LinearBase(nn.Module):
                         self.weight,
                         x_scale,
                         self.weight_scale,
-                        self.bias,
                         dtype=otype,
                     )
+                    if self.bias is not None:
+                        y += self.bias
             elif self.quant_type.value == QuantType.per_1x128.value:
                 y = gemm_a8w8_blockscale_bpreshuffle(
                     x, self.weight, x_scale, self.weight_scale, dtype=otype
@@ -233,9 +241,10 @@ class LinearBase(nn.Module):
                     x_scale,
                     self.weight_scale,
                     y,
-                    self.bias,
-                    dtype=otype,
                 )
+                y = y[:m, ...]
+                if self.bias is not None:
+                    y += self.bias
         if self.tp_dim == 1 and self.tp_size > 1 and self.reduce_results:
             y = get_tp_group().all_reduce(y, ca_fp8_quant=False)
         return y
@@ -412,20 +421,24 @@ class RowParallelLinear(LinearBase):
             input_size,
             output_size,
             tp_dim=1,
-            bias=bias if self.tp_rank == 0 else False,
+            bias=bias,
             quant_config=quant_config,
             reduce_results=reduce_results,
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
         param_data = param.data
-        shard_size = param_data.size(self.tp_dim)
-        if len(loaded_weight.shape) == 0:
-            loaded_weight = loaded_weight.view(1, 1)
-        if loaded_weight.size(self.tp_dim) == 1 and self.tp_size > 1:
-            loaded_weight = loaded_weight.repeat(1, self.tp_size)
-        start_idx = self.tp_rank * shard_size
-        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
+        if param is not getattr(self, "bias", None):
+            shard_size = param_data.size(self.tp_dim)
+            if len(loaded_weight.shape) == 0:
+                loaded_weight = loaded_weight.view(1, 1)
+            if loaded_weight.size(self.tp_dim) == 1 and self.tp_size > 1:
+                loaded_weight = loaded_weight.repeat(1, self.tp_size)
+            start_idx = self.tp_rank * shard_size
+            loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
+        else:
+            if self.tp_size > 0 and self.tp_rank != 0:
+                loaded_weight.zero_()
         param.weight_loader_process(param_data, loaded_weight)
 
 

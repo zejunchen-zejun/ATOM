@@ -308,8 +308,10 @@ def get_quant_config(config: PretrainedConfig) -> QuantizationConfig:
     RE_QUANT_DTYPE = r"\'(?:d?type|weight_dtype|quant_method)\'\:\s*\'(\w+)\'"
     quant_dtype = None
     m = re.search(RE_QUANT_DTYPE, orig_quant_config_str)
-    if m and m.group(1).lower() in ["fp8", "fp4", "int8", "int4", "fp8_e4m3"]:
+    if m and m.group(1).lower() in ["fp8", "fp4", "int8", "int4", "fp8_e4m3", "mxfp4"]:
         dtype = m.group(1).lower().split("_")[0]
+        if dtype == "mxfp4":
+            dtype = "fp4"
         if dtype.endswith("4"):
             dtype += "x2"
         quant_dtype = d_dtypes[dtype]
@@ -330,6 +332,8 @@ def get_quant_config(config: PretrainedConfig) -> QuantizationConfig:
     assert (
         quant_dtype is not None
     ), f"Cannot parse quant dtype from {orig_quant_config_str}"
+    if quant_dtype == d_dtypes["fp4x2"]:
+        quant_type = QuantType.per_1x32
 
     RE_STATIC_QUANT = r"\'(?:activation_scheme)\'\:\s*\'(static)\'"
     if re.search(RE_STATIC_QUANT, orig_quant_config_str):
