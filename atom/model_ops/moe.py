@@ -379,6 +379,7 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
         self.quant_config = quant_config
         self.quant_type = self.quant_config["quant_type"]
         self.quant_dtype = self.quant_config["quant_dtype"]
+        self.quant_method = self.quant_config["quant_method"]
         self.block_quant = (
             self.quant_type == QuantType.per_1x128
             or self.quant_type == QuantType.per_1x32
@@ -527,6 +528,18 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
                 .contiguous()
                 .view(-1, n)
             )
+        # quark method for moe, split it out?
+        elif self.quant_method == "quark":
+            s0, s1, _ = layer.w13_weight_scale.shape
+            w13_weight_scale = layer.w13_weight_scale.view(s0 * s1, -1)
+            w13_weight_scale = fp4_utils.e8m0_shuffle(w13_weight_scale)
+            layer.w13_weight_scale.data = w13_weight_scale.view(s0, s1, -1)
+
+            s0, s1, _ = layer.w2_weight_scale.shape
+            w2_weight_scale = layer.w2_weight_scale.view(s0 * s1, -1)
+            w2_weight_scale = fp4_utils.e8m0_shuffle(w2_weight_scale)
+            layer.w2_weight_scale.data = w2_weight_scale.view(s0, s1, -1)
+            return
         else:
             shuffled_w13, shuffled_w2 = shuffle_weights(
                 layer.w13_weight, layer.w2_weight

@@ -18,6 +18,7 @@ from aiter import (
 from aiter.dist.parallel_state import get_tp_group
 from aiter.ops.shuffle import shuffle_weight
 from aiter.tuned_gemm import tgemm
+from aiter.utility import fp4_utils
 from torch import nn
 
 from atom.config import QuantizationConfig
@@ -29,6 +30,44 @@ def divide(numerator, denominator):
         numerator % denominator == 0
     ), f"numerator {numerator} denominator {denominator}"
     return numerator // denominator
+
+from aiter.jit.utils.torch_guard import torch_compile_guard
+from aiter import gemm_a4w4, per_1x32_f4_quant_hip
+
+def gemm_a4w4_quant_fake(x: torch.Tensor, weight: torch.Tensor, otype: torch.dtype, weight_scale: torch.Tensor, params_dtype: torch.dtype,
+                    input_scale: torch.Tensor, output_size: int) -> torch.Tensor:
+    return torch.empty(
+            (*x.shape[:-1], weight.shape[0]), dtype=otype, device=x.device
+        )
+
+#It's important to use mutates_args=[] to avoid functionized_v2 op generation
+@torch_compile_guard(gen_fake=gemm_a4w4_quant_fake, mutates_args=[])
+def gemm_a4w4_quant(x: torch.Tensor, weight: torch.Tensor, otype: torch.dtype, weight_scale: torch.Tensor, params_dtype: torch.dtype,
+                    input_scale: torch.Tensor, output_size: int) -> torch.Tensor:
+
+    quant_func = get_hip_quant(QuantType.per_1x32)
+    x, x_scale = quant_func(
+        x,
+        quant_dtype=params_dtype,
+        scale=input_scale,
+        shuffle=True,
+    )
+
+    m = x.view(-1, x.size(-1)).shape[0]
+    y = torch.empty(
+        ((m + 31) // 32 * 32, output_size),
+        dtype=otype,
+        device=x.device,
+    )
+    w_scale = fp4_utils.e8m0_shuffle(weight_scale.data)
+    y = gemm_a4w4(
+        x,
+        weight,
+        x_scale,
+        w_scale,
+        y,
+    )
+    return y[:m, ...]
 
 
 class LinearBase(nn.Module):
@@ -188,11 +227,12 @@ class LinearBase(nn.Module):
                 quant_func = get_hip_quant(self.quant_type)
                 if self.quant_type.value == QuantType.per_1x128.value:
                     quant_func = functools_partial(quant_func, transpose_scale=True)
-                x, x_scale = quant_func(
-                    x,
-                    quant_dtype=self.params_dtype,
-                    scale=getattr(self, "input_scale", None),
-                )
+                if self.quant_type.value != QuantType.per_1x32.value:
+                    x, x_scale = quant_func(
+                        x,
+                        quant_dtype=self.params_dtype,
+                        scale=getattr(self, "input_scale", None),
+                    )
             if self.quant_type.value == QuantType.per_Tensor.value:
                 y = tgemm.mm(
                     x,
@@ -229,20 +269,7 @@ class LinearBase(nn.Module):
                 if self.bias is not None:
                     y += self.bias
             elif self.quant_type.value == QuantType.per_1x32.value:
-                m = x.view(-1, x.size(-1)).shape[0]
-                y = torch.empty(
-                    ((m + 31) // 32 * 32, self.output_size),
-                    dtype=otype,
-                    device=x.device,
-                )
-                y = gemm_a4w4(
-                    x,
-                    self.weight,
-                    x_scale,
-                    self.weight_scale,
-                    y,
-                )
-                y = y[:m, ...]
+                y = gemm_a4w4_quant(x, self.weight, otype, self.weight_scale.data, self.params_dtype, getattr(self, "input_scale", None), self.output_size)
                 if self.bias is not None:
                     y += self.bias
         if self.tp_dim == 1 and self.tp_size > 1 and self.reduce_results:
