@@ -57,6 +57,7 @@ class Attention(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
         position: torch.Tensor = None,
+        q_scale: torch.Tensor=None,
     ):
         o: torch.Tensor
         q = q.view(-1, self.num_heads, self.head_dim)

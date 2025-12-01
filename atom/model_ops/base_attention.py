@@ -1,5 +1,6 @@
 # from flash_attn import flash_attn_with_kvcache
 from dataclasses import dataclass
+from typing import Optional
 
 import aiter
 import torch
@@ -17,6 +18,7 @@ from atom.utils.selector import get_attn_backend
 
 def fake_(
     q: torch.Tensor,
+    q_scale: Optional[torch.Tensor],
     k: torch.Tensor,
     v: torch.Tensor,
     positions: torch.Tensor,
@@ -37,6 +39,7 @@ def fake_(
 @mark_spliting_op(is_custom=True, gen_fake=fake_, mutates_args=[])
 def unified_attention_with_output_base(
     q: torch.Tensor,
+    q_scale: Optional[torch.Tensor],
     k: torch.Tensor,
     v: torch.Tensor,
     positions: torch.Tensor,
@@ -45,7 +48,7 @@ def unified_attention_with_output_base(
 ) -> torch.Tensor:
     atom_config = get_current_atom_config()
     self = atom_config.compilation_config.static_forward_context[layer_name]
-    return self.impl.forward(q, k, v, positions)
+    return self.impl.forward(q, k, v, positions, q_scale)
 
 
 class Attention(nn.Module):
@@ -114,8 +117,9 @@ class Attention(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
         positions: torch.Tensor = None,
+        q_scale: Optional[torch.Tensor]=None,
     ):
         output = torch.ops.aiter.unified_attention_with_output_base(
-            q, k, v, positions, self.layer_name, self.use_mla
+            q, q_scale, k, v, positions, self.layer_name, self.use_mla
         )
         return output

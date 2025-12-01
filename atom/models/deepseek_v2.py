@@ -48,6 +48,8 @@ from aiter.ops.triton.pa_mqa_logits import (
     deepgemm_fp8_paged_mqa_logits_stage1,
 )
 from aiter.rotary_embedding import get_rope
+from aiter.ops.triton.fused_fp8_quant import fused_rms_fp8_group_quant
+from aiter.ops.triton.fused_mxfp4_quant import fused_rms_mxfp4_quant
 from torch import nn
 from transformers import PretrainedConfig
 
@@ -80,8 +82,57 @@ from atom.models.utils import (
 from atom.utils.forward_context import get_forward_context
 from atom.utils.custom_register import direct_register_custom_op
 from atom.utils.decorators import support_torch_compile
-
+from atom.utils import envs
 # from vllm.model_executor.layers.quantization.utils.fp8_utils import per_token_group_quant_fp8
+
+ENABLE_DS_QKNORM_QUANT_FUSION = envs.ATOM_ENABLE_DS_QKNORM_QUANT_FUSION
+
+# only for DS MLA attention
+def _fuse_rmsnorm_quant(
+    x1: torch.Tensor,
+    x1_weight: torch.Tensor,
+    x1_epsilon: float,
+    x2: Optional[torch.Tensor] = None,
+    x2_weight: Optional[torch.Tensor] = None,
+    x2_epsilon: float = 0.0,
+    res1: Optional[torch.Tensor] = None,
+    dtype_quant=dtypes.fp8,
+    shuffle: Optional[bool] = False,
+    scale_shuffle_padding: Optional[bool] = False,
+    group_size=128,
+    output_unquantized_inp1=False,
+    transpose_scale=False,
+):
+    if dtype_quant == dtypes.fp8:
+        (out1_quantized, out1_bs), out1_unquantized, out2, out_res1 = fused_rms_fp8_group_quant(
+            x1,
+            x1_weight,
+            x1_epsilon,
+            x2,
+            x2_weight,
+            x2_epsilon,
+            group_size,
+            dtype_quant,
+            res1,
+            output_unquantized_inp1,
+            transpose_scale,
+        )
+    elif dtype_quant == dtypes.fp4x2:
+         (out1_quantized, out1_bs), out2, out_res1 = fused_rms_mxfp4_quant(
+            x1,
+            x1_weight,
+            x1_epsilon,
+            x2,
+            x2_weight,
+            x2_epsilon,
+            res1,
+            shuffle,
+            scale_shuffle_padding,
+        )
+         out1_unquantized = None
+    else:
+        raise ValueError(f"No fused rmsnorm quant kernel availble for quant dtype: {dtype_quant}.")
+    return (out1_quantized, out1_bs), out1_unquantized, out2, out_res1
 
 class DeepseekV2MLP(nn.Module):
 
@@ -605,6 +656,7 @@ class DeepseekV2MLAAttention(nn.Module):
         )
 
         self.prefix = prefix
+        self.quant_dtype = quant_config["quant_dtype"] if quant_config else None
 
     def forward(
         self,
@@ -619,19 +671,40 @@ class DeepseekV2MLAAttention(nn.Module):
                 [self.q_lora_rank, self.kv_lora_rank, self.qk_rope_head_dim],
                 dim=-1,
             )
-            hidden_states_or_q_c = self.q_a_layernorm(q_c)
+            # fuse q_c norm + kv_c norm + quant of hidden_states_or_q_c
+            if ENABLE_DS_QKNORM_QUANT_FUSION:
+                (hidden_states_or_q_c,
+                 hidden_states_or_q_c_scale), _, kv_c_normed, _ = _fuse_rmsnorm_quant(
+                    q_c,
+                    self.q_a_layernorm.weight,
+                    self.q_a_layernorm.eps,
+                    kv_c,
+                    self.kv_a_layernorm.weight,
+                    self.kv_a_layernorm.eps,
+                    None,
+                    dtype_quant=self.quant_dtype,
+                    shuffle=False,
+                    scale_shuffle_padding=False,
+                    group_size=128,
+                    output_unquantized_inp1=False,
+                    transpose_scale=False,
+                )
+            else:
+                hidden_states_or_q_c = self.q_a_layernorm(q_c)
         else:
             hidden_states_or_q_c = hidden_states
             kv_c, k_pe = torch.split(self.kv_a_proj_with_mqa(hidden_states),
                 [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        kv_c_normed = self.kv_a_layernorm(kv_c)
+        if not ENABLE_DS_QKNORM_QUANT_FUSION:
+            kv_c_normed = self.kv_a_layernorm(kv_c)
         if self.is_v32 and self.indexer is not None:
             _topk_indices = self.indexer(hidden_states, hidden_states_or_q_c, positions, self.rotary_emb)
 
         return self.mla_attn(hidden_states_or_q_c,
                              kv_c_normed,
                              k_pe,
-                             positions)
+                             positions,
+                             None if not ENABLE_DS_QKNORM_QUANT_FUSION else hidden_states_or_q_c_scale,)
 
 
 class DeepseekV2DecoderLayer(nn.Module):
