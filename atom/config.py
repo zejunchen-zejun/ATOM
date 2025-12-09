@@ -1,22 +1,25 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
+import sys
 import enum
 import hashlib
 import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Union
+from pydantic import Field
+from typing import Any, Optional, Union
+from functools import lru_cache
 
 import torch
-from atom.utils import envs, get_open_port
+from atom.utils import envs
 from atom.utils.distributed.utils import stateless_init_torch_distributed_process_group
+
 from torch.distributed import ProcessGroup, ReduceOp
 from transformers import AutoConfig, PretrainedConfig
 
 from aiter import QuantType
-from aiter.dist.parallel_state import get_dp_group
 from aiter.utility.dtypes import d_dtypes
 
 logger = logging.getLogger("atom")
@@ -248,7 +251,7 @@ class CompilationConfig:
             ]
 
 
-class QuantizationConfig(dict):
+class ATOMQuantizationConfig(dict):
     def __init__(
         self,
         quant_type=QuantType.No,
@@ -266,6 +269,8 @@ class QuantizationConfig(dict):
 
     def get_name(self):
         return self["quant_name"]
+
+    # TODO: add get_quant_method for this config
 
     def compute_hash(self) -> str:
         """
@@ -290,11 +295,11 @@ class QuantizationConfig(dict):
         return hashlib.sha256(str(factors).encode()).hexdigest()
 
 
-def get_quant_config(config: PretrainedConfig) -> QuantizationConfig:
+def get_quant_config(config: PretrainedConfig) -> ATOMQuantizationConfig:
     torch_dtype = getattr(config, "torch_dtype", "bf16")
     orig_quant_config = getattr(config, "quantization_config", None)
     if orig_quant_config is None:
-        return QuantizationConfig(
+        return ATOMQuantizationConfig(
             quant_type=QuantType.No,
             quant_dtype=torch_dtype,
         )
@@ -349,7 +354,7 @@ def get_quant_config(config: PretrainedConfig) -> QuantizationConfig:
         is_dynamic = False
     else:
         is_dynamic = True
-    return QuantizationConfig(
+    return ATOMQuantizationConfig(
         quant_type, quant_dtype, is_dynamic, quant_method=quant_method
     )
 
@@ -382,26 +387,31 @@ def get_hf_config(model: str) -> PretrainedConfig:
     return AutoConfig.from_pretrained(model)
 
 
+# TODO: remove this class
 @dataclass
 class ParallelConfig:
+    """Configuration for the distributed execution."""
+
+    pipeline_parallel_size: int = 1
+    """Number of pipeline parallel groups."""
+    tensor_parallel_size: int = 1
+    """Number of tensor parallel groups."""
     data_parallel_size: int = 1
     """Number of data parallel groups. MoE layers will be sharded according to
     the product of the tensor parallel size and data parallel size."""
-    data_parallel_size_local: int = 1
-    """Number of local data parallel groups."""
     data_parallel_rank: int = 0
     """Rank of the data parallel group."""
     data_parallel_rank_local: Optional[int] = None
     """Local rank of the data parallel group,
     set only in SPMD mode."""
-    world_size: int = field(init=False)
-    """world_size is TPxPP, it affects the number of workers we create."""
     data_parallel_master_port: int = 29500
     """Port of the data parallel master."""
-
-    data_parallel_base_port: int = 29400
-
     data_parallel_master_ip: str = "127.0.0.1"
+    """IP of the data parallel master."""
+    world_size: int = 1
+    """world_size is TPxPP, it affects the number of workers we create."""
+    rank: int = 0
+    """Global rank in distributed setup."""
 
     @property
     def world_size_across_dp(self) -> int:
@@ -472,8 +482,6 @@ class ParallelConfig:
     def __post_init__(self) -> None:
         # Only override with env vars if not already set to non-default values
         # This allows programmatic configuration to take precedence
-        import os
-
         if os.getenv("ATOM_DP_SIZE") is not None:
             self.data_parallel_size = envs.ATOM_DP_SIZE
         if os.getenv("ATOM_DP_RANK") is not None:
@@ -481,7 +489,8 @@ class ParallelConfig:
         if os.getenv("ATOM_DP_RANK_LOCAL") is not None:
             self.data_parallel_rank_local = envs.ATOM_DP_RANK_LOCAL
         # self.data_parallel_master_ip = envs.ATOM_DP_MASTER_IP
-        self.data_parallel_master_port = get_open_port()
+        # TODO: plugin no need to set the addr and port
+        # self.data_parallel_master_port = get_open_port()
 
 @dataclass
 class SpeculativeConfig:
@@ -518,37 +527,48 @@ class SpeculativeConfig:
         num_spec_tokens = self.num_speculative_tokens
         return f"SpeculativeConfig({method=}, {num_spec_tokens=})"
 
+# TODO: refine here to align with the vllm config
+# or just use the vllm config directly
+# TODO: leave as for freedom, but need to refine later
+# TODO: add some comment for Config class
+# TODO: keep the atom config and add vllmConfig, sglangConfig
 @dataclass
 class Config:
-    model: str
-    max_num_batched_tokens: int = 16384
-    max_num_seqs: int = 512
+    # common config
+    model_config: Any = None
+    cache_config: Any = None
+    parallel_config: ParallelConfig = Field(default_factory=ParallelConfig)
+    compilation_config: CompilationConfig = Field(default_factory=CompilationConfig)
+    kv_cache_dtype: str = "bf16"
     max_model_len: int | None = None
-    gpu_memory_utilization: float = 0.9
-    tensor_parallel_size: int = 1
-    enforce_eager: bool = False
-    hf_config: PretrainedConfig = field(init=False)
-    parallel_config: ParallelConfig = field(default_factory=ParallelConfig)
-    bos_token_id: int = -1
-    eos_token_id: int = -1
+    enable_expert_parallel: bool = False
+    torch_dtype: torch.dtype = field(init=False) # post init
+
+    # vllm specific
+    scheduler_config: Any = None
+    vllm_quant_config: Any = None
     kv_cache_block_size: int = 16
     num_kvcache_blocks: int = -1
-    kv_cache_dtype: str = "bf16"
-    enable_prefix_caching: bool = False
-    port: int = 8006
-    torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
-    compilation_config: CompilationConfig = field(default_factory=CompilationConfig)
-    quant_config: QuantizationConfig = field(
-        default_factory=lambda: QuantizationConfig()
-    )
-    asyncio_mode: bool = False
-    load_dummy: bool = False
-    enable_expert_parallel: bool = False
-    master_addr: str = "127.0.0.1"
-    graph_bs: Optional[list[int]] = None
+
+    # sglang specific
+    sgl_model_opt_config: Any = None
+    sgl_load_config: Any = None
+    enable_torch_compile: bool = False
+    disable_cuda_graph: bool = False
     enable_dp_attention: bool = False
-    torch_dtype: torch.dtype = field(init=False)
+    dist_init_addr: Optional[str] = None
+    port_args: Any = None
+
+    # atom specific
+    # TODO: remove here bos_token_id and eos_token_id
+    # bos_token_id: int = -1
+    # eos_token_id: int = -1
+    load_dummy: bool = False
+    graph_bs: Optional[list[int]] = None
+    atom_quant_config: Optional[ATOMQuantizationConfig] = None
     speculative_config: Optional[SpeculativeConfig] = None
+    is_vllm: bool = False
+    is_sglang: bool = False
 
     def _set_cudagraph_sizes(self):
         if self.compilation_config.cudagraph_capture_sizes:
@@ -563,36 +583,38 @@ class Config:
                 self.graph_bs = cuda_graph_sizes
 
     def __post_init__(self):
-        # assert os.path.isdir(self.model)
         assert (
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
-        assert 1 <= self.tensor_parallel_size <= 8
-        self.hf_config = get_hf_config(self.model)
-        self.quant_config = get_quant_config(self.hf_config)
+        assert 1 <= self.parallel_config.tensor_parallel_size <= 8
+        assert self.is_vllm or self.is_sglang, "ATOM should be work as plugin for vllm or sglang for now"
+
+        hf_config = self.model_config.hf_config
+        # TODO: here is free for ATOM to define its quant config
+        self.atom_quant_config = get_quant_config(hf_config)
+
         hf_config_max_position_embeddings = getattr(
-            self.hf_config, "max_position_embeddings", 8192
+            hf_config, "max_position_embeddings", 8192
         )
+
         if self.max_model_len is None:
             self.max_model_len = hf_config_max_position_embeddings
         else:
             self.max_model_len = min(
                 self.max_model_len, hf_config_max_position_embeddings
             )
+
         # assert self.max_num_batched_tokens >= self.max_model_len
-        if self.torch_profiler_dir is not None:
-            os.makedirs(self.torch_profiler_dir, exist_ok=True)
-        assert self.torch_profiler_dir is None or os.path.isdir(
-            self.torch_profiler_dir
-        ), f"torch_profiler_dir {self.torch_profiler_dir} is not a valid directory"
-        if self.compilation_config.level == CompilationLevel.PIECEWISE:
-            self.compilation_config.set_splitting_ops_for_v1()
-            self._set_cudagraph_sizes()
-            self.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
-            self.compilation_config.init_with_cudagraph_sizes()
+        if self.is_vllm:
+            if self.compilation_config.level == CompilationLevel.PIECEWISE:
+                self.compilation_config.set_splitting_ops_for_v1()
+                self._set_cudagraph_sizes()
+                self.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
+                self.compilation_config.init_with_cudagraph_sizes()
+
         self.torch_dtype = (
-            self.hf_config.torch_dtype
-            if getattr(self.hf_config, "torch_dtype", None) is not None
+            hf_config.torch_dtype
+            if getattr(hf_config, "torch_dtype", None) is not None
             else torch.bfloat16
         )
 
@@ -622,8 +644,7 @@ class Config:
             vllm_factors.append(self.parallel_config.compute_hash())
 
         factors.append(vllm_factors)
-        factors.append(self.tensor_parallel_size)
-        factors.append(self.enable_dp_attention)
+        factors.append(self.parallel_config.tensor_parallel_size)
 
         hash_str = hashlib.md5(
             str(factors).encode(), usedforsecurity=False
@@ -638,11 +659,136 @@ def set_current_atom_config(atom_config: Config):
     global _current_atom_config
     _current_atom_config = atom_config
     # for MoE to check
-    import os
+    if atom_config.is_vllm:
+        enforce_eager = atom_config.model_config.enforce_eager
+    elif atom_config.is_sglang:
+        enforce_eager = not atom_config.enable_torch_compile
 
-    os.environ["ATOM_ENFORCE_EAGER"] = "1" if atom_config.enforce_eager else "0"
+    # TODO: use config instead of env flags
+    os.environ["ATOM_ENFORCE_EAGER"] = "1" if enforce_eager else "0"
 
 
 def get_current_atom_config() -> Config:
     assert _current_atom_config is not None, "Current atom config is not set"
     return _current_atom_config
+
+
+# TODO: move to plugin folder
+def convert_vllm_config_to_atom(config: Any) -> Config:
+    return Config(
+        # common config
+        model_config=config.model_config,
+        cache_config=config.cache_config,
+        parallel_config=config.parallel_config,
+        compilation_config=config.compilation_config,
+        scheduler_config=config.scheduler_config,
+        kv_cache_dtype=config.cache_config.cache_dtype,
+        max_model_len=config.scheduler_config.max_model_len,
+        enable_expert_parallel=config.parallel_config.enable_expert_parallel,
+        # vllm specific
+        kv_cache_block_size=config.cache_config.block_size,
+        num_kvcache_blocks=config.cache_config.num_gpu_blocks,
+        vllm_quant_config=config.quant_config,
+        # atom specific
+        is_vllm=True,
+    )
+
+
+def convert_sglang_config_to_atom(config: Any) -> Config:
+    from sglang.srt.server_args import (
+        ServerArgs,
+        prepare_server_args,
+        PortArgs,
+    )
+    from sglang.srt.configs.model_config import ModelConfig as SglangModelConfig
+    from sglang.srt.configs.modelopt_config import ModelOptConfig
+    from sglang.srt.configs.load_config import LoadConfig
+
+    print('[zejun] ATOM prepare_server_args, sys.argv = ', sys.argv, flush=True)
+    # sglang has no global config variable like vllm,
+    # so here construct the server args from sys.argv passed by users
+    # this is the only way to get full arguments
+    server_args: ServerArgs = prepare_server_args(sys.argv[1:])
+
+    sgl_model_config = SglangModelConfig.from_server_args(server_args)
+    sgl_model_opt_config = ModelOptConfig(
+        quant=server_args.modelopt_quant,
+        checkpoint_restore_path=server_args.modelopt_checkpoint_restore_path,
+        checkpoint_save_path=server_args.modelopt_checkpoint_save_path,
+        export_path=server_args.modelopt_export_path,
+    )
+
+    sgl_load_config = LoadConfig(
+        load_format=server_args.load_format,
+        download_dir=server_args.download_dir,
+        model_loader_extra_config=server_args.model_loader_extra_config,
+        remote_instance_weight_loader_seed_instance_ip=server_args.remote_instance_weight_loader_seed_instance_ip,
+        remote_instance_weight_loader_seed_instance_service_port=server_args.remote_instance_weight_loader_seed_instance_service_port,
+        remote_instance_weight_loader_send_weights_group_ports=server_args.remote_instance_weight_loader_send_weights_group_ports,
+        remote_instance_weight_loader_backend=server_args.remote_instance_weight_loader_backend,
+        modelopt_config=sgl_model_opt_config,
+        rl_quant_profile=server_args.rl_quant_profile,
+    )
+
+    # sglang doesn't passed the rank number in config, so ATOM get rank number
+    # through torch.distributed.get_rank()
+    rank = torch.distributed.get_rank()
+
+    sgl_parallel_config = ParallelConfig(
+        pipeline_parallel_size=server_args.pp_size,
+        tensor_parallel_size=server_args.tp_size,
+        data_parallel_size=server_args.dp_size,
+        world_size=int(server_args.pp_size * server_args.tp_size),
+        # data_parallel_master_ip=server_args.master_addr,
+        # data_parallel_master_port=,
+        rank=rank,
+        # data_parallel_size_local=server_args.data_parallel_size_local,
+        # data_parallel_rank=server_args.data_parallel_rank,
+        # data_parallel_rank_local=server_args.data_parallel_rank_local,
+    )
+
+    # create the compilation config static_forward_context for sglang
+    sgl_compilation_config = CompilationConfig()
+    sgl_compilation_config.static_forward_context = {}
+
+    return Config(
+        # common config
+        model_config=sgl_model_config,
+        cache_config=None,
+        parallel_config=sgl_parallel_config,
+        compilation_config=sgl_compilation_config,
+        scheduler_config=None,
+        kv_cache_dtype=server_args.kv_cache_dtype,
+        max_model_len=server_args.context_length,
+        enable_expert_parallel=bool(server_args.ep_size > 1),
+        # sglang specific
+        sgl_model_opt_config=sgl_model_opt_config,
+        sgl_load_config=sgl_load_config,
+        enable_torch_compile=server_args.enable_torch_compile,
+        disable_cuda_graph=server_args.disable_cuda_graph,
+        enable_dp_attention=server_args.enable_dp_attention,
+        dist_init_addr=server_args.dist_init_addr,
+        port_args=PortArgs.init_new(server_args),
+        # atom specific
+        is_sglang=True,
+    )
+
+
+def convert_config_to_atom(config: Any = None) -> Config:
+    '''
+    Translate vllm config to atom config, be called when create the custom model
+    config: 
+        - for vllm: config is VllmConfig and contains all config value from vllm
+        - for sglang: config is only model specific config passed from sglang
+    '''
+    atom_config = None
+    from atom.utils.prepare import is_vllm, is_sglang
+    if is_vllm():
+        atom_config = convert_vllm_config_to_atom(config)
+    elif is_sglang():
+        atom_config = convert_sglang_config_to_atom(config)
+
+    # set the current atom config for the custom model
+    set_current_atom_config(atom_config)
+
+    return atom_config

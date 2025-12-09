@@ -2,22 +2,35 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 import torch
-import torch.distributed as dist
-import torch.nn.functional as F
-from aiter import logger
-from aiter.dist.communication_op import tensor_model_parallel_all_gather
-from aiter.dist.parallel_state import get_tp_group
-from aiter.tuned_gemm import tgemm
 from torch import nn
+import torch.nn.functional as F
 
-from atom.utils.forward_context import ForwardContext, get_forward_context
+from aiter.tuned_gemm import tgemm
+from aiter.dist.parallel_state import get_tp_group
+from aiter.dist.communication_op import tensor_model_parallel_all_gather
 
-class VocabParallelEmbedding(nn.Module):
+# from vllm.model_executor.layers.quantization.base_config import (
+#     QuantizationConfig as VllmQuantizationConfig)
+# from vllm.model_executor.layers.vocab_parallel_embedding import (
+#     DEFAULT_VOCAB_PADDING_SIZE,
+#     VocabParallelEmbedding
+# )
+# Import the shared state dict - since dicts are mutable objects,
+# we can access the updated values even with direct import
+from atom.model_ops.attention_mha import _PARALLEL_LMHEAD_STATE
+
+
+class VocabParallelEmbedding(torch.nn.Module):
 
     def __init__(
         self,
         num_embeddings: int,
         embedding_dim: int,
+        params_dtype: torch.dtype | None = None,
+        org_num_embeddings: int | None = None,
+        padding_size: int = 0,
+        quant_config = None,
+        prefix: str = "",
     ):
         super().__init__()
         self.tp_rank = get_tp_group().rank_in_group
@@ -33,14 +46,17 @@ class VocabParallelEmbedding(nn.Module):
         self.weight.weight_loader = self.weight_loader
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        # print('[zejun] ATOM VocabParallelEmbedding weight_loader', flush=True)
         param_data = param.data
         shard_size = param_data.size(0)
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)
         assert param_data.size() == loaded_weight.size()
         param_data.copy_(loaded_weight)
+        # print('[zejun] finish ATOM VocabParallelEmbedding weight_loader', flush=True)
 
     def forward(self, x: torch.Tensor):
+        # print('[zejun] ATOM VocabParallelEmbedding forward', flush=True)
         if self.tp_size > 1:
             mask = torch.logical_and(x >= self.vocab_start_idx, x < self.vocab_end_idx)
             # mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)
@@ -48,7 +64,8 @@ class VocabParallelEmbedding(nn.Module):
         y = F.embedding(x, self.weight)
         if self.tp_size > 1:
             y.masked_fill_(~mask.unsqueeze(1), 0)
-            y = get_tp_group().all_reduce(y, ca_fp8_quant=False)
+            # TODO: change to use aiter all reduce
+            y = get_tp_group().all_reduce(y)
         return y
 
 
@@ -59,6 +76,7 @@ class ParallelLMHead(VocabParallelEmbedding):
         num_embeddings: int,
         embedding_dim: int,
         bias: bool = False,
+        prefix: str = "",
         **kwargs,
     ):
         super().__init__(num_embeddings, embedding_dim)
@@ -69,21 +87,13 @@ class ParallelLMHead(VocabParallelEmbedding):
             self.register_parameter("bias", None)
 
     def forward(self, x: torch.Tensor):
-        forward_context: ForwardContext = get_forward_context()
-        context = forward_context.context
-        attn_metadata = forward_context.attn_metadata
-        # context = get_context()
-        if context.is_prefill:
-            last_indices = attn_metadata.cu_seqlens_q[1:] - 1
-            x = x[last_indices].contiguous()
+        # print('[zejun] ATOM ParallelLMHead forward', flush=True)
+        if _PARALLEL_LMHEAD_STATE["is_prefill"]:
+            # TODO: check why need contiguous, remove better if can remove
+            x = x.contiguous()
+
         logits = tgemm.mm(x, self.weight, self.bias)
+
         if self.tp_size > 1:
             logits = tensor_model_parallel_all_gather(logits)
-            # all_logits = (
-            #     [torch.empty_like(logits) for _ in range(self.tp_size)]
-            #     if self.tp_rank == 0
-            #     else None
-            # )
-            # dist.gather(logits, all_logits, 0)
-            # logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
         return logits

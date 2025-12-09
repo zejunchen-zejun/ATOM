@@ -14,14 +14,16 @@ from aiter import (
 from aiter.mla import mla_decode_fwd
 from aiter.rotary_embedding import RotaryEmbedding
 from torch import nn
-from tqdm import tqdm
+# from tqdm import tqdm
 
 from atom.model_ops.utils import get_and_maybe_dequant_weights
-from atom.utils.forward_context import (
-    AttentionMetaData,
-    ForwardContext,
-    get_forward_context,
-)
+# from atom.utils.forward_context import (
+#     ForwardContext,
+#     get_forward_context,
+# )
+from vllm.forward_context import ForwardContext, get_forward_context
+
+from atom.utils.attn_metadata import ATOMAttentionMetadata
 
 from aiter.ops.triton.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant import (  # noqa: E501 # isort: skip
     batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant as _aiter_triton_fp8_bmm,
@@ -224,7 +226,7 @@ class MLAAttention(nn.Module):
         kv_c_normed: torch.Tensor,
         k_rope: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
-        attn_metadata: AttentionMetaData,
+        attn_metadata: ATOMAttentionMetadata,
     ) -> torch.Tensor:
         assert attn_metadata is not None
 
@@ -257,7 +259,7 @@ class MLAAttention(nn.Module):
         self,
         q: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
-        attn_metadata: AttentionMetaData,
+        attn_metadata: ATOMAttentionMetadata,
     ) -> torch.Tensor:
         assert kv_c_and_k_pe_cache.numel() > 0
         assert attn_metadata is not None

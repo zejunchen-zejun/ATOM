@@ -7,21 +7,14 @@ from typing import Callable, List, Optional, Tuple
 
 from dataclasses import dataclass
 
-from atom.utils.forward_context import ForwardContext, get_forward_context
+from atom.utils.forward_context import get_forward_context
+# from vllm.forward_context import get_forward_context
 import torch
-from aiter import ActivationType, QuantType, dtypes, get_hip_quant
-from aiter.dist.parallel_state import get_tp_group, get_dp_group
-from aiter.fused_moe import fused_moe
-from aiter.utility import fp4_utils
-from aiter.ops.shuffle import (
-    shuffle_scale_a16w4,
-    shuffle_weight_a16w4,
-)
 from torch import nn
 import torch.nn.functional as F
 from transformers import PretrainedConfig
 
-from atom.config import Config, QuantizationConfig, get_current_atom_config
+from atom.config import Config, ATOMQuantizationConfig, get_current_atom_config
 from atom.model_loader.weight_utils import set_weight_attrs
 from atom.model_ops.base_config import QuantizeMethodBase
 from atom.model_ops.topK import (
@@ -37,9 +30,17 @@ from atom.model_ops.utils import (
     shuffle_weights,
 )
 from atom.utils.custom_register import direct_register_custom_op
-from aiter.jit.utils.torch_guard import torch_compile_guard
 from atom.utils import envs
 
+from aiter import ActivationType, QuantType, dtypes, get_hip_quant
+from aiter.dist.parallel_state import get_tp_group, get_dp_group
+from aiter.fused_moe import fused_moe
+from aiter.utility import fp4_utils
+from aiter.ops.shuffle import (
+    shuffle_scale_a16w4,
+    shuffle_weight_a16w4,
+)
+from aiter.jit.utils.torch_guard import torch_compile_guard
 
 @dataclass
 class FusedMoEParallelConfig:
@@ -58,7 +59,7 @@ class FusedMoEParallelConfig:
 
     @staticmethod
     def make(
-        tp_size_: int, dp_size_: int, parallel_config: Config
+        tp_size_: int, dp_size_: int, atom_config: Config
     ) -> "FusedMoEParallelConfig":
         def flatten_tp_across_dp(dp_rank: int):
             tp_rank = 0 if tp_size_ == 1 else get_tp_group().rank_in_group
@@ -68,7 +69,7 @@ class FusedMoEParallelConfig:
             tp_rank = dp_rank * tp_size_ + tp_rank
             return tp_size, tp_rank
 
-        use_ep = dp_size_ * tp_size_ > 1 and parallel_config.enable_expert_parallel
+        use_ep = dp_size_ * tp_size_ > 1 and atom_config.enable_expert_parallel
 
         dp_size = dp_size_
         dp_rank = get_dp_group().rank_in_group if dp_size > 1 else 0
@@ -334,6 +335,23 @@ def rocm_aiter_fused_moe_impl(
     activation_ = ActivationType(activation)
     quant_type_ = QuantType(quant_type)
 
+    # import os
+    # pid = os.getpid()
+
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe', flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe hidden_states.shape = ', hidden_states.shape, '. dtype = ', hidden_states.dtype, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe w1.shape = ', w1.shape, '. dtype = ', w1.dtype, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe w2.shape = ', w2.shape, '. dtype = ', w2.dtype, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe topk_weight.shape = ', topk_weight.shape, '. dtype = ', topk_weight.dtype, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe topk_ids.shape = ', topk_ids.shape, '. dtype = ', topk_ids.dtype, flush=True)
+    # if expert_mask is not None:
+    #     print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe expert_mask.shape = ', expert_mask.shape, '. dtype = ', expert_mask.dtype, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe doweight_stage1 = ', doweight_stage1, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe quant_type = ', quant_type, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe activation = ', activation, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe quant_type_ = ', quant_type_, flush=True)
+    # print('[zejun][', pid, '] ATOM rocm_aiter_fused_moe_impl call aiter.fused_moe activation_ = ', activation_, flush=True)
+
     return fused_moe(
         hidden_states,
         w1,
@@ -368,7 +386,7 @@ def rocm_aiter_fused_moe_fake(
 ) -> torch.Tensor:
     return torch.empty_like(hidden_states)
 
-
+# TODO: make it call when get model
 direct_register_custom_op(
     op_name="rocm_aiter_fused_moe",
     op_func=rocm_aiter_fused_moe_impl,
@@ -378,7 +396,7 @@ direct_register_custom_op(
 
 
 class Mxfp4MoEMethod(FusedMoEMethodBase):
-    def __init__(self, quant_config: QuantizationConfig):
+    def __init__(self, quant_config: ATOMQuantizationConfig):
         self.quant_config = quant_config
         self.quant_type = self.quant_config["quant_type"]
         self.quant_dtype = self.quant_config["quant_dtype"]
@@ -628,7 +646,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         quant_config: The quantization config.
     """
 
-    def __init__(self, quant_config: QuantizationConfig):
+    def __init__(self, quant_config: ATOMQuantizationConfig):
         self.quant_config = quant_config
         self.quant_type = self.quant_config["quant_type"]
         self.quant_dtype = self.quant_config["quant_dtype"]
@@ -908,6 +926,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         apply_router_weight_on_input: bool = False,
         activation: ActivationType = ActivationType.Silu,
     ) -> torch.Tensor:
+        # print('[zejun] ATOM Fp8MoEMethod call FusedMoE.select_experts', flush=True)
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
@@ -923,6 +942,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             routed_scaling_factor=layer.routed_scaling_factor,
         )
 
+        # print('[zejun] ATOM Fp8MoEMethod call rocm_aiter_fused_moe', flush=True)
         return torch.ops.aiter.rocm_aiter_fused_moe(
             x,
             layer.w13_weight,
@@ -986,7 +1006,7 @@ def determine_expert_map(
     return (local_num_experts, expert_map)
 
 
-def moe_forward(
+def rocm_aiter_moe_forward_impl(
     hidden_states: torch.Tensor,
     router_logits: torch.Tensor,
     layer_name: str,
@@ -996,7 +1016,7 @@ def moe_forward(
     return self.forward_impl(hidden_states, router_logits)
 
 
-def moe_forward_fake(
+def rocm_aiter_moe_forward_fake(
     hidden_states: torch.Tensor,
     router_logits: torch.Tensor,
     layer_name: str,
@@ -1005,10 +1025,10 @@ def moe_forward_fake(
 
 
 direct_register_custom_op(
-    op_name="moe_forward",
-    op_func=moe_forward,
+    op_name="rocm_aiter_moe_forward",
+    op_func=rocm_aiter_moe_forward_impl,
     mutates_args=["hidden_states"],
-    fake_impl=moe_forward_fake,
+    fake_impl=rocm_aiter_moe_forward_fake,
     tags=(torch.Tag.needs_fixed_stride_order,),
 )
 
@@ -1046,7 +1066,7 @@ class FusedMoE(torch.nn.Module):
         use_grouped_topk: bool = False,
         num_expert_group: Optional[int] = None,
         topk_group: Optional[int] = None,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[ATOMQuantizationConfig] = None,
         tp_size: Optional[int] = None,
         ep_size: Optional[int] = None,
         dp_size: Optional[int] = None,
@@ -1059,6 +1079,7 @@ class FusedMoE(torch.nn.Module):
         activation: ActivationType = ActivationType.Silu,
         config: Optional[PretrainedConfig] = None,
     ):
+        # print('[zejun] ATOM FusedMoE init', flush=True)
         super().__init__()
 
         self.params_dtype = (
@@ -1124,6 +1145,7 @@ class FusedMoE(torch.nn.Module):
                 ),
                 dim=0,
             )
+        # print('[zejun] ATOM FusedMoE init self.num_fused_shared_experts ', self.num_fused_shared_experts, flush=True)
         if (
             is_rocm_aiter_fusion_shared_expert_enabled()
             and self.num_fused_shared_experts > 0
@@ -1180,6 +1202,8 @@ class FusedMoE(torch.nn.Module):
             self.quant_method = Mxfp4MoEMethod(quant_config)
         else:
             raise ValueError(f"Unsupported quant dtype: {quant_config['quant_dtype']}")
+        
+        # print('[zejun] ATOM FusedMoE init self.quant_method ', self.quant_method, flush=True)
 
         assert self.quant_method is not None
 
@@ -1193,8 +1217,12 @@ class FusedMoE(torch.nn.Module):
         }
         self.quant_method.create_weights(layer=self, **moe_quant_params)
         compilation_config = atom_config.compilation_config
+
+        # TODO: here static_forward_context is native for atom and vllm
+        # TODO: for sgl, static_forward_context is created in config.py
         if prefix in compilation_config.static_forward_context:
             raise ValueError("Duplicate layer name: {}".format(prefix))
+
         compilation_config.static_forward_context[prefix] = self
         self.layer_name = prefix
 
@@ -1463,6 +1491,7 @@ class FusedMoE(torch.nn.Module):
         shard_id: str = "",
         expert_id: int = 0,
     ) -> None:
+        # print('[zejun] ATOM FusedMoE weight_loader', flush=True)
         if self.quant_config["quant_dtype"] == dtypes.fp4x2 and weight_name == "":
             self.mxf4_merged_weight_loader(param, loaded_weight)
             return
@@ -1605,7 +1634,7 @@ class FusedMoE(torch.nn.Module):
         num_fused_shared_experts: int = 0,
         routed_scaling_factor: float = 1.0,
     ):
-
+        # print('[zejun] ATOM FusedMoE call select_experts', flush=True)
         # DeekSeekv2 uses grouped_top_k
         if use_grouped_topk:
             assert topk_group is not None
@@ -1632,7 +1661,7 @@ class FusedMoE(torch.nn.Module):
         return topk_weights, topk_ids
 
     def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor):
-        return torch.ops.aiter.moe_forward(
+        return torch.ops.aiter.rocm_aiter_moe_forward(
             hidden_states, router_logits, self.layer_name
         )
 
@@ -1671,15 +1700,15 @@ class FusedMoE(torch.nn.Module):
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             # Default set to False. (May have to add shared expert outputs.)
-            final_hidden_states = get_tp_group().all_reduce(
-                final_hidden_states, ca_fp8_quant=False
-            )
+            final_hidden_states = get_tp_group().all_reduce(final_hidden_states)
 
         return final_hidden_states
 
     def forward_impl(self, hidden_states: torch.Tensor, router_logits: torch.Tensor):
+        # print('[zejun] ATOM FusedMoE call forward_impl', flush=True)
         assert self.quant_method is not None
         # cuda graph not supported forward with combine and dispatch
+        # print('[zejun] ATOM FusedMoE self.use_chunked = ', self.use_chunked, flush=True)
         if self.use_chunked:
             return self.forward_impl_graph(hidden_states, router_logits)
             # return self.forward_impl_chunked(hidden_states, router_logits)
@@ -1723,9 +1752,7 @@ class FusedMoE(torch.nn.Module):
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             # Default set to False. (May have to add shared expert outputs.)
-            final_hidden_states = get_tp_group().all_reduce(
-                final_hidden_states, ca_fp8_quant=False
-            )
+            final_hidden_states = get_tp_group().all_reduce(final_hidden_states)
 
         return final_hidden_states
 
@@ -1758,6 +1785,10 @@ class FusedMoE(torch.nn.Module):
                 ("w3", ckpt_up_proj_name),
             ]
         ]
+
+    # follow the convention of vllm with EP mode
+    def maybe_init_modular_kernel(self) -> None:
+        pass
 
     def extra_repr(self) -> str:
 

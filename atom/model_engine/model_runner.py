@@ -42,7 +42,6 @@ from aiter.dist.utils import get_distributed_init_method
 
 logger = logging.getLogger("atom")
 from atom.utils.forward_context import (
-    AttentionMetaData,
     Context,
     DPMetadata,
     get_forward_context,
@@ -273,6 +272,7 @@ class ModelRunner:
             config.parallel_config.data_parallel_master_ip,
             config.parallel_config.data_parallel_master_port,
         )
+        # TODO: use aiter dist instead of vllm torch.dist
         init_dist_env(
             config.tensor_parallel_size,
             rankID=rank,
@@ -439,7 +439,7 @@ class ModelRunner:
 
         num_input_tokens, num_tokens_across_dp = self._preprocess(dummy_batch)
 
-        context = Context(
+        attn_metadata.context = Context(
             positions=positions,
             is_prefill=False,
             batch_size=context_bs,
@@ -450,7 +450,6 @@ class ModelRunner:
         set_forward_context(
             attn_metadata=attn_metadata,
             atom_config=self.config,
-            context=context,
             num_tokens=actual_num_tokens,  # original value, not with padding
             num_tokens_across_dp=num_tokens_across_dp,
         )
@@ -810,12 +809,14 @@ class ModelRunner:
             batch_size=context_bs,
             graph_bs=bs,
         )
+
+        attn_metadata.context = context
+
         num_input_tokens, num_tokens_across_dp = self._preprocess(batch)
         actual_num_tokens = batch.total_tokens_num
         set_forward_context(
             attn_metadata=attn_metadata,
             atom_config=self.config,
-            context=context,
             num_tokens=actual_num_tokens,
             num_tokens_across_dp=num_tokens_across_dp,
         )
@@ -916,7 +917,7 @@ class ModelRunner:
                     capture_range.set_description(f"Capturing {bs=}")
                 graph = torch.cuda.CUDAGraph()
 
-                attn_metadata, context = (
+                attn_metadata = (
                     self.attn_metadata_builder.build_for_cudagraph_capture(bs)
                 )
                 num_tokens = bs
@@ -925,7 +926,6 @@ class ModelRunner:
                 set_forward_context(
                     attn_metadata=attn_metadata,
                     atom_config=self.config,
-                    context=context,
                     num_tokens=num_tokens,
                     num_tokens_across_dp=num_tokens_across_dp,
                 )
