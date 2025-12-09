@@ -6,6 +6,8 @@ export SAFETENSORS_FAST_GPU=1
 export VLLM_ROCM_USE_AITER=1
 export VLLM_RPC_TIMEOUT=1800000
 
+export VLLM_ROCM_USE_AITER_TRITON_ROPE=0
+
 # cache dir
 export VLLM_CACHE_ROOT=/root/.cache/vllm
 export TORCHINDUCTOR_CACHE_DIR=/root/.cache/inductor
@@ -21,7 +23,7 @@ vllm serve $model_path \
     --kv-cache-dtype "fp8" \
     --trust-remote-code \
     --disable-log-requests \
-    --gpu_memory_utilization 0.6 \
+    --gpu_memory_utilization 0.1 \
     --enforce-eager \
     --async-scheduling \
     --load-format fastsafetensors \
