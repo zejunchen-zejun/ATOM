@@ -48,8 +48,8 @@ from atom.model_ops.linear import (
 )
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
-from atom.config import QuantizationConfig, Config
-from atom.utils.decorators import support_torch_compile
+from atom.config import ATOMQuantizationConfig, Config
+from vllm.compilation.decorators import support_torch_compile
 
 from atom.models.utils import (
     PPMissingLayer,
@@ -68,7 +68,7 @@ class LlamaMLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[ATOMQuantizationConfig] = None,
         bias: bool = False,
         prefix: str = "",
         reduce_results: bool = True,
@@ -114,7 +114,7 @@ class LlamaAttention(nn.Module):
         rope_theta: float = 10000,
         rope_scaling: Optional[dict[str, Any]] = None,
         max_position_embeddings: int = 8192,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[ATOMQuantizationConfig] = None,
         bias: bool = False,
         bias_o_proj: bool = False,
         cache_config: str = "bf16",
@@ -206,7 +206,7 @@ class LlamaAttention(nn.Module):
         self,
         config: LlamaConfig,
         rope_scaling: Optional[dict[str, Any]],
-        quant_config: Optional[QuantizationConfig],
+        quant_config: Optional[ATOMQuantizationConfig],
     ) -> None:
         is_neox_style = True
         is_gguf = quant_config and quant_config.get_name() == "gguf"
@@ -230,7 +230,7 @@ class LlamaDecoderLayer(nn.Module):
         self,
         config: LlamaConfig,
         cache_config: str = "bf16",
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[ATOMQuantizationConfig] = None,
         prefix: str = "",
         layer_num: int = 0,
     ) -> None:

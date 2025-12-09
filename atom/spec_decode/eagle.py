@@ -74,6 +74,7 @@ class EagleProposer:
 
     def load_model(self, target_model: nn.Module) -> None:
 
+        # TODO: fix the arg
         load_model(self.model, self.config.model, self.speculative_config.draft_model_hf_config, self.config.load_dummy, True)
 
         # share embed_tokens with the target model if needed
