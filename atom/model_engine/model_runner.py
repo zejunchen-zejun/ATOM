@@ -19,7 +19,7 @@ from atom.models.deepseek_v2 import DeepseekV2ForCausalLM
 from atom.models.gpt_oss import GptOssForCausalLM
 from atom.models.llama import LlamaForCausalLM
 from atom.models.mixtral import MixtralForCausalLM
-from atom.models.qwen3 import Qwen3ForCausalLM
+from atom.models.qwen3 import ATOMQwen3ForCausalLM
 from atom.utils import (
     CpuGpuBuffer,
     envs,
@@ -45,7 +45,7 @@ from atom.utils.forward_context import (
 )
 
 suppot_model_arch_dict = {
-    "Qwen3ForCausalLM": Qwen3ForCausalLM,
+    "ATOMQwen3ForCausalLM": ATOMQwen3ForCausalLM,
     "LlamaForCausalLM": LlamaForCausalLM,
     "MixtralForCausalLM": MixtralForCausalLM,
     "DeepseekV3ForCausalLM": DeepseekV2ForCausalLM,
