@@ -260,6 +260,7 @@ class Qwen3ForCausalLM(nn.Module):
 
     def __init__(self, atom_config: Config) -> None:
         super().__init__()
+        print('[zejun] ATOM Qwen3ForCausalLM init', flush=True)
         config = atom_config.hf_config
         self.model = Qwen3Model(atom_config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
@@ -271,6 +272,7 @@ class Qwen3ForCausalLM(nn.Module):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
     ) -> torch.Tensor:
+        print('[zejun] ATOM Qwen3ForCausalLM fwd', flush=True)
         hidden_states = self.model(input_ids, positions)
         return hidden_states
 
