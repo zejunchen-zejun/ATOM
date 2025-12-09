@@ -48,6 +48,7 @@ from atom.utils.decorators import support_torch_compile
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 
+from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 
 class Qwen3Attention(nn.Module):
 
@@ -249,7 +250,7 @@ class Qwen3Model(nn.Module):
         return hidden_states
 
 
-class ATOMQwen3ForCausalLM(nn.Module):
+class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
     packed_modules_mapping = {
         "q_proj": ("qkv_proj", "q"),
         "k_proj": ("qkv_proj", "k"),
