@@ -49,7 +49,8 @@ from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 
 from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
-
+from vllm.model_executor.models.interfaces import (MixtureOfExperts,
+                                                   SupportsLoRA, SupportsPP)
 class Qwen3Attention(nn.Module):
 
     def __init__(
@@ -259,10 +260,14 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         "up_proj": ("gate_up_proj", 1),
     }
 
-    def __init__(self, vllm_config: Config) -> None:
+    def __init__(self, *, atom_config: Config, prefix: str = "") -> None:
         super().__init__()
+        nn.Module.__init__(self)
+        SupportsPP.__init__(self)
+        SupportsLoRA.__init__(self)
+        MixtureOfExperts.__init__(self)
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
-        atom_config = vllm_config
+
         config = atom_config.hf_config
         self.model = Qwen3Model(atom_config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
