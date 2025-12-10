@@ -259,9 +259,10 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         "up_proj": ("gate_up_proj", 1),
     }
 
-    def __init__(self, atom_config: Config) -> None:
+    def __init__(self, vllm_config: Config) -> None:
         super().__init__()
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
+        atom_config = vllm_config
         config = atom_config.hf_config
         self.model = Qwen3Model(atom_config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)

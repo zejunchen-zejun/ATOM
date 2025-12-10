@@ -45,7 +45,7 @@ from atom.utils.forward_context import (
 )
 
 suppot_model_arch_dict = {
-    "ATOMQwen3ForCausalLM": ATOMQwen3ForCausalLM,
+    "Qwen3ForCausalLM": ATOMQwen3ForCausalLM,
     "LlamaForCausalLM": LlamaForCausalLM,
     "MixtralForCausalLM": MixtralForCausalLM,
     "DeepseekV3ForCausalLM": DeepseekV2ForCausalLM,
