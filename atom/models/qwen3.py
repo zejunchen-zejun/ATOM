@@ -289,7 +289,7 @@ class ATOMQwen3ForCausalLM(nn.Module):
     }
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
-        super().__init__(vllm_config=vllm_config, prefix=prefix)
+        super().__init__()
         nn.Module.__init__(self)
         SupportsPP.__init__(self)
         SupportsLoRA.__init__(self)
