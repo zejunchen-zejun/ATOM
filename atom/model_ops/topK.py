@@ -5,8 +5,7 @@ from functools import cache, lru_cache
 from typing import Optional
 
 import torch
-from vllm.utils.torch_utils import direct_register_custom_op
-
+from atom.utils.custom_register import direct_register_custom_op
 
 def is_rocm_aiter_fusion_shared_expert_enabled():
     return True

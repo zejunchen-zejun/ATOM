@@ -36,7 +36,7 @@ from atom.model_ops.utils import (
     per_tensor_dequantize,
     shuffle_weights,
 )
-from vllm.utils.torch_utils import direct_register_custom_op
+from atom.utils.custom_register import direct_register_custom_op
 from aiter.jit.utils.torch_guard import torch_compile_guard
 from atom.utils import envs
 
@@ -314,7 +314,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase):
         )
 
 
-def rocm_aiter_fused_moe_impl(
+def atom_aiter_fused_moe_impl(
     hidden_states: torch.Tensor,
     w1: torch.Tensor,
     w2: torch.Tensor,
@@ -351,7 +351,7 @@ def rocm_aiter_fused_moe_impl(
     )
 
 
-def rocm_aiter_fused_moe_fake(
+def atom_aiter_fused_moe_fake(
     hidden_states: torch.Tensor,
     w1: torch.Tensor,
     w2: torch.Tensor,
@@ -369,12 +369,12 @@ def rocm_aiter_fused_moe_fake(
     return torch.empty_like(hidden_states)
 
 
-# direct_register_custom_op(
-#     op_name="rocm_aiter_fused_moe",
-#     op_func=rocm_aiter_fused_moe_impl,
-#     mutates_args=[],
-#     fake_impl=rocm_aiter_fused_moe_fake,
-# )
+direct_register_custom_op(
+    op_name="atom_aiter_fused_moe",
+    op_func=atom_aiter_fused_moe_impl,
+    mutates_args=[],
+    fake_impl=atom_aiter_fused_moe_fake,
+)
 
 
 class Mxfp4MoEMethod(FusedMoEMethodBase):

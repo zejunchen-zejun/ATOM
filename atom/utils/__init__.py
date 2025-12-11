@@ -23,7 +23,7 @@ import psutil
 import torch
 import zmq
 import zmq.asyncio
-from vllm.utils.torch_utils import direct_register_custom_op
+from atom.utils.custom_register import direct_register_custom_op
 
 if TYPE_CHECKING:
     from atom.config import Config
