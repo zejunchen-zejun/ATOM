@@ -986,7 +986,7 @@ def determine_expert_map(
     return (local_num_experts, expert_map)
 
 
-def aiter_moe_forward(
+def atom_aiter_moe_forward_impl(
     hidden_states: torch.Tensor,
     router_logits: torch.Tensor,
     layer_name: str,
@@ -996,7 +996,7 @@ def aiter_moe_forward(
     return self.forward_impl(hidden_states, router_logits)
 
 
-def aiter_moe_forward_fake(
+def atom_aiter_moe_forward_fake(
     hidden_states: torch.Tensor,
     router_logits: torch.Tensor,
     layer_name: str,
@@ -1005,10 +1005,10 @@ def aiter_moe_forward_fake(
 
 
 direct_register_custom_op(
-    op_name="aiter_moe_forward",
-    op_func=aiter_moe_forward,
+    op_name="atom_aiter_moe_forward",
+    op_func=atom_aiter_moe_forward_impl,
     mutates_args=["hidden_states"],
-    fake_impl=moe_forward_fake,
+    fake_impl=atom_aiter_moe_forward_fake,
     tags=(torch.Tag.needs_fixed_stride_order,),
 )
 
@@ -1632,7 +1632,7 @@ class FusedMoE(torch.nn.Module):
         return topk_weights, topk_ids
 
     def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor):
-        return torch.ops.aiter.aiter_moe_forward(
+        return torch.ops.aiter.atom_aiter_moe_forward(
             hidden_states, router_logits, self.layer_name
         )
 

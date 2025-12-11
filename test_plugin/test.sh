@@ -23,7 +23,7 @@ vllm serve $model_path \
     --kv-cache-dtype "fp8" \
     --trust-remote-code \
     --disable-log-requests \
-    --gpu_memory_utilization 0.08 \
+    --gpu_memory_utilization 0.06 \
     --enforce-eager \
     --async-scheduling \
     --load-format fastsafetensors \
