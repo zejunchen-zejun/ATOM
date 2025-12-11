@@ -48,7 +48,7 @@ from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import config_from_vllm
 
-from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
+# from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 from vllm.model_executor.models.interfaces import (MixtureOfExperts,
                                                    SupportsLoRA, SupportsPP)
 from vllm.config.vllm import VllmConfig
@@ -275,7 +275,7 @@ class CustomQwen3Model(nn.Module):
         return hidden_states
 
 
-class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
+class ATOMQwen3ForCausalLM(nn.Module):
     packed_modules_mapping = {
         "qkv_proj": [
             "q_proj",
