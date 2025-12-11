@@ -36,7 +36,7 @@ from atom.model_ops.utils import (
     per_tensor_dequantize,
     shuffle_weights,
 )
-from atom.utils.custom_register import direct_register_custom_op
+from vllm.utils.torch_utils import direct_register_custom_op
 from aiter.jit.utils.torch_guard import torch_compile_guard
 from atom.utils import envs
 

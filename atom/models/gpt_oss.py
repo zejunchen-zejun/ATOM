@@ -28,7 +28,7 @@ from aiter import (
 )
 
 from atom.model_ops.base_attention import Attention
-from atom.utils.decorators import support_torch_compile
+from vllm.compilation.decorators import support_torch_compile
 from atom.config import Config, QuantizationConfig, get_current_atom_config
 from aiter.dist.parallel_state import (
     get_dp_group,

@@ -80,8 +80,8 @@ from atom.models.utils import (
     maybe_prefix,
 )
 from atom.utils.forward_context import get_forward_context
-from atom.utils.custom_register import direct_register_custom_op
-from atom.utils.decorators import support_torch_compile
+from vllm.utils.torch_utils import direct_register_custom_op
+from vllm.compilation.decorators import support_torch_compile
 from atom.utils import envs
 # from vllm.model_executor.layers.quantization.utils.fp8_utils import per_token_group_quant_fp8
 

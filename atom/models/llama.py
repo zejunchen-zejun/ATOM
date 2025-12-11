@@ -49,7 +49,7 @@ from atom.model_ops.linear import (
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import QuantizationConfig, Config
-from atom.utils.decorators import support_torch_compile
+from vllm.compilation.decorators import support_torch_compile
 
 from atom.models.utils import (
     PPMissingLayer,

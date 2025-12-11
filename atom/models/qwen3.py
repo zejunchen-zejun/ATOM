@@ -41,7 +41,7 @@ from atom.model_ops.linear import (
     MergedColumnParallelLinear,
     RowParallelLinear,
 )
-from atom.utils.decorators import support_torch_compile
+from vllm.compilation.decorators import support_torch_compile
 
 # from atom.model_ops.rotary_embedding import get_rope
 from aiter.rotary_embedding import get_rope
