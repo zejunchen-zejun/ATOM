@@ -45,12 +45,14 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         self.weight.weight_loader = self.weight_loader
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        print('[zejun] ATOM ATOMVocabParallelEmbedding weight_loader', flush=True)
         param_data = param.data
         shard_size = param_data.size(0)
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)
         assert param_data.size() == loaded_weight.size()
         param_data.copy_(loaded_weight)
+        print('[zejun] finish ATOM ATOMVocabParallelEmbedding weight_loader', flush=True)
 
     def forward(self, x: torch.Tensor):
         if self.tp_size > 1:

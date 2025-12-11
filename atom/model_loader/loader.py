@@ -114,6 +114,7 @@ def load_model(
                     param = model.get_parameter(param_name)
                     weight_loader = getattr(param, "weight_loader")
                     # weight_loader(param, weight_tensor, shard_id)
+                    print('[zejun] ATOM, k(', k, ') in packed_modules_mapping, weight_loader = ', weight_loader, flush=True)
                     futures.append(
                         executor.submit(weight_loader, param, weight_tensor, shard_id)
                     )
