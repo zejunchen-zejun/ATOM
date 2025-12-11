@@ -37,9 +37,9 @@ from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.base_attention import Attention
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
-    QKVParallelLinear,
+    ATOMQKVParallelLinear,
     MergedColumnParallelLinear,
-    RowParallelLinear,
+    ATOMRowParallelLinear,
 )
 from vllm.compilation.decorators import support_torch_compile
 
@@ -54,6 +54,7 @@ from vllm.model_executor.models.interfaces import (MixtureOfExperts,
 from vllm.config.vllm import VllmConfig
 from vllm.distributed.parallel_state import get_tp_group
 from vllm.sequence import IntermediateTensors
+from vllm.model_executor.models.utils import maybe_prefix
 
 class Qwen3Attention(nn.Module):
 
@@ -71,6 +72,7 @@ class Qwen3Attention(nn.Module):
         kv_cache_dtype: str = "fp16",
         layer_num: int = 0,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "",
     ) -> None:
         super().__init__()
         tp_size = get_tp_group().world_size
@@ -86,19 +88,21 @@ class Qwen3Attention(nn.Module):
         self.kv_size = self.num_kv_heads * self.head_dim
         self.scaling = self.head_dim**-0.5
 
-        self.qkv_proj = QKVParallelLinear(
+        self.qkv_proj = ATOMQKVParallelLinear(
             hidden_size,
             self.head_dim,
             self.total_num_heads,
             self.total_num_kv_heads,
             bias=qkv_bias,
             quant_config=quant_config,
+            prefix=f"{prefix}.qkv_proj",
         )
-        self.o_proj = RowParallelLinear(
+        self.o_proj = ATOMRowParallelLinear(
             self.total_num_heads * self.head_dim,
             hidden_size,
             bias=False,
             quant_config=quant_config,
+            prefix=f"{prefix}.o_proj",
         )
         self.rotary_emb = get_rope(
             self.head_dim,
@@ -115,6 +119,7 @@ class Qwen3Attention(nn.Module):
             kv_cache_dtype=kv_cache_dtype,
             layer_num=layer_num,
             use_mla=False,
+            prefix=f"{prefix}.attn",
         )
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
@@ -144,6 +149,7 @@ class Qwen3MLP(nn.Module):
         intermediate_size: int,
         hidden_act: str,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "",
     ) -> None:
         super().__init__()
         self.gate_up_proj = MergedColumnParallelLinear(
@@ -151,12 +157,14 @@ class Qwen3MLP(nn.Module):
             [intermediate_size] * 2,
             bias=False,
             quant_config=quant_config,
+            prefix=f"{prefix}.gate_up_proj",
         )
-        self.down_proj = RowParallelLinear(
+        self.down_proj = ATOMRowParallelLinear(
             intermediate_size,
             hidden_size,
             bias=False,
             quant_config=quant_config,
+            prefix=f"{prefix}.down_proj",
         )
         assert hidden_act == "silu"
         self.act_fn = SiluAndMul()
@@ -176,6 +184,7 @@ class Qwen3DecoderLayer(nn.Module):
         cache_config: str = "bf16",
         quant_config: Optional[QuantizationConfig] = None,
         layer_num: int = 0,
+        prefix: str = "",
     ) -> None:
         super().__init__()
         self.layer_num = layer_num
@@ -192,12 +201,14 @@ class Qwen3DecoderLayer(nn.Module):
             kv_cache_dtype=cache_config,
             layer_num=layer_num,
             quant_config=quant_config,
+            prefix=f"{prefix}.self_attn",
         )
         self.mlp = Qwen3MLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
             quant_config=quant_config,
+            prefix=f"{prefix}.mlp",
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
@@ -229,7 +240,7 @@ class Qwen3DecoderLayer(nn.Module):
 )
 class CustomQwen3Model(nn.Module):
 
-    def __init__(self, atom_config: Config) -> None:
+    def __init__(self, *, atom_config: Config, prefix: str = "") -> None:
         super().__init__()
         config = atom_config.hf_config
         cache_config = atom_config.kv_cache_dtype
@@ -240,7 +251,11 @@ class CustomQwen3Model(nn.Module):
         self.layers = nn.ModuleList(
             [
                 Qwen3DecoderLayer(
-                    config, cache_config=cache_config, quant_config=quant_config, layer_num = layer_num
+                    config,
+                    cache_config=cache_config,
+                    quant_config=quant_config,
+                    layer_num=layer_num,
+                    prefix=prefix,
                 )
                 for layer_num in range(config.num_hidden_layers)
             ]
@@ -284,7 +299,7 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         atom_config = config_from_vllm(vllm_config)
 
         config = atom_config.hf_config
-        self.model = CustomQwen3Model(atom_config=atom_config)
+        self.model = CustomQwen3Model(atom_config=atom_config, prefix=maybe_prefix(prefix, "model"))
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         if config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data

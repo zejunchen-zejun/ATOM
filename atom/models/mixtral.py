@@ -40,7 +40,7 @@ from aiter.dist.parallel_state import (
 )
 from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.layernorm import RMSNorm
-from atom.model_ops.linear import QKVParallelLinear, RowParallelLinear, ReplicatedLinear
+from atom.model_ops.linear import ATOMQKVParallelLinear, ATOMRowParallelLinear, ReplicatedLinear
 from atom.model_ops.moe import FusedMoE
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
@@ -156,7 +156,7 @@ class MixtralAttention(nn.Module):
         self.rope_theta = rope_theta
         self.layer_num = layer_num
 
-        self.qkv_proj = QKVParallelLinear(
+        self.qkv_proj = ATOMQKVParallelLinear(
             hidden_size,
             self.head_dim,
             self.total_num_heads,
@@ -165,7 +165,7 @@ class MixtralAttention(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.qkv_proj",
         )
-        self.o_proj = RowParallelLinear(
+        self.o_proj = ATOMRowParallelLinear(
             self.total_num_heads * self.head_dim,
             hidden_size,
             bias=False,

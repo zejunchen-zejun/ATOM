@@ -42,7 +42,7 @@ from atom.model_ops.moe import FusedMoE
 
 # from vllm.model_executor.layers.fused_moe.config import FusedMoEParallelConfig
 from atom.model_ops.layernorm import RMSNorm
-from atom.model_ops.linear import QKVParallelLinear, RowParallelLinear, ReplicatedLinear
+from atom.model_ops.linear import ATOMQKVParallelLinear, ATOMRowParallelLinear, ReplicatedLinear
 
 # from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from aiter.rotary_embedding import get_rope
@@ -106,7 +106,7 @@ class OAIAttention(nn.Module):
         self.scaling = self.head_dim**-0.5
         self.rope_theta = config.rope_theta
 
-        self.qkv_proj = QKVParallelLinear(
+        self.qkv_proj = ATOMQKVParallelLinear(
             hidden_size=self.hidden_size,
             head_size=self.head_dim,
             total_num_heads=self.num_attention_heads,
@@ -116,7 +116,7 @@ class OAIAttention(nn.Module):
             bias=True,
         )
 
-        self.o_proj = RowParallelLinear(
+        self.o_proj = ATOMRowParallelLinear(
             input_size=self.num_attention_heads * self.head_dim,
             output_size=self.hidden_size,
             quant_config=None,

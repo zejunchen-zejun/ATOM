@@ -64,7 +64,7 @@ from atom.model_ops.linear import (
     ColumnParallelLinear,
     MergedColumnParallelLinear,
     ReplicatedLinear,
-    RowParallelLinear,
+    ATOMRowParallelLinear,
     MergedReplicatedLinear
 )
 from atom.model_ops.moe import FusedMoE
@@ -152,7 +152,7 @@ class DeepseekV2MLP(nn.Module):
             bias=False,
             quant_config=quant_config,
             prefix=f"{prefix}.gate_up_proj")
-        self.down_proj = RowParallelLinear(intermediate_size,
+        self.down_proj = ATOMRowParallelLinear(intermediate_size,
                                            hidden_size,
                                            bias=False,
                                            quant_config=quant_config,
@@ -589,7 +589,7 @@ class DeepseekV2MLAAttention(nn.Module):
             bias=False,
             quant_config=quant_config,
             prefix=f"{prefix}.kv_b_proj")
-        self.o_proj = RowParallelLinear(self.num_heads * self.v_head_dim,
+        self.o_proj = ATOMRowParallelLinear(self.num_heads * self.v_head_dim,
                                         self.hidden_size,
                                         bias=False,
                                         quant_config=quant_config,

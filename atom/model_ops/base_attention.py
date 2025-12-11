@@ -69,6 +69,7 @@ class Attention(nn.Module):
         sinks: Optional[nn.Parameter] = None,
         per_layer_sliding_window: Optional[int] = None,
         rotary_emb: Optional[torch.nn.Module] = None,
+        prefix: str = "",
         **kwargs,
     ):
         super().__init__()

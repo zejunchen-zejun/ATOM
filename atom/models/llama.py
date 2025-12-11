@@ -43,8 +43,8 @@ from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
     MergedColumnParallelLinear,
-    QKVParallelLinear,
-    RowParallelLinear,
+    ATOMQKVParallelLinear,
+    ATOMRowParallelLinear,
 )
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
@@ -81,7 +81,7 @@ class LlamaMLP(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.gate_up_proj",
         )
-        self.down_proj = RowParallelLinear(
+        self.down_proj = ATOMRowParallelLinear(
             input_size=intermediate_size,
             output_size=hidden_size,
             bias=bias,
@@ -151,7 +151,7 @@ class LlamaAttention(nn.Module):
         self.rope_theta = rope_theta
         self.max_position_embeddings = max_position_embeddings
         self.layer_num = layer_num
-        self.qkv_proj = QKVParallelLinear(
+        self.qkv_proj = ATOMQKVParallelLinear(
             hidden_size=hidden_size,
             head_size=self.head_dim,
             total_num_heads=self.total_num_heads,
@@ -161,7 +161,7 @@ class LlamaAttention(nn.Module):
             prefix=f"{prefix}.qkv_proj",
         )
 
-        self.o_proj = RowParallelLinear(
+        self.o_proj = ATOMRowParallelLinear(
             input_size=self.total_num_heads * self.head_dim,
             output_size=hidden_size,
             bias=bias_o_proj,

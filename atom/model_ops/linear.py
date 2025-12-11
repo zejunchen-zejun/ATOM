@@ -83,6 +83,7 @@ class LinearBase(nn.Module):
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
         reduce_results: bool = False,
+        prefix: str = "",
     ):
         if quant_config is None:
             quant_config = QuantizationConfig()
@@ -311,6 +312,7 @@ class ColumnParallelLinear(LinearBase):
         output_size: int,
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "",
         **kwargs,
     ):
         self.tp_dim = 0
@@ -320,6 +322,7 @@ class ColumnParallelLinear(LinearBase):
             self.tp_dim,
             bias,
             quant_config=quant_config,
+            prefix=prefix,
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
@@ -371,7 +374,7 @@ class MergedColumnParallelLinear(LinearBase):
         param.weight_loader_process(param_data, loaded_weight)
 
 
-class QKVParallelLinear(ColumnParallelLinear):
+class ATOMQKVParallelLinear(ColumnParallelLinear):
 
     def __init__(
         self,
@@ -381,6 +384,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         total_num_kv_heads: int | None = None,
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "",
         **kwargs,
     ):
         self.head_size = head_size
@@ -401,6 +405,7 @@ class QKVParallelLinear(ColumnParallelLinear):
             output_sizes,
             bias=bias,
             quant_config=quant_config,
+            prefix=prefix,
         )
 
     def weight_loader(
@@ -435,7 +440,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         param.weight_loader_process(param_data, loaded_weight)
 
 
-class RowParallelLinear(LinearBase):
+class ATOMRowParallelLinear(LinearBase):
 
     def __init__(
         self,
@@ -444,6 +449,7 @@ class RowParallelLinear(LinearBase):
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
         reduce_results: bool = True,
+        prefix: str = "",
         **kwargs,
     ):
         self.tp_rank = get_tp_group().rank_in_group
@@ -454,6 +460,7 @@ class RowParallelLinear(LinearBase):
             bias=bias,
             quant_config=quant_config,
             reduce_results=reduce_results,
+            prefix=prefix,
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
