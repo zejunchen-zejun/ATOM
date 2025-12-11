@@ -83,7 +83,7 @@ class LinearBase(nn.Module):
         reduce_results: bool = False,
         prefix: str = "",
     ):
-        print('[zejun] ATOM LinearBase __init__', flush=True)
+        # print('[zejun] ATOM LinearBase __init__', flush=True)
         super().__init__()
         if quant_config is None:
             quant_config = QuantizationConfig()
@@ -223,7 +223,7 @@ class LinearBase(nn.Module):
     def forward(
         self, x: torch.Tensor, x_scale: Optional[torch.Tensor] = None, otype=dtypes.bf16
     ) -> torch.Tensor:
-        print('[zejun] ATOM LinearBase forward', flush=True)
+        # print('[zejun] ATOM LinearBase forward', flush=True)
         if self.quant_type.value == QuantType.No.value:
             y = tgemm.mm(x, self.weight, self.bias)
         else:
@@ -315,7 +315,7 @@ class ATOMColumnParallelLinear(LinearBase):
         prefix: str = "",
         **kwargs,
     ):
-        print('[zejun] ATOM ATOMColumnParallelLinear __init__', flush=True)
+        # print('[zejun] ATOM ATOMColumnParallelLinear __init__', flush=True)
         self.tp_dim = 0
         super().__init__(
             input_size=input_size,
@@ -327,13 +327,13 @@ class ATOMColumnParallelLinear(LinearBase):
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        print('[zejun] ATOM ATOMColumnParallelLinear weight_loader', flush=True)
+        # print('[zejun] ATOM ATOMColumnParallelLinear weight_loader', flush=True)
         param_data = param.data
         shard_size = param_data.size(self.tp_dim)
         start_idx = self.tp_rank * shard_size
         loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
         param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM ATOMColumnParallelLinear weight_loader', flush=True)
+        # print('[zejun] finish ATOM ATOMColumnParallelLinear weight_loader', flush=True)
 
 
 class ATOMMergedColumnParallelLinear(LinearBase):
@@ -360,7 +360,7 @@ class ATOMMergedColumnParallelLinear(LinearBase):
     def weight_loader(
         self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: int
     ):
-        print('[zejun] ATOM ATOMMergedColumnParallelLinear weight_loader', flush=True)
+        # print('[zejun] ATOM ATOMMergedColumnParallelLinear weight_loader', flush=True)
         param_data = param.data
         shard_offset = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
         shard_size = self.output_sizes[loaded_shard_id] // self.tp_size
@@ -378,7 +378,7 @@ class ATOMMergedColumnParallelLinear(LinearBase):
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM ATOMMergedColumnParallelLinear weight_loader', flush=True)
+        # print('[zejun] finish ATOM ATOMMergedColumnParallelLinear weight_loader', flush=True)
 
 
 class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
@@ -394,7 +394,7 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
         prefix: str = "",
         **kwargs,
     ):
-        print('[zejun] ATOM ATOMQKVParallelLinear __init__', flush=True)
+        # print('[zejun] ATOM ATOMQKVParallelLinear __init__', flush=True)
         self.head_size = head_size
         self.total_num_heads = total_num_heads
         self.total_num_kv_heads = total_num_kv_heads or total_num_heads
@@ -429,7 +429,7 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
     def weight_loader(
         self, param: nn.Parameter, loaded_weight: torch.Tensor, loaded_shard_id: str
     ):
-        print('[zejun] ATOM ATOMQKVParallelLinear weight_loader', flush=True)
+        # print('[zejun] ATOM ATOMQKVParallelLinear weight_loader', flush=True)
         param_data = param.data
         assert loaded_shard_id in ["q", "k", "v"]
         if loaded_shard_id == "q":
@@ -457,7 +457,7 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM ATOMQKVParallelLinear weight_loader', flush=True)
+        # print('[zejun] finish ATOM ATOMQKVParallelLinear weight_loader', flush=True)
 
 
 class ATOMRowParallelLinear(LinearBase):
@@ -482,7 +482,7 @@ class ATOMRowParallelLinear(LinearBase):
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        print('[zejun] ATOM ATOMRowParallelLinear weight_loader', flush=True)
+        # print('[zejun] ATOM ATOMRowParallelLinear weight_loader', flush=True)
         param_data = param.data
         if param is not getattr(self, "bias", None):
             shard_size = param_data.size(self.tp_dim)
@@ -496,7 +496,7 @@ class ATOMRowParallelLinear(LinearBase):
             if self.tp_size > 0 and self.tp_rank != 0:
                 loaded_weight.zero_()
         param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM ATOMRowParallelLinear weight_loader', flush=True)
+        # print('[zejun] finish ATOM ATOMRowParallelLinear weight_loader', flush=True)
 
 
 class ATOMMergedReplicatedLinear(ATOMReplicatedLinear):
@@ -522,7 +522,7 @@ class ATOMMergedReplicatedLinear(ATOMReplicatedLinear):
         loaded_weight: torch.Tensor,
         loaded_shard_id: Optional[int] = None
     ):
-        print('[zejun] ATOM ATOMMergedReplicatedLinear weight_loader', flush=True)
+        # print('[zejun] ATOM ATOMMergedReplicatedLinear weight_loader', flush=True)
         param_data = param.data
         assert loaded_shard_id is not None
         assert loaded_shard_id < len(self.output_sizes)
@@ -542,4 +542,4 @@ class ATOMMergedReplicatedLinear(ATOMReplicatedLinear):
             shard_size = self.output_sizes[loaded_shard_id]
         param_data = param_data.narrow(0, shard_offset, shard_size)
         param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM ATOMMergedReplicatedLinear weight_loader', flush=True)
+        # print('[zejun] finish ATOM ATOMMergedReplicatedLinear weight_loader', flush=True)

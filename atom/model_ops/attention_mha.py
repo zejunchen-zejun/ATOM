@@ -62,7 +62,18 @@ class Attention(nn.Module):
         position: torch.Tensor = None,
         q_scale: torch.Tensor=None,
     ):
-        o: torch.Tensor
+        o = torch.empty_like(q)
+
+        forward_context: ForwardContext = get_forward_context()
+        attn_metadata = forward_context.attn_metadata
+
+        # profiler run
+        if attn_metadata is None:
+            return o
+
+        context = forward_context.context
+        kv_cache_data = forward_context.kv_cache_data
+
         q = q.view(-1, self.num_heads, self.head_dim)
         k = k.view(-1, self.num_kv_heads, self.head_dim)
         v = v.view(-1, self.num_kv_heads, self.head_dim)
@@ -71,13 +82,6 @@ class Attention(nn.Module):
             self.sliding_window != (-1, -1) or self.head_dim != 128
         )
 
-        # o = torch.ops.aiter.unified_attention_with_output(q, k, v,
-        #             self.scale, self.kv_cache_dtype, self.layer_num)
-        forward_context: ForwardContext = get_forward_context()
-        attn_metadata = forward_context.attn_metadata
-        context = forward_context.context
-
-        kv_cache_data = forward_context.kv_cache_data
         if attn_metadata.slot_mapping.numel():
             # not dummy run
             k_cache = kv_cache_data[f"layer_{self.layer_num}"].k_cache
@@ -166,7 +170,6 @@ class Attention(nn.Module):
                     )
 
         if use_triton_unified_attention:
-            o = torch.empty_like(q)
             descale_shape = (attn_metadata.cu_seqlens_q.shape[0] - 1, k.shape[1])
             if k_cache.numel() and v_cache.numel():
                 unified_attention(

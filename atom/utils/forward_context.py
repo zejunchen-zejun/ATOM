@@ -238,8 +238,8 @@ class ForwardContext:
     def __post_init__(self):
         if not hasattr(self, "no_compile_layers") or self.no_compile_layers is None:
             self.no_compile_layers = {}
-        if self.attn_metadata is None:
-            self.attn_metadata = {}
+        # if self.attn_metadata is None:
+        #     self.attn_metadata = {}
 
 
 _forward_context: Optional[ForwardContext] = ForwardContext()

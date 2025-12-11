@@ -197,6 +197,7 @@ class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
         # return var["positions"].copy_to_gpu(sum_scheduled_tokens)
 
     def build(self, batch: ScheduledBatch, bs: int):
+        print('[zejun] ATOM CommonAttentionBuilder build', flush=True)
         if batch.total_tokens_num_prefill > 0:
             return self.prepare_prefill(batch)
         else:
