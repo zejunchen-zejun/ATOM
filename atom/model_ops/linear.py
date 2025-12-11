@@ -83,6 +83,7 @@ class LinearBase(nn.Module):
         reduce_results: bool = False,
         prefix: str = "",
     ):
+        print('[zejun] ATOM LinearBase __init__', flush=True)
         super().__init__()
         if quant_config is None:
             quant_config = QuantizationConfig()
@@ -314,6 +315,7 @@ class ATOMColumnParallelLinear(LinearBase):
         prefix: str = "",
         **kwargs,
     ):
+        print('[zejun] ATOM ATOMColumnParallelLinear __init__', flush=True)
         self.tp_dim = 0
         super().__init__(
             input_size=input_size,
@@ -392,6 +394,7 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
         prefix: str = "",
         **kwargs,
     ):
+        print('[zejun] ATOM ATOMQKVParallelLinear __init__', flush=True)
         self.head_size = head_size
         self.total_num_heads = total_num_heads
         self.total_num_kv_heads = total_num_kv_heads or total_num_heads
