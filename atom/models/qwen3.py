@@ -28,7 +28,7 @@ import torch
 from torch import nn
 
 # import torch.distributed as dist
-from typing import Optional, Iterable
+from typing import Any, Optional, Iterable
 from transformers import Qwen3Config
 from atom.config import QuantizationConfig, Config
 
@@ -46,6 +46,7 @@ from atom.model_ops.linear import (
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import config_from_vllm
+from atom.model_loader.loader import load_model
 
 # from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 # from vllm.model_executor.models.interfaces import (MixtureOfExperts,
@@ -287,10 +288,6 @@ class ATOMQwen3ForCausalLM(nn.Module):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
-        # nn.Module.__init__(self)
-        # SupportsPP.__init__(self)
-        # SupportsLoRA.__init__(self)
-        # MixtureOfExperts.__init__(self)
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
 
         atom_config = config_from_vllm(vllm_config)
@@ -317,9 +314,11 @@ class ATOMQwen3ForCausalLM(nn.Module):
         logits = self.lm_head(hidden_states)
         return logits
 
+    # need to provide this method for vllm to load weights for the custom model
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        loader = AutoWeightsLoader(
-            self,
-            skip_prefixes=(["lm_head."] if self.config.tie_word_embeddings else None),
-        )
-        return loader.load_weights(weights)
+        loaded_weights = set[Any]()
+        for name, w in weights:
+            print('[zejun] load_weights, name = ', name, '. w.shape:', w.shape, '. w.dtype:', w.dtype, flush=True)
+
+        load_model(self, self.config.model, self.config.hf_config, self.config.load_dummy)
+        return loaded_weights
