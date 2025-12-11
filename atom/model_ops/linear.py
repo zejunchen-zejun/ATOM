@@ -309,7 +309,7 @@ class ATOMColumnParallelLinear(LinearBase):
     def __init__(
         self,
         input_size: int,
-        output_size: int,
+        output_size: int | list[int],
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
@@ -412,7 +412,7 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
             self.num_kv_head_replicas = divide(tp_size, self.total_num_kv_heads)
         
         input_size = hidden_size
-        output_sizes = [
+        output_size = [
             self.num_heads * self.head_size * tp_size,
             self.num_kv_heads * self.head_size * tp_size,
             self.num_kv_heads * self.head_size * tp_size,
@@ -420,7 +420,7 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
 
         super().__init__(
             input_size=input_size,
-            output_sizes=output_sizes,
+            output_size=output_size,
             bias=bias,
             quant_config=quant_config,
             prefix=prefix,
