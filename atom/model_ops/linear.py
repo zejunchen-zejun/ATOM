@@ -27,14 +27,6 @@ from torch import nn
 from atom.config import QuantizationConfig
 from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_max_scale
 
-# from vllm.model_executor.layers.linear import (
-#     MergedColumnParallelLinear,
-#     QKVParallelLinear,
-#     RowParallelLinear,
-#     ReplicatedLinear,
-#     ColumnParallelLinear,
-# )
-
 def divide(numerator, denominator):
     assert (
         numerator % denominator == 0

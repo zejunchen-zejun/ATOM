@@ -61,7 +61,7 @@ from atom.model_ops.embed_head import ParallelLMHead, ATOMVocabParallelEmbedding
 from atom.model_ops.fp8_mqa_logits import fp8_mqa_logits
 from atom.model_ops.layernorm import LayerNorm, RMSNorm
 from atom.model_ops.linear import (
-    ColumnParallelLinear,
+    ATOMColumnParallelLinear,
     ATOMMergedColumnParallelLinear,
     ReplicatedLinear,
     ATOMRowParallelLinear,
@@ -561,14 +561,14 @@ class DeepseekV2MLAAttention(nn.Module):
                 quant_config=quant_config)
             self.q_a_layernorm = RMSNorm(self.q_lora_rank,
                                          eps=config.rms_norm_eps)
-            self.q_b_proj = ColumnParallelLinear(q_lora_rank,
+            self.q_b_proj = ATOMColumnParallelLinear(q_lora_rank,
                                                  self.num_heads *
                                                  self.qk_head_dim,
                                                  bias=False,
                                                  quant_config=quant_config,
                                                  prefix=f"{prefix}.q_b_proj")
         else:
-            self.q_proj = ColumnParallelLinear(self.hidden_size,
+            self.q_proj = ATOMColumnParallelLinear(self.hidden_size,
                                                self.num_heads *
                                                self.qk_head_dim,
                                                bias=False,
@@ -583,7 +583,7 @@ class DeepseekV2MLAAttention(nn.Module):
                 prefix=f"{prefix}.kv_a_proj_with_mqa")
         self.kv_a_layernorm = RMSNorm(self.kv_lora_rank,
                                       eps=config.rms_norm_eps)
-        self.kv_b_proj = ColumnParallelLinear(
+        self.kv_b_proj = ATOMColumnParallelLinear(
             self.kv_lora_rank,
             self.num_heads * (self.qk_nope_head_dim + self.v_head_dim),
             bias=False,

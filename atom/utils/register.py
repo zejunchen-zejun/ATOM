@@ -12,7 +12,7 @@ _REGISTERED_ATOM_OPS = {
     "QKVParallelLinear": ATOMQKVParallelLinear,
     "RowParallelLinear": ATOMRowParallelLinear,
     "MergedColumnParallelLinear": ATOMMergedColumnParallelLinear,
-    "ColumnParallelLinear": ATOMColumnParallelLinear,
+    "ATOMColumnParallelLinear": ATOMColumnParallelLinear,
 }
 
 def _resgiter_custom_op():
