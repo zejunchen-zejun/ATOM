@@ -616,6 +616,9 @@ def get_current_atom_config() -> Config:
 
 
 def config_from_vllm(vllm_config: VllmConfig) -> Config:
+    '''
+    Translate vllm config to atom config, be called when create the custom model
+    '''
     atom_config = Config(vllm_config.model_config.model)
     atom_config.max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
     atom_config.max_num_seqs = vllm_config.scheduler_config.max_num_seqs
@@ -643,5 +646,8 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
     # atom_config.graph_bs = 
     # atom_config.enable_dp_attention = 
     # atom_config.torch_dtype = 
+
+    # set the current atom config for the custom model
+    set_current_atom_config(atom_config)
 
     return atom_config
