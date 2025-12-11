@@ -19,5 +19,6 @@ def register_custom_model():
         "Qwen3ForCausalLM",
         "atom.models.qwen3:ATOMQwen3ForCausalLM")
 
+    # register custom op for ATOM custom model
     _resgiter_custom_op()
     print('[zejun][atom] Registering ATOM custom op to vllm', flush=True)

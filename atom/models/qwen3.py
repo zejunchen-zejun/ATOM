@@ -227,7 +227,7 @@ class Qwen3DecoderLayer(nn.Module):
         "positions": -1,
     }
 )
-class Qwen3Model(nn.Module):
+class CustomQwen3Model(nn.Module):
 
     def __init__(self, atom_config: Config) -> None:
         super().__init__()
@@ -262,11 +262,15 @@ class Qwen3Model(nn.Module):
 
 class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
     packed_modules_mapping = {
-        "q_proj": ("qkv_proj", "q"),
-        "k_proj": ("qkv_proj", "k"),
-        "v_proj": ("qkv_proj", "v"),
-        "gate_proj": ("gate_up_proj", 0),
-        "up_proj": ("gate_up_proj", 1),
+        "qkv_proj": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+        ],
+        "gate_up_proj": [
+            "gate_proj",
+            "up_proj",
+        ],
     }
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
@@ -280,7 +284,7 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         atom_config = config_from_vllm(vllm_config)
 
         config = atom_config.hf_config
-        self.model = Qwen3Model(atom_config)
+        self.model = CustomQwen3Model(atom_config=atom_config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
         if config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
