@@ -12,7 +12,11 @@ from aiter.tuned_gemm import tgemm
 from torch import nn
 
 from atom.utils.forward_context import ForwardContext, get_forward_context
+
+from vllm.model_executor.layers.quantization.base_config import (
+    QuantizationConfig)
 from vllm.model_executor.layers.vocab_parallel_embedding import (
+    DEFAULT_VOCAB_PADDING_SIZE,
     VocabParallelEmbedding
 )
 class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
@@ -21,6 +25,11 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         self,
         num_embeddings: int,
         embedding_dim: int,
+        params_dtype: torch.dtype | None = None,
+        org_num_embeddings: int | None = None,
+        padding_size: int = DEFAULT_VOCAB_PADDING_SIZE,
+        quant_config: QuantizationConfig | None = None,
+        prefix: str = "",
     ):
         super().__init__(num_embeddings=num_embeddings, embedding_dim=embedding_dim)
         self.tp_rank = get_tp_group().rank_in_group
