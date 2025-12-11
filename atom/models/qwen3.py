@@ -278,15 +278,11 @@ class CustomQwen3Model(nn.Module):
 
 class ATOMQwen3ForCausalLM(nn.Module):
     packed_modules_mapping = {
-        "qkv_proj": [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-        ],
-        "gate_up_proj": [
-            "gate_proj",
-            "up_proj",
-        ],
+        "q_proj": ("qkv_proj", "q"),
+        "k_proj": ("qkv_proj", "k"),
+        "v_proj": ("qkv_proj", "v"),
+        "gate_proj": ("gate_up_proj", 0),
+        "up_proj": ("gate_up_proj", 1),
     }
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
@@ -301,7 +297,7 @@ class ATOMQwen3ForCausalLM(nn.Module):
 
         self.config = atom_config.hf_config
         self.model = CustomQwen3Model(atom_config=atom_config, prefix=maybe_prefix(prefix, "model"))
-        self.lm_head = ParallelLMHead(self.config.vocab_size, self.config.self.config)
+        self.lm_head = ParallelLMHead(self.config.vocab_size, self.config.hidden_size)
         if self.config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
