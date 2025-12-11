@@ -73,7 +73,6 @@ def gemm_a4w4_quant(x: torch.Tensor, weight: torch.Tensor, otype: torch.dtype, w
 
 
 class LinearBase(nn.Module):
-
     def __init__(
         self,
         input_size: int,
@@ -84,11 +83,11 @@ class LinearBase(nn.Module):
         reduce_results: bool = False,
         prefix: str = "",
     ):
+        super().__init__()
         if quant_config is None:
             quant_config = QuantizationConfig()
         quant_type = quant_config["quant_type"]
         params_dtype = quant_config["quant_dtype"]
-        super().__init__()
         self.reduce_results = reduce_results
         self.input_size = input_size
         self.output_size = (
@@ -281,7 +280,7 @@ class LinearBase(nn.Module):
         return y
 
 
-class ReplicatedLinear(LinearBase):
+class ATOMReplicatedLinear(LinearBase):
 
     def __init__(
         self,
@@ -317,41 +316,12 @@ class ATOMColumnParallelLinear(LinearBase):
     ):
         self.tp_dim = 0
         super().__init__(
-            input_size,
-            output_size,
-            bias,
+            input_size=input_size,
+            output_size=output_size,
             tp_dim=self.tp_dim,
+            bias=bias,
             quant_config=quant_config,
             prefix=prefix,
-        )
-
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        print('[zejun] ATOM ATOMColumnParallelLinear weight_loader', flush=True)
-        param_data = param.data
-        shard_size = param_data.size(self.tp_dim)
-        start_idx = self.tp_rank * shard_size
-        loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
-        param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM ATOMColumnParallelLinear weight_loader', flush=True)
-
-
-class ATOMColumnParallelLinear(LinearBase):
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
-        **kwargs,
-    ):
-        self.tp_dim = 0
-        super().__init__(
-            input_size,
-            output_size,
-            self.tp_dim,
-            bias,
-            quant_config=quant_config,
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
@@ -427,17 +397,27 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
         self.total_num_kv_heads = total_num_kv_heads or total_num_heads
         tp_size = get_tp_group().world_size
         self.num_heads = divide(self.total_num_heads, tp_size)
-        self.num_kv_heads = divide(self.total_num_kv_heads, tp_size)
+        if self.total_num_kv_heads >= tp_size:
+            # Number of KV heads is greater than TP size, so we partition
+            # the KV heads across multiple tensor parallel GPUs.
+            self.num_kv_heads = divide(self.total_num_kv_heads, tp_size)
+            self.num_kv_head_replicas = 1
+        else:
+            # Number of KV heads is less than TP size, so we replicate
+            # the KV heads across multiple tensor parallel GPUs.
+            self.num_kv_heads = 1
+            self.num_kv_head_replicas = divide(tp_size, self.total_num_kv_heads)
+        
         input_size = hidden_size
         output_sizes = [
-            self.total_num_heads * self.head_size,
-            self.total_num_kv_heads * self.head_size,
-            self.total_num_kv_heads * self.head_size,
+            self.num_heads * self.head_size * tp_size,
+            self.num_kv_heads * self.head_size * tp_size,
+            self.num_kv_heads * self.head_size * tp_size,
         ]
 
         super().__init__(
-            input_size,
-            output_sizes,
+            input_size=input_size,
+            output_sizes=output_sizes,
             bias=bias,
             quant_config=quant_config,
             prefix=prefix,
@@ -486,46 +466,6 @@ class ATOMRowParallelLinear(LinearBase):
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
         reduce_results: bool = True,
-        prefix: str = "",
-        **kwargs,
-    ):
-        self.tp_rank = get_tp_group().rank_in_group
-        self.tp_dim  = 1
-        super().__init__(
-            input_size=input_size,
-            output_size=output_size,
-            bias=bias,
-            reduce_results=reduce_results,
-            quant_config=quant_config,
-            prefix=prefix,
-        )
-
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        print('[zejun] ATOM ATOMRowParallelLinear weight_loader', flush=True)
-        param_data = param.data
-        if param is not getattr(self, "bias", None):
-            shard_size = param_data.size(self.tp_dim)
-            if len(loaded_weight.shape) == 0:
-                loaded_weight = loaded_weight.view(1, 1)
-            if loaded_weight.size(self.tp_dim) == 1 and self.tp_size > 1:
-                loaded_weight = loaded_weight.repeat(1, self.tp_size)
-            start_idx = self.tp_rank * shard_size
-            loaded_weight = loaded_weight.narrow(self.tp_dim, start_idx, shard_size)
-        else:
-            if self.tp_size > 0 and self.tp_rank != 0:
-                loaded_weight.zero_()
-        param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM ATOMRowParallelLinear weight_loader', flush=True)
-
-class ATOMRowParallelLinear(LinearBase):
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
-        reduce_results: bool = True,
         **kwargs,
     ):
         self.tp_rank = get_tp_group().rank_in_group
@@ -555,7 +495,8 @@ class ATOMRowParallelLinear(LinearBase):
         param.weight_loader_process(param_data, loaded_weight)
         print('[zejun] finish ATOM ATOMRowParallelLinear weight_loader', flush=True)
 
-class MergedReplicatedLinear(ReplicatedLinear):
+
+class ATOMMergedReplicatedLinear(ATOMReplicatedLinear):
     def __init__(
         self,
         input_size: int,
@@ -578,7 +519,7 @@ class MergedReplicatedLinear(ReplicatedLinear):
         loaded_weight: torch.Tensor,
         loaded_shard_id: Optional[int] = None
     ):
-        print('[zejun] ATOM MergedReplicatedLinear weight_loader', flush=True)
+        print('[zejun] ATOM ATOMMergedReplicatedLinear weight_loader', flush=True)
         param_data = param.data
         assert loaded_shard_id is not None
         assert loaded_shard_id < len(self.output_sizes)
@@ -598,4 +539,4 @@ class MergedReplicatedLinear(ReplicatedLinear):
             shard_size = self.output_sizes[loaded_shard_id]
         param_data = param_data.narrow(0, shard_offset, shard_size)
         param.weight_loader_process(param_data, loaded_weight)
-        print('[zejun] finish ATOM MergedReplicatedLinear weight_loader', flush=True)
+        print('[zejun] finish ATOM ATOMMergedReplicatedLinear weight_loader', flush=True)

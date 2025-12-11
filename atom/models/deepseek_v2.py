@@ -63,9 +63,9 @@ from atom.model_ops.layernorm import LayerNorm, RMSNorm
 from atom.model_ops.linear import (
     ATOMColumnParallelLinear,
     ATOMMergedColumnParallelLinear,
-    ReplicatedLinear,
+    ATOMReplicatedLinear,
     ATOMRowParallelLinear,
-    MergedReplicatedLinear
+    ATOMMergedReplicatedLinear
 )
 from atom.model_ops.moe import FusedMoE
 from atom.model_ops.topK import (
@@ -187,7 +187,7 @@ class DeepseekV2MoE(nn.Module):
             raise ValueError(f"Unsupported activation: {config.hidden_act}. "
                              "Only silu is supported for now.")
 
-        self.gate = ReplicatedLinear(config.hidden_size,
+        self.gate = ATOMReplicatedLinear(config.hidden_size,
                                      config.n_routed_experts,
                                      bias=False,
                                      quant_config=None,
@@ -436,18 +436,18 @@ class Indexer(nn.Module):
         self.rope_dim = config.qk_rope_head_dim  # 64
         self.q_lora_rank = q_lora_rank  # 1536
         # no tensor parallel, just replicated
-        self.wq_b = ReplicatedLinear(self.q_lora_rank,
+        self.wq_b = ATOMReplicatedLinear(self.q_lora_rank,
                                      self.head_dim * self.n_head,
                                      bias=False,
                                      quant_config=quant_config,
                                      prefix=f"{prefix}.wq_b")
-        self.wk = ReplicatedLinear(hidden_size,
+        self.wk = ATOMReplicatedLinear(hidden_size,
                                    self.head_dim,
                                    bias=False,
                                    quant_config=quant_config,
                                    prefix=f"{prefix}.wk")
         self.k_norm = LayerNorm(self.head_dim, eps=1e-6)
-        self.weights_proj = ReplicatedLinear(hidden_size,
+        self.weights_proj = ATOMReplicatedLinear(hidden_size,
                                              self.n_head,
                                              quant_config=None,
                                              prefix=f"{prefix}.weights_proj")
@@ -549,12 +549,12 @@ class DeepseekV2MLAAttention(nn.Module):
         self.layer_num = layer_num
 
         if self.q_lora_rank is not None:
-            # self.q_a_proj = ReplicatedLinear(self.hidden_size,
+            # self.q_a_proj = ATOMReplicatedLinear(self.hidden_size,
             #                                  self.q_lora_rank,
             #                                  bias=False,
             #                                  quant_config=quant_config,
             #                                  prefix=f"{prefix}.q_a_proj")
-            self.fused_qkv_a_proj = MergedReplicatedLinear(
+            self.fused_qkv_a_proj = ATOMMergedReplicatedLinear(
                 self.hidden_size,
                 [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim],
                 bias=False,
@@ -575,7 +575,7 @@ class DeepseekV2MLAAttention(nn.Module):
                                                quant_config=quant_config,
                                                prefix=f"{prefix}.q_proj")
 
-            self.kv_a_proj_with_mqa = ReplicatedLinear(
+            self.kv_a_proj_with_mqa = ATOMReplicatedLinear(
                 self.hidden_size,
                 self.kv_lora_rank + self.qk_rope_head_dim,
                 bias=False,

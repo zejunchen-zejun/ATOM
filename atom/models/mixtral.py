@@ -40,7 +40,7 @@ from aiter.dist.parallel_state import (
 )
 from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.layernorm import RMSNorm
-from atom.model_ops.linear import ATOMQKVParallelLinear, ATOMRowParallelLinear, ReplicatedLinear
+from atom.model_ops.linear import ATOMQKVParallelLinear, ATOMRowParallelLinear, ATOMReplicatedLinear
 from atom.model_ops.moe import FusedMoE
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
@@ -83,7 +83,7 @@ class MixtralMoE(nn.Module):
 
         # Gate always runs at half / full precision for now.
 
-        self.gate = ReplicatedLinear(
+        self.gate = ATOMReplicatedLinear(
             hidden_size,
             num_experts,
             bias=False,

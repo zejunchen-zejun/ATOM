@@ -42,7 +42,7 @@ from atom.model_ops.moe import FusedMoE
 
 # from vllm.model_executor.layers.fused_moe.config import FusedMoEParallelConfig
 from atom.model_ops.layernorm import RMSNorm
-from atom.model_ops.linear import ATOMQKVParallelLinear, ATOMRowParallelLinear, ReplicatedLinear
+from atom.model_ops.linear import ATOMQKVParallelLinear, ATOMRowParallelLinear, ATOMReplicatedLinear
 
 # from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from aiter.rotary_embedding import get_rope
@@ -171,7 +171,7 @@ class MLPBlock(torch.nn.Module):
         self.hidden_size = config.hidden_size
         self.experts_per_token = config.num_experts_per_tok
         self.world_size = dist.get_world_size() if dist.is_initialized() else 1
-        self.router = ReplicatedLinear(
+        self.router = ATOMReplicatedLinear(
             config.hidden_size,
             config.num_local_experts,
             bias=True,
