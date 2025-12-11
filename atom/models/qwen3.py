@@ -224,11 +224,7 @@ class Qwen3DecoderLayer(nn.Module):
 @support_torch_compile(
     dynamic_arg_dims={
         "input_ids": 0,
-        # positions is of shape (3, seq_len) if mrope is enabled for qwen2-vl,
-        # otherwise (seq_len, ).
         "positions": -1,
-        "intermediate_tensors": 0,
-        "inputs_embeds": 0,
     }
 )
 class Qwen3Model(nn.Module):
@@ -293,13 +289,9 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        intermediate_tensors: IntermediateTensors | None = None,
-        inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
         print('[zejun] ATOM ATOMQwen3ForCausalLM fwd', flush=True)
-        hidden_states = self.model(
-            input_ids, positions, intermediate_tensors, inputs_embeds
-        )
+        hidden_states = self.model(input_ids, positions)
         return hidden_states
 
     def compute_logits(
