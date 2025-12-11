@@ -49,8 +49,9 @@ from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import config_from_vllm
 
 # from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
-from vllm.model_executor.models.interfaces import (MixtureOfExperts,
-                                                   SupportsLoRA, SupportsPP)
+# from vllm.model_executor.models.interfaces import (MixtureOfExperts,
+#                                                    SupportsLoRA, SupportsPP)
+
 from vllm.config.vllm import VllmConfig
 from vllm.distributed.parallel_state import get_tp_group
 from vllm.sequence import IntermediateTensors
@@ -290,10 +291,10 @@ class ATOMQwen3ForCausalLM(nn.Module):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
-        nn.Module.__init__(self)
-        SupportsPP.__init__(self)
-        SupportsLoRA.__init__(self)
-        MixtureOfExperts.__init__(self)
+        # nn.Module.__init__(self)
+        # SupportsPP.__init__(self)
+        # SupportsLoRA.__init__(self)
+        # MixtureOfExperts.__init__(self)
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
 
         atom_config = config_from_vllm(vllm_config)
