@@ -46,7 +46,7 @@ from atom.model_ops.linear import QKVParallelLinear, RowParallelLinear, Replicat
 
 # from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from aiter.rotary_embedding import get_rope
-from atom.model_ops.embed_head import ParallelLMHead, VocabParallelEmbedding
+from atom.model_ops.embed_head import ParallelLMHead, ATOMVocabParallelEmbedding
 
 # from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from atom.models.utils import (
@@ -266,7 +266,7 @@ class GptOssModel(nn.Module):
         self.config = atom_config.hf_config
         self.quant_config = atom_config.quant_config
         self.config.hidden_size = self.config.hidden_size
-        self.embedding = VocabParallelEmbedding(
+        self.embedding = ATOMVocabParallelEmbedding(
             self.config.vocab_size,
             self.config.hidden_size,
         )

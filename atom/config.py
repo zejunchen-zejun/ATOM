@@ -614,9 +614,9 @@ def get_current_atom_config() -> Config:
     assert _current_atom_config is not None, "Current atom config is not set"
     return _current_atom_config
 
+
 def config_from_vllm(vllm_config: VllmConfig) -> Config:
-    atom_config = Config()
-    atom_config.model = vllm_config.model_config.model
+    atom_config = Config(vllm_config.model_config.model)
     atom_config.max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
     atom_config.max_num_seqs = vllm_config.scheduler_config.max_num_seqs
     atom_config.max_model_len = vllm_config.scheduler_config.max_model_len

@@ -6,20 +6,23 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from aiter import logger
 from aiter.dist.communication_op import tensor_model_parallel_all_gather
-from aiter.dist.parallel_state import get_tp_group
+# from aiter.dist.parallel_state import get_tp_group
+from vllm.distributed.parallel_state import get_tp_group
 from aiter.tuned_gemm import tgemm
 from torch import nn
 
 from atom.utils.forward_context import ForwardContext, get_forward_context
-
-class VocabParallelEmbedding(nn.Module):
+from vllm.model_executor.layers.vocab_parallel_embedding import (
+    VocabParallelEmbedding
+)
+class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
 
     def __init__(
         self,
         num_embeddings: int,
         embedding_dim: int,
     ):
-        super().__init__()
+        super().__init__(num_embeddings=num_embeddings, embedding_dim=embedding_dim)
         self.tp_rank = get_tp_group().rank_in_group
         self.tp_size = get_tp_group().world_size
         assert num_embeddings % self.tp_size == 0
@@ -52,7 +55,7 @@ class VocabParallelEmbedding(nn.Module):
         return y
 
 
-class ParallelLMHead(VocabParallelEmbedding):
+class ParallelLMHead(ATOMVocabParallelEmbedding):
 
     def __init__(
         self,

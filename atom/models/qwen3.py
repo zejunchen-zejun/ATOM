@@ -46,7 +46,7 @@ from atom.utils.decorators import support_torch_compile
 
 # from atom.model_ops.rotary_embedding import get_rope
 from aiter.rotary_embedding import get_rope
-from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
+from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import config_from_vllm
 
 from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
@@ -228,7 +228,7 @@ class Qwen3Model(nn.Module):
         config = atom_config.hf_config
         cache_config = atom_config.kv_cache_dtype
         quant_config = atom_config.quant_config
-        self.embed_tokens = VocabParallelEmbedding(
+        self.embed_tokens = ATOMVocabParallelEmbedding(
             config.vocab_size, config.hidden_size
         )
         self.layers = nn.ModuleList(

@@ -43,7 +43,7 @@ from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import QKVParallelLinear, RowParallelLinear, ReplicatedLinear
 from atom.model_ops.moe import FusedMoE
 from aiter.rotary_embedding import get_rope
-from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
+from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import QuantizationConfig, Config
 from atom.utils.decorators import support_torch_compile
 
@@ -283,7 +283,7 @@ class MixtralModel(nn.Module):
         self.vocab_size = config.vocab_size
         self.org_vocab_size = config.vocab_size
 
-        self.embed_tokens = VocabParallelEmbedding(
+        self.embed_tokens = ATOMVocabParallelEmbedding(
             self.vocab_size,
             config.hidden_size,
         )

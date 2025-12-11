@@ -57,7 +57,7 @@ from atom.config import Config, QuantizationConfig, get_current_atom_config
 from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.attention_mla import MLAModules
 from atom.model_ops.base_attention import Attention
-from atom.model_ops.embed_head import ParallelLMHead, VocabParallelEmbedding
+from atom.model_ops.embed_head import ParallelLMHead, ATOMVocabParallelEmbedding
 from atom.model_ops.fp8_mqa_logits import fp8_mqa_logits
 from atom.model_ops.layernorm import LayerNorm, RMSNorm
 from atom.model_ops.linear import (
@@ -853,7 +853,7 @@ class DeepseekV2Model(nn.Module):
             topk_indices_buffer = None
 
         if get_pp_group().is_first_rank:
-            self.embed_tokens = VocabParallelEmbedding(
+            self.embed_tokens = ATOMVocabParallelEmbedding(
                 config.vocab_size,
                 config.hidden_size,
             )

@@ -47,7 +47,7 @@ from atom.model_ops.linear import (
     RowParallelLinear,
 )
 from aiter.rotary_embedding import get_rope
-from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
+from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import QuantizationConfig, Config
 from atom.utils.decorators import support_torch_compile
 
@@ -323,7 +323,7 @@ class LlamaModel(nn.Module):
         if get_pp_group().is_first_rank or (
             config.tie_word_embeddings and get_pp_group().is_last_rank
         ):
-            self.embed_tokens = VocabParallelEmbedding(
+            self.embed_tokens = ATOMVocabParallelEmbedding(
                 self.vocab_size,
                 config.hidden_size,
             )
