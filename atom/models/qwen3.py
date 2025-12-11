@@ -290,10 +290,10 @@ class ATOMQwen3ForCausalLM(nn.Module):
         super().__init__()
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
 
-        atom_config = config_from_vllm(vllm_config)
+        self.atom_config = config_from_vllm(vllm_config)
 
-        self.config = atom_config.hf_config
-        self.model = CustomQwen3Model(atom_config=atom_config, prefix=maybe_prefix(prefix, "model"))
+        self.config = self.atom_config.hf_config
+        self.model = CustomQwen3Model(atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model"))
         self.lm_head = ParallelLMHead(self.config.vocab_size, self.config.hidden_size)
         if self.config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
@@ -318,7 +318,7 @@ class ATOMQwen3ForCausalLM(nn.Module):
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         loaded_weights = set[Any]()
         for name, w in weights:
-            print('[zejun] load_weights, name = ', name, '. w.shape:', w.shape, '. w.dtype:', w.dtype, flush=True)
-
-        load_model(self, self.config.model, self.config.hf_config, self.config.load_dummy)
+            print('[zejun] ATOM load_weights, name = ', name, '. w.shape:', w.shape, '. w.dtype:', w.dtype, flush=True)
+            loaded_weights.add(name)
+        load_model(self, self.atom_config.model, self.atom_config.hf_config, self.atom_config.load_dummy)
         return loaded_weights
