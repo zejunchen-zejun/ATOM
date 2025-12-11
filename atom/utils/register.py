@@ -1,5 +1,10 @@
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding
-from atom.model_ops.linear import ATOMQKVParallelLinear, ATOMRowParallelLinear, ATOMMergedColumnParallelLinear
+from atom.model_ops.linear import (
+    ATOMQKVParallelLinear,
+    ATOMRowParallelLinear,
+    ATOMMergedColumnParallelLinear,
+    ATOMColumnParallelLinear,
+)
 
 global _REGISTERED_ATOM_OPS
 _REGISTERED_ATOM_OPS = {
@@ -7,6 +12,7 @@ _REGISTERED_ATOM_OPS = {
     "QKVParallelLinear": ATOMQKVParallelLinear,
     "RowParallelLinear": ATOMRowParallelLinear,
     "MergedColumnParallelLinear": ATOMMergedColumnParallelLinear,
+    "ColumnParallelLinear": ATOMColumnParallelLinear,
 }
 
 def _resgiter_custom_op():

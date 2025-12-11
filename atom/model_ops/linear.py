@@ -27,6 +27,13 @@ from torch import nn
 from atom.config import QuantizationConfig
 from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_max_scale
 
+from vllm.model_executor.layers.linear import (
+    MergedColumnParallelLinear,
+    QKVParallelLinear,
+    RowParallelLinear,
+    ReplicatedLinear,
+    ColumnParallelLinear,
+)
 
 def divide(numerator, denominator):
     assert (
@@ -73,238 +80,238 @@ def gemm_a4w4_quant(x: torch.Tensor, weight: torch.Tensor, otype: torch.dtype, w
     return y[:m, ...]
 
 
-class LinearBase(nn.Module):
+# class LinearBase(nn.Module):
 
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int | list[int],
-        tp_dim: int | None = None,
-        bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
-        reduce_results: bool = False,
-        prefix: str = "",
-    ):
-        if quant_config is None:
-            quant_config = QuantizationConfig()
-        quant_type = quant_config["quant_type"]
-        params_dtype = quant_config["quant_dtype"]
-        super().__init__()
-        self.reduce_results = reduce_results
-        self.input_size = input_size
-        self.output_size = (
-            output_size if isinstance(output_size, int) else sum(output_size)
-        )
-        self.tp_dim = tp_dim
-        self.tp_rank = get_tp_group().rank_in_group
-        self.tp_size = get_tp_group().world_size
-        self.output_partition_sizes = (
-            output_size if isinstance(output_size, list) else [output_size]
-        )
-        if tp_dim == 1:
-            self.input_size = divide(input_size, self.tp_size)
-        elif tp_dim == 0:
-            self.output_size = divide(self.output_size, self.tp_size)
-            self.output_partition_sizes = [
-                divide(s, self.tp_size) for s in self.output_partition_sizes
-            ]
-        weight_size = (
-            (self.output_size, self.input_size)
-            if params_dtype not in [dtypes.fp4x2, dtypes.i4x2]
-            else (self.output_size, self.input_size // 2)
-        )
-        self.weight = nn.Parameter(
-            torch.empty(weight_size, dtype=params_dtype),
-            requires_grad=False,
-        )
-        if bias:
-            self.bias = nn.Parameter(
-                torch.empty(self.output_size, dtype=params_dtype), requires_grad=False
-            )
-            self.bias.weight_loader_process = self.weight_loader_process
-        else:
-            self.register_parameter("bias", None)
-        self.quant_type = quant_type
-        self.params_dtype = params_dtype
-        if quant_type != QuantType.No:
-            if quant_type == QuantType.per_Tensor:
-                self.weight_scale = nn.Parameter(
-                    torch.empty(len(self.output_partition_sizes), 1, dtype=dtypes.fp32),
-                    requires_grad=False,
-                )
-                if not quant_config["is_dynamic"]:
-                    self.input_scale = nn.Parameter(
-                        torch.empty(
-                            len(self.output_partition_sizes), 1, dtype=dtypes.fp32
-                        ),
-                        requires_grad=False,
-                    )
-                    self.input_scale.weight_loader_process = self.weight_loader_process
-                    self.input_scale.weight_loader = self.weight_loader
-            elif quant_type == QuantType.per_Token:
-                self.weight_scale = nn.Parameter(
-                    torch.empty(self.output_size, 1, dtype=dtypes.fp32),
-                    requires_grad=False,
-                )
-            elif quant_type == QuantType.per_1x128:
-                self.weight_scale = nn.Parameter(
-                    torch.empty(
-                        (self.output_size + 127) // 128,
-                        (self.input_size + 127) // 128,
-                        dtype=dtypes.fp32,
-                    ),
-                    requires_grad=False,
-                )
-            elif quant_type == QuantType.per_1x32:
-                self.weight_scale = nn.Parameter(
-                    torch.empty(
-                        self.output_size,
-                        (self.input_size + 31) // 32,
-                        dtype=dtypes.fp8_e8m0,
-                    ),
-                    requires_grad=False,
-                )
-            self.weight.weight_loader_process = self.weight_loader_process
-            self.weight_scale.weight_loader_process = self.weight_loader_process
-        else:
-            self.weight.weight_loader_process = self.weight_loader_process
-            self.register_parameter("weight_scale", None)
-        self.weight.weight_loader = self.weight_loader
-        if self.bias is not None:
-            self.bias.weight_loader = self.weight_loader
-        if self.weight_scale is not None:
-            self.weight_scale.weight_loader = self.weight_loader
-        self.need_normalize_e4m3fn_to_e4m3fnuz = params_dtype == torch.float8_e4m3fnuz
+#     def __init__(
+#         self,
+#         input_size: int,
+#         output_size: int | list[int],
+#         tp_dim: int | None = None,
+#         bias: bool = False,
+#         quant_config: Optional[QuantizationConfig] = None,
+#         reduce_results: bool = False,
+#         prefix: str = "",
+#     ):
+#         if quant_config is None:
+#             quant_config = QuantizationConfig()
+#         quant_type = quant_config["quant_type"]
+#         params_dtype = quant_config["quant_dtype"]
+#         super().__init__()
+#         self.reduce_results = reduce_results
+#         self.input_size = input_size
+#         self.output_size = (
+#             output_size if isinstance(output_size, int) else sum(output_size)
+#         )
+#         self.tp_dim = tp_dim
+#         self.tp_rank = get_tp_group().rank_in_group
+#         self.tp_size = get_tp_group().world_size
+#         self.output_partition_sizes = (
+#             output_size if isinstance(output_size, list) else [output_size]
+#         )
+#         if tp_dim == 1:
+#             self.input_size = divide(input_size, self.tp_size)
+#         elif tp_dim == 0:
+#             self.output_size = divide(self.output_size, self.tp_size)
+#             self.output_partition_sizes = [
+#                 divide(s, self.tp_size) for s in self.output_partition_sizes
+#             ]
+#         weight_size = (
+#             (self.output_size, self.input_size)
+#             if params_dtype not in [dtypes.fp4x2, dtypes.i4x2]
+#             else (self.output_size, self.input_size // 2)
+#         )
+#         self.weight = nn.Parameter(
+#             torch.empty(weight_size, dtype=params_dtype),
+#             requires_grad=False,
+#         )
+#         if bias:
+#             self.bias = nn.Parameter(
+#                 torch.empty(self.output_size, dtype=params_dtype), requires_grad=False
+#             )
+#             self.bias.weight_loader_process = self.weight_loader_process
+#         else:
+#             self.register_parameter("bias", None)
+#         self.quant_type = quant_type
+#         self.params_dtype = params_dtype
+#         if quant_type != QuantType.No:
+#             if quant_type == QuantType.per_Tensor:
+#                 self.weight_scale = nn.Parameter(
+#                     torch.empty(len(self.output_partition_sizes), 1, dtype=dtypes.fp32),
+#                     requires_grad=False,
+#                 )
+#                 if not quant_config["is_dynamic"]:
+#                     self.input_scale = nn.Parameter(
+#                         torch.empty(
+#                             len(self.output_partition_sizes), 1, dtype=dtypes.fp32
+#                         ),
+#                         requires_grad=False,
+#                     )
+#                     self.input_scale.weight_loader_process = self.weight_loader_process
+#                     self.input_scale.weight_loader = self.weight_loader
+#             elif quant_type == QuantType.per_Token:
+#                 self.weight_scale = nn.Parameter(
+#                     torch.empty(self.output_size, 1, dtype=dtypes.fp32),
+#                     requires_grad=False,
+#                 )
+#             elif quant_type == QuantType.per_1x128:
+#                 self.weight_scale = nn.Parameter(
+#                     torch.empty(
+#                         (self.output_size + 127) // 128,
+#                         (self.input_size + 127) // 128,
+#                         dtype=dtypes.fp32,
+#                     ),
+#                     requires_grad=False,
+#                 )
+#             elif quant_type == QuantType.per_1x32:
+#                 self.weight_scale = nn.Parameter(
+#                     torch.empty(
+#                         self.output_size,
+#                         (self.input_size + 31) // 32,
+#                         dtype=dtypes.fp8_e8m0,
+#                     ),
+#                     requires_grad=False,
+#                 )
+#             self.weight.weight_loader_process = self.weight_loader_process
+#             self.weight_scale.weight_loader_process = self.weight_loader_process
+#         else:
+#             self.weight.weight_loader_process = self.weight_loader_process
+#             self.register_parameter("weight_scale", None)
+#         self.weight.weight_loader = self.weight_loader
+#         if self.bias is not None:
+#             self.bias.weight_loader = self.weight_loader
+#         if self.weight_scale is not None:
+#             self.weight_scale.weight_loader = self.weight_loader
+#         self.need_normalize_e4m3fn_to_e4m3fnuz = params_dtype == torch.float8_e4m3fnuz
 
-    @staticmethod
-    def weight_loader_process(
-        param: nn.Parameter,
-        loaded_weight: torch.Tensor,
-        post_process_func: Callable = lambda a: a,
-    ):
-        if (
-            param.data.dtype != loaded_weight.dtype
-            and param.data.element_size() == loaded_weight.element_size()
-        ):
-            param.data = param.data.view(loaded_weight.dtype)
-        param.data.copy_(post_process_func(loaded_weight))
+#     @staticmethod
+#     def weight_loader_process(
+#         param: nn.Parameter,
+#         loaded_weight: torch.Tensor,
+#         post_process_func: Callable = lambda a: a,
+#     ):
+#         if (
+#             param.data.dtype != loaded_weight.dtype
+#             and param.data.element_size() == loaded_weight.element_size()
+#         ):
+#             param.data = param.data.view(loaded_weight.dtype)
+#         param.data.copy_(post_process_func(loaded_weight))
 
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        param_data = param.data
-        param.weight_loader_process(param_data, loaded_weight)
+#     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+#         param_data = param.data
+#         param.weight_loader_process(param_data, loaded_weight)
 
-    def process_weights_after_loading(self):
-        if (
-            self.quant_type == QuantType.per_Tensor
-            and len(self.output_partition_sizes) > 1
-        ):
-            weight_scale, weight = requantize_with_max_scale(
-                weight=self.weight.data,
-                weight_scale=self.weight_scale.data,
-                logical_widths=self.output_partition_sizes,
-                normalize_e4m3fn_to_e4m3fnuz=self.need_normalize_e4m3fn_to_e4m3fnuz,
-            )
-            self.weight.data = weight
-            self.weight_scale.data = weight_scale.view(-1)
-            if hasattr(self, "input_scale"):
-                self.input_scale.data = (
-                    self.input_scale.data.max() * 2.0
-                    if self.need_normalize_e4m3fn_to_e4m3fnuz
-                    else self.input_scale.data.max()
-                )
-        elif self.need_normalize_e4m3fn_to_e4m3fnuz:
-            self.weight.data, self.weight_scale.data, _ = normalize_e4m3fn_to_e4m3fnuz(
-                self.weight.data, self.weight_scale.data
-            )
-        if (
-            self.quant_type == QuantType.per_Token and self.params_dtype == dtypes.fp8
-        ) or (self.quant_type in [QuantType.per_1x32, QuantType.per_1x128]):
-            self.weight.data = shuffle_weight(self.weight.data, (16, 16))
+#     def process_weights_after_loading(self):
+#         if (
+#             self.quant_type == QuantType.per_Tensor
+#             and len(self.output_partition_sizes) > 1
+#         ):
+#             weight_scale, weight = requantize_with_max_scale(
+#                 weight=self.weight.data,
+#                 weight_scale=self.weight_scale.data,
+#                 logical_widths=self.output_partition_sizes,
+#                 normalize_e4m3fn_to_e4m3fnuz=self.need_normalize_e4m3fn_to_e4m3fnuz,
+#             )
+#             self.weight.data = weight
+#             self.weight_scale.data = weight_scale.view(-1)
+#             if hasattr(self, "input_scale"):
+#                 self.input_scale.data = (
+#                     self.input_scale.data.max() * 2.0
+#                     if self.need_normalize_e4m3fn_to_e4m3fnuz
+#                     else self.input_scale.data.max()
+#                 )
+#         elif self.need_normalize_e4m3fn_to_e4m3fnuz:
+#             self.weight.data, self.weight_scale.data, _ = normalize_e4m3fn_to_e4m3fnuz(
+#                 self.weight.data, self.weight_scale.data
+#             )
+#         if (
+#             self.quant_type == QuantType.per_Token and self.params_dtype == dtypes.fp8
+#         ) or (self.quant_type in [QuantType.per_1x32, QuantType.per_1x128]):
+#             self.weight.data = shuffle_weight(self.weight.data, (16, 16))
 
-    def forward(
-        self, x: torch.Tensor, x_scale: Optional[torch.Tensor] = None, otype=dtypes.bf16
-    ) -> torch.Tensor:
-        if self.quant_type.value == QuantType.No.value:
-            y = tgemm.mm(x, self.weight, self.bias)
-        else:
-            if x_scale is None:
-                quant_func = get_hip_quant(self.quant_type)
-                if self.quant_type.value == QuantType.per_1x128.value:
-                    quant_func = functools_partial(quant_func, transpose_scale=True)
-                if self.quant_type.value != QuantType.per_1x32.value:
-                    x, x_scale = quant_func(
-                        x,
-                        quant_dtype=self.params_dtype,
-                        scale=getattr(self, "input_scale", None),
-                    )
-            if self.quant_type.value == QuantType.per_Tensor.value:
-                y = tgemm.mm(
-                    x,
-                    self.weight,
-                    self.bias,
-                    otype=otype,
-                    scale_a=x_scale,
-                    scale_b=self.weight_scale,
-                )
-            elif self.quant_type.value == QuantType.per_Token.value:
-                if self.params_dtype == dtypes.i8:
-                    y = gemm_a8w8(
-                        x,
-                        self.weight,
-                        x_scale,
-                        self.weight_scale,
-                        self.bias,
-                        dtype=otype,
-                    )
-                else:
-                    y = gemm_a8w8_bpreshuffle(
-                        x,
-                        self.weight,
-                        x_scale,
-                        self.weight_scale,
-                        dtype=otype,
-                    )
-                    if self.bias is not None:
-                        y += self.bias
-            elif self.quant_type.value == QuantType.per_1x128.value:
-                y = gemm_a8w8_blockscale_bpreshuffle(
-                    x, self.weight, x_scale, self.weight_scale, dtype=otype
-                )
-                if self.bias is not None:
-                    y += self.bias
-            elif self.quant_type.value == QuantType.per_1x32.value:
-                y = gemm_a4w4_quant(x, self.weight, otype, self.weight_scale.data, self.params_dtype, getattr(self, "input_scale", None), self.output_size)
-                if self.bias is not None:
-                    y += self.bias
-        if self.tp_dim == 1 and self.tp_size > 1 and self.reduce_results:
-            y = get_tp_group().all_reduce(y, ca_fp8_quant=False)
-        return y
-
-
-class ReplicatedLinear(LinearBase):
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            input_size,
-            output_size,
-            tp_dim=None,
-            bias=bias,
-            quant_config=quant_config,
-        )
-
-    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        param_data = param.data
-        param.weight_loader_process(param_data, loaded_weight)
+#     def forward(
+#         self, x: torch.Tensor, x_scale: Optional[torch.Tensor] = None, otype=dtypes.bf16
+#     ) -> torch.Tensor:
+#         if self.quant_type.value == QuantType.No.value:
+#             y = tgemm.mm(x, self.weight, self.bias)
+#         else:
+#             if x_scale is None:
+#                 quant_func = get_hip_quant(self.quant_type)
+#                 if self.quant_type.value == QuantType.per_1x128.value:
+#                     quant_func = functools_partial(quant_func, transpose_scale=True)
+#                 if self.quant_type.value != QuantType.per_1x32.value:
+#                     x, x_scale = quant_func(
+#                         x,
+#                         quant_dtype=self.params_dtype,
+#                         scale=getattr(self, "input_scale", None),
+#                     )
+#             if self.quant_type.value == QuantType.per_Tensor.value:
+#                 y = tgemm.mm(
+#                     x,
+#                     self.weight,
+#                     self.bias,
+#                     otype=otype,
+#                     scale_a=x_scale,
+#                     scale_b=self.weight_scale,
+#                 )
+#             elif self.quant_type.value == QuantType.per_Token.value:
+#                 if self.params_dtype == dtypes.i8:
+#                     y = gemm_a8w8(
+#                         x,
+#                         self.weight,
+#                         x_scale,
+#                         self.weight_scale,
+#                         self.bias,
+#                         dtype=otype,
+#                     )
+#                 else:
+#                     y = gemm_a8w8_bpreshuffle(
+#                         x,
+#                         self.weight,
+#                         x_scale,
+#                         self.weight_scale,
+#                         dtype=otype,
+#                     )
+#                     if self.bias is not None:
+#                         y += self.bias
+#             elif self.quant_type.value == QuantType.per_1x128.value:
+#                 y = gemm_a8w8_blockscale_bpreshuffle(
+#                     x, self.weight, x_scale, self.weight_scale, dtype=otype
+#                 )
+#                 if self.bias is not None:
+#                     y += self.bias
+#             elif self.quant_type.value == QuantType.per_1x32.value:
+#                 y = gemm_a4w4_quant(x, self.weight, otype, self.weight_scale.data, self.params_dtype, getattr(self, "input_scale", None), self.output_size)
+#                 if self.bias is not None:
+#                     y += self.bias
+#         if self.tp_dim == 1 and self.tp_size > 1 and self.reduce_results:
+#             y = get_tp_group().all_reduce(y, ca_fp8_quant=False)
+#         return y
 
 
-class ColumnParallelLinear(LinearBase):
+# class ReplicatedLinear(LinearBase):
+
+#     def __init__(
+#         self,
+#         input_size: int,
+#         output_size: int,
+#         bias: bool = False,
+#         quant_config: Optional[QuantizationConfig] = None,
+#         **kwargs,
+#     ):
+#         super().__init__(
+#             input_size,
+#             output_size,
+#             tp_dim=None,
+#             bias=bias,
+#             quant_config=quant_config,
+#         )
+
+#     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+#         param_data = param.data
+#         param.weight_loader_process(param_data, loaded_weight)
+
+
+class ATOMColumnParallelLinear(ColumnParallelLinear):
 
     def __init__(
         self,
@@ -333,7 +340,7 @@ class ColumnParallelLinear(LinearBase):
         param.weight_loader_process(param_data, loaded_weight)
 
 
-class ATOMMergedColumnParallelLinear(LinearBase):
+class ATOMMergedColumnParallelLinear(MergedColumnParallelLinear):
 
     def __init__(
         self,
@@ -376,7 +383,7 @@ class ATOMMergedColumnParallelLinear(LinearBase):
         param.weight_loader_process(param_data, loaded_weight)
 
 
-class ATOMQKVParallelLinear(ColumnParallelLinear):
+class ATOMQKVParallelLinear(QKVParallelLinear):
 
     def __init__(
         self,
@@ -444,7 +451,7 @@ class ATOMQKVParallelLinear(ColumnParallelLinear):
         print('[zejun] finish ATOM ATOMQKVParallelLinear weight_loader', flush=True)
 
 
-class ATOMRowParallelLinear(LinearBase):
+class ATOMRowParallelLinear(RowParallelLinear):
 
     def __init__(
         self,
