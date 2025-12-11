@@ -13,7 +13,7 @@ from atom.utils import CpuGpuBuffer
 from atom.utils.forward_context import AttentionMetaData, Context
 
 from aiter import dtypes, get_mla_metadata_info_v1, get_mla_metadata_v1
-from aiter.dist.parallel_state import get_tp_group
+from vllm.distributed.parallel_state import get_tp_group
 
 from .backends import AttentionBackend, CommonAttentionBuilder
 

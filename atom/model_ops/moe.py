@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from atom.utils.forward_context import ForwardContext, get_forward_context
 import torch
 from aiter import ActivationType, QuantType, dtypes, get_hip_quant
-from aiter.dist.parallel_state import get_tp_group, get_dp_group
+from vllm.distributed.parallel_state import get_tp_group, get_dp_group
 from aiter.fused_moe import fused_moe
 from aiter.utility import fp4_utils
 from aiter.ops.shuffle import (

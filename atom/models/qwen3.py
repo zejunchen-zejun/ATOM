@@ -28,7 +28,6 @@ import torch
 from torch import nn
 
 # import torch.distributed as dist
-from aiter.dist.parallel_state import get_tp_group
 from typing import Optional
 from transformers import Qwen3Config
 from atom.config import QuantizationConfig, Config
@@ -53,6 +52,7 @@ from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 from vllm.model_executor.models.interfaces import (MixtureOfExperts,
                                                    SupportsLoRA, SupportsPP)
 from vllm.config.vllm import VllmConfig
+from vllm.distributed.parallel_state import get_tp_group
 
 class Qwen3Attention(nn.Module):
 

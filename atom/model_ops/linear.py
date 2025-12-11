@@ -18,7 +18,7 @@ from aiter import (
 )
 
 # import torch.distributed as dist
-from aiter.dist.parallel_state import get_tp_group
+from vllm.distributed.parallel_state import get_tp_group
 from aiter.ops.shuffle import shuffle_weight
 from aiter.tuned_gemm import tgemm
 from aiter.utility import fp4_utils

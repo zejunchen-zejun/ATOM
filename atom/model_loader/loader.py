@@ -20,7 +20,7 @@ from atom.model_loader.weight_utils import (
 )
 from atom.model_ops.base_config import QuantizeMethodBase
 from atom.model_ops.moe import is_rocm_aiter_fusion_shared_expert_enabled
-from aiter.dist.parallel_state import get_tp_group
+from vllm.distributed.parallel_state import get_tp_group
 
 
 def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):

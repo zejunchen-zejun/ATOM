@@ -6,7 +6,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from aiter import logger
 from aiter.dist.communication_op import tensor_model_parallel_all_gather
-# from aiter.dist.parallel_state import get_tp_group
+# from vllm.distributed.parallel_state import get_tp_group
 from vllm.distributed.parallel_state import get_tp_group
 from aiter.tuned_gemm import tgemm
 from torch import nn
