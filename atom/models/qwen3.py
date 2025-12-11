@@ -38,7 +38,7 @@ from atom.model_ops.base_attention import Attention
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
     ATOMQKVParallelLinear,
-    MergedColumnParallelLinear,
+    ATOMMergedColumnParallelLinear,
     ATOMRowParallelLinear,
 )
 from vllm.compilation.decorators import support_torch_compile
@@ -152,7 +152,7 @@ class Qwen3MLP(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
-        self.gate_up_proj = MergedColumnParallelLinear(
+        self.gate_up_proj = ATOMMergedColumnParallelLinear(
             hidden_size,
             [intermediate_size] * 2,
             bias=False,

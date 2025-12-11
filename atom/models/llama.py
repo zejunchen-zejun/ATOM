@@ -42,7 +42,7 @@ from aiter.dist.parallel_state import (
 from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
-    MergedColumnParallelLinear,
+    ATOMMergedColumnParallelLinear,
     ATOMQKVParallelLinear,
     ATOMRowParallelLinear,
 )
@@ -74,7 +74,7 @@ class LlamaMLP(nn.Module):
         reduce_results: bool = True,
     ) -> None:
         super().__init__()
-        self.gate_up_proj = MergedColumnParallelLinear(
+        self.gate_up_proj = ATOMMergedColumnParallelLinear(
             input_size=hidden_size,
             output_sizes=[intermediate_size] * 2,
             bias=bias,

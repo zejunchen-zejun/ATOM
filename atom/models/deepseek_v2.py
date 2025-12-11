@@ -62,7 +62,7 @@ from atom.model_ops.fp8_mqa_logits import fp8_mqa_logits
 from atom.model_ops.layernorm import LayerNorm, RMSNorm
 from atom.model_ops.linear import (
     ColumnParallelLinear,
-    MergedColumnParallelLinear,
+    ATOMMergedColumnParallelLinear,
     ReplicatedLinear,
     ATOMRowParallelLinear,
     MergedReplicatedLinear
@@ -147,7 +147,7 @@ class DeepseekV2MLP(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
-        self.gate_up_proj = MergedColumnParallelLinear(
+        self.gate_up_proj = ATOMMergedColumnParallelLinear(
             hidden_size, [intermediate_size] * 2,
             bias=False,
             quant_config=quant_config,
