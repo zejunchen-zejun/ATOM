@@ -369,12 +369,12 @@ def rocm_aiter_fused_moe_fake(
     return torch.empty_like(hidden_states)
 
 
-direct_register_custom_op(
-    op_name="rocm_aiter_fused_moe",
-    op_func=rocm_aiter_fused_moe_impl,
-    mutates_args=[],
-    fake_impl=rocm_aiter_fused_moe_fake,
-)
+# direct_register_custom_op(
+#     op_name="rocm_aiter_fused_moe",
+#     op_func=rocm_aiter_fused_moe_impl,
+#     mutates_args=[],
+#     fake_impl=rocm_aiter_fused_moe_fake,
+# )
 
 
 class Mxfp4MoEMethod(FusedMoEMethodBase):
