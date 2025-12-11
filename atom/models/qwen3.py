@@ -316,13 +316,11 @@ class ATOMQwen3ForCausalLM(nn.Module):
 
     # need to provide this method for vllm to load weights for the custom model
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        loaded_weights = set[Any]()
         for name, w in weights:
             print('[zejun] ATOM load_weights, name = ', name, '. w.shape:', w.shape, '. w.dtype:', w.dtype, flush=True)
         
-        load_model(self, self.atom_config.model, self.atom_config.hf_config, self.atom_config.load_dummy)
-        
-        
+        loaded_weights_record = load_model(self, self.atom_config.model, self.atom_config.hf_config, self.atom_config.load_dummy)
+        print('[zejun] ATOM loaded_weights_record = \n', loaded_weights_record, flush=True)
 
         # return to vllm
-        return loaded_weights
+        return loaded_weights_record

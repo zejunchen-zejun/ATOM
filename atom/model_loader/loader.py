@@ -74,7 +74,8 @@ def load_model(
     model_name_or_path: str,
     hf_config: AutoConfig,
     load_dummy: bool = False,
-):
+) -> set[str]:
+    loaded_weights_record = set[str]()
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
     weights_mapping = getattr(model, "weights_mapping", {})
     params_dict = dict(model.named_parameters())
@@ -115,9 +116,11 @@ def load_model(
                     weight_loader = getattr(param, "weight_loader")
                     # weight_loader(param, weight_tensor, shard_id)
                     print('[zejun] ATOM, k(', k, ') in packed_modules_mapping, weight_loader = ', weight_loader, flush=True)
+                    print('[zejun] ATOM param_name = ', param_name, flush=True)
                     futures.append(
                         executor.submit(weight_loader, param, weight_tensor, shard_id)
                     )
+                    loaded_weights_record.add(param_name)
                     break
             else:
                 # Check if model has expert mapping before processing
@@ -143,6 +146,7 @@ def load_model(
                                 expert_id,
                             )
                         )
+                        loaded_weights_record.add(name)
                         # weight_loader(
                         #     param,
                         #     weight_tensor,
@@ -159,6 +163,7 @@ def load_model(
                         futures.append(
                             executor.submit(weight_loader, param, weight_tensor)
                         )
+                        loaded_weights_record.add(name)
                         # weight_loader(param, weight_tensor)
                 else:
                     # Model doesn't have expert mapping, use generic loading
@@ -168,6 +173,7 @@ def load_model(
                     )
                     # weight_loader(param, weight_tensor)
                     futures.append(executor.submit(weight_loader, param, weight_tensor))
+                    loaded_weights_record.add(name)
         # Wait for all tasks to complete and raise any exceptions.
         for future in concurrent.futures.as_completed(futures):
             future.result()
@@ -177,3 +183,6 @@ def load_model(
         quant_method = getattr(module, "quant_method", None)
         if isinstance(quant_method, QuantizeMethodBase):
             quant_method.process_weights_after_loading(module)
+    
+    return loaded_weights_record
+
