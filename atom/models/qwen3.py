@@ -302,6 +302,8 @@ class ATOMQwen3ForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
+        intermediate_tensors: IntermediateTensors | None = None,
+        inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
         print('[zejun] ATOM ATOMQwen3ForCausalLM fwd', flush=True)
         hidden_states = self.model(input_ids, positions)
@@ -318,7 +320,7 @@ class ATOMQwen3ForCausalLM(nn.Module):
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         for name, w in weights:
             print('[zejun] ATOM load_weights, name = ', name, '. w.shape:', w.shape, '. w.dtype:', w.dtype, flush=True)
-        
+
         loaded_weights_record = load_model(self, self.atom_config.model, self.atom_config.hf_config, self.atom_config.load_dummy)
         print('[zejun] ATOM loaded_weights_record = \n', loaded_weights_record, flush=True)
 

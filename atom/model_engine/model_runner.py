@@ -423,6 +423,7 @@ class ModelRunner:
         )
 
         actual_num_tokens = dummy_batch.total_tokens_num
+        print('[zejun] ATOM dummy_execution, attn_metadata = ', attn_metadata, flush=True)
         set_forward_context(
             attn_metadata=attn_metadata,
             atom_config=self.config,
@@ -750,6 +751,7 @@ class ModelRunner:
         )
         num_input_tokens, num_tokens_across_dp = self._preprocess(batch)
         actual_num_tokens = batch.total_tokens_num
+        print('[zejun] ATOM prepare_intputs, attn_metadata = ', attn_metadata, flush=True)
         set_forward_context(
             attn_metadata=attn_metadata,
             atom_config=self.config,
@@ -858,6 +860,7 @@ class ModelRunner:
                 num_tokens = bs
                 num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
                 num_tokens += num_pad
+                print('[zejun] ATOM capture_cudagraph, attn_metadata = ', attn_metadata, flush=True)
                 set_forward_context(
                     attn_metadata=attn_metadata,
                     atom_config=self.config,
