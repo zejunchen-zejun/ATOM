@@ -19,6 +19,8 @@ from aiter import QuantType
 from aiter.dist.parallel_state import get_dp_group
 from aiter.utility.dtypes import d_dtypes
 
+from vllm.config.vllm import VllmConfig
+
 logger = logging.getLogger("atom")
 
 
@@ -611,3 +613,35 @@ def set_current_atom_config(atom_config: Config):
 def get_current_atom_config() -> Config:
     assert _current_atom_config is not None, "Current atom config is not set"
     return _current_atom_config
+
+def config_from_vllm(vllm_config: VllmConfig) -> Config:
+    atom_config = Config()
+    atom_config.model = vllm_config.model_config.model
+    atom_config.max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
+    atom_config.max_num_seqs = vllm_config.scheduler_config.max_num_seqs
+    atom_config.max_model_len = vllm_config.scheduler_config.max_model_len
+    atom_config.gpu_memory_utilization = vllm_config.cache_config.gpu_memory_utilization
+    atom_config.tensor_parallel_size = vllm_config.parallel_config.tensor_parallel_size
+    atom_config.enforce_eager = vllm_config.model_config.enforce_eager
+    atom_config.hf_config = vllm_config.model_config.hf_config
+    atom_config.parallel_config = vllm_config.parallel_config
+    # TODO: check here
+    # atom_config.bos_token_id = 
+    # atom_config.eos_token_id = 
+    atom_config.kv_cache_block_size = vllm_config.cache_config.block_size
+    atom_config.num_kvcache_blocks = vllm_config.cache_config.num_gpu_blocks
+    atom_config.kv_cache_dtype = vllm_config.cache_config.cache_dtype
+    atom_config.enable_prefix_caching = vllm_config.cache_config.enable_prefix_caching
+    # atom_config.port = 
+    # atom_config.torch_profiler_dir = 
+    atom_config.compilation_config = vllm_config.compilation_config
+    atom_config.quant_config = vllm_config.quant_config
+    # atom_config.asyncio_mode = 
+    # atom_config.load_dummy = vllm_config.model_config.load_dummy
+    atom_config.enable_expert_parallel = vllm_config.parallel_config.enable_expert_parallel
+    # atom_config.master_addr = 
+    # atom_config.graph_bs = 
+    # atom_config.enable_dp_attention = 
+    # atom_config.torch_dtype = 
+
+    return atom_config

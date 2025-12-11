@@ -1,5 +1,5 @@
 #!/bin/bash
-
+export CUDA_VISIBLE_DEVICES=7
 export VLLM_ROCM_USE_ATOM_PLUGIN=1
 
 export SAFETENSORS_FAST_GPU=1
@@ -23,9 +23,8 @@ vllm serve $model_path \
     --kv-cache-dtype "fp8" \
     --trust-remote-code \
     --disable-log-requests \
-    --gpu_memory_utilization 0.1 \
+    --gpu_memory_utilization 0.08 \
     --enforce-eager \
     --async-scheduling \
     --load-format fastsafetensors \
     2>&1 | tee log.serve.log &
-

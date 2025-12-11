@@ -47,10 +47,13 @@ from atom.utils.decorators import support_torch_compile
 # from atom.model_ops.rotary_embedding import get_rope
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
+from atom.config import config_from_vllm
 
 from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 from vllm.model_executor.models.interfaces import (MixtureOfExperts,
                                                    SupportsLoRA, SupportsPP)
+from vllm.config.vllm import VllmConfig
+
 class Qwen3Attention(nn.Module):
 
     def __init__(
@@ -260,13 +263,15 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         "up_proj": ("gate_up_proj", 1),
     }
 
-    def __init__(self, *, atom_config: Config, prefix: str = "") -> None:
-        super().__init__()
+    def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
+        super().__init__(vllm_config=vllm_config, prefix=prefix)
         nn.Module.__init__(self)
         SupportsPP.__init__(self)
         SupportsLoRA.__init__(self)
         MixtureOfExperts.__init__(self)
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
+
+        atom_config = config_from_vllm(vllm_config)
 
         config = atom_config.hf_config
         self.model = Qwen3Model(atom_config)
