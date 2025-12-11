@@ -53,6 +53,7 @@ from vllm.model_executor.models.interfaces import (MixtureOfExperts,
                                                    SupportsLoRA, SupportsPP)
 from vllm.config.vllm import VllmConfig
 from vllm.distributed.parallel_state import get_tp_group
+from vllm.sequence import IntermediateTensors
 
 class Qwen3Attention(nn.Module):
 
@@ -292,9 +293,13 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-    ) -> torch.Tensor:
+        intermediate_tensors: IntermediateTensors | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+    ) -> torch.Tensor | IntermediateTensors:
         print('[zejun] ATOM ATOMQwen3ForCausalLM fwd', flush=True)
-        hidden_states = self.model(input_ids, positions)
+        hidden_states = self.model(
+            input_ids, positions, intermediate_tensors, inputs_embeds
+        )
         return hidden_states
 
     def compute_logits(
