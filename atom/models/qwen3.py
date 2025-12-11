@@ -28,7 +28,7 @@ import torch
 from torch import nn
 
 # import torch.distributed as dist
-from typing import Optional
+from typing import Optional, Iterable
 from transformers import Qwen3Config
 from atom.config import QuantizationConfig, Config
 
@@ -41,7 +41,6 @@ from atom.model_ops.linear import (
     ATOMMergedColumnParallelLinear,
     ATOMRowParallelLinear,
 )
-from vllm.compilation.decorators import support_torch_compile
 
 # from atom.model_ops.rotary_embedding import get_rope
 from aiter.rotary_embedding import get_rope
@@ -52,10 +51,11 @@ from atom.config import config_from_vllm
 # from vllm.model_executor.models.interfaces import (MixtureOfExperts,
 #                                                    SupportsLoRA, SupportsPP)
 
+from vllm.compilation.decorators import support_torch_compile
 from vllm.config.vllm import VllmConfig
 from vllm.distributed.parallel_state import get_tp_group
 from vllm.sequence import IntermediateTensors
-from vllm.model_executor.models.utils import maybe_prefix
+from vllm.model_executor.models.utils import maybe_prefix, AutoWeightsLoader
 
 class Qwen3Attention(nn.Module):
 
@@ -299,10 +299,10 @@ class ATOMQwen3ForCausalLM(nn.Module):
 
         atom_config = config_from_vllm(vllm_config)
 
-        config = atom_config.hf_config
+        self.config = atom_config.hf_config
         self.model = CustomQwen3Model(atom_config=atom_config, prefix=maybe_prefix(prefix, "model"))
-        self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
-        if config.tie_word_embeddings:
+        self.lm_head = ParallelLMHead(self.config.vocab_size, self.config.self.config)
+        if self.config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
     def forward(
@@ -320,3 +320,10 @@ class ATOMQwen3ForCausalLM(nn.Module):
     ) -> torch.Tensor:
         logits = self.lm_head(hidden_states)
         return logits
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        loader = AutoWeightsLoader(
+            self,
+            skip_prefixes=(["lm_head."] if self.config.tie_word_embeddings else None),
+        )
+        return loader.load_weights(weights)
