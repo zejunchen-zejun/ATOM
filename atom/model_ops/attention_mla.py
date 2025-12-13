@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from atom.model_ops.utils import get_and_maybe_dequant_weights
 from atom.utils.forward_context import (
-    AttentionMetaData,
+    ATOMAttentionMetadata,
     ForwardContext,
     get_forward_context,
 )
@@ -209,7 +209,7 @@ class MLAAttention(nn.Module):
         kv_c_normed: torch.Tensor,
         k_rope: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
-        attn_metadata: AttentionMetaData,
+        attn_metadata: ATOMAttentionMetadata,
     ) -> torch.Tensor:
         assert attn_metadata is not None
 
@@ -242,7 +242,7 @@ class MLAAttention(nn.Module):
         self,
         q: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
-        attn_metadata: AttentionMetaData,
+        attn_metadata: ATOMAttentionMetadata,
     ) -> torch.Tensor:
         assert kv_c_and_k_pe_cache.numel() > 0
         assert attn_metadata is not None

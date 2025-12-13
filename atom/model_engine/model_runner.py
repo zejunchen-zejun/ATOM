@@ -35,7 +35,7 @@ from aiter.dist.utils import get_distributed_init_method
 
 logger = logging.getLogger("atom")
 from atom.utils.forward_context import (
-    AttentionMetaData,
+    ATOMAttentionMetadata,
     Context,
     DPMetadata,
     get_forward_context,
@@ -415,7 +415,7 @@ class ModelRunner:
 
         num_input_tokens, num_tokens_across_dp = self._preprocess(dummy_batch)
 
-        context = Context(
+        attn_metadata.context = Context(
             positions=positions,
             is_prefill=False,
             batch_size=context_bs,
@@ -423,11 +423,9 @@ class ModelRunner:
         )
 
         actual_num_tokens = dummy_batch.total_tokens_num
-        print('[zejun] ATOM dummy_execution, attn_metadata = ', attn_metadata, flush=True)
         set_forward_context(
             attn_metadata=attn_metadata,
             atom_config=self.config,
-            context=context,
             num_tokens=actual_num_tokens,  # original value, not with padding
             num_tokens_across_dp=num_tokens_across_dp,
         )
@@ -749,13 +747,14 @@ class ModelRunner:
             batch_size=context_bs,
             graph_bs=bs,
         )
+
+        attn_metadata.context = context
+
         num_input_tokens, num_tokens_across_dp = self._preprocess(batch)
         actual_num_tokens = batch.total_tokens_num
-        print('[zejun] ATOM prepare_intputs, attn_metadata = ', attn_metadata, flush=True)
         set_forward_context(
             attn_metadata=attn_metadata,
             atom_config=self.config,
-            context=context,
             num_tokens=actual_num_tokens,
             num_tokens_across_dp=num_tokens_across_dp,
         )
@@ -854,17 +853,15 @@ class ModelRunner:
                     capture_range.set_description(f"Capturing {bs=}")
                 graph = torch.cuda.CUDAGraph()
 
-                attn_metadata, context = (
+                attn_metadata = (
                     self.attn_metadata_builder.build_for_cudagraph_capture(bs)
                 )
                 num_tokens = bs
                 num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
                 num_tokens += num_pad
-                print('[zejun] ATOM capture_cudagraph, attn_metadata = ', attn_metadata, flush=True)
                 set_forward_context(
                     attn_metadata=attn_metadata,
                     atom_config=self.config,
-                    context=context,
                     num_tokens=num_tokens,
                     num_tokens_across_dp=num_tokens_across_dp,
                 )

@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Set, Dict, Union
 from atom.config import Config, KVCacheTensor
 import torch
 from abc import ABC, abstractmethod
-from atom.config import Config, ParallelConfig
+from atom.config import Config, ParallelConfig, config_from_vllm
+
+from vllm.config import CUDAGraphMode
+from vllm.v1.worker.ubatch_utils import UBatchSlices
+from vllm import forward_context
+from vllm.forward_context import BatchDescriptor
+from vllm.config import VllmConfig
+
 
 def _compute_chunked_local_num_tokens(num_tokens_across_dp_cpu: list[int],
                                       max_num_tokens: int,
@@ -131,7 +138,7 @@ class Context:
 
 
 @dataclass
-class AttentionMetaData:
+class ATOMAttentionMetadata:
     """Attention metadata for prefill and decode batched together."""
 
     cu_seqlens_q: Optional[torch.Tensor] = None
@@ -159,6 +166,8 @@ class AttentionMetaData:
     reduce_final_map: Optional[torch.Tensor] = None
     reduce_partial_map: Optional[torch.Tensor] = None
 
+    context: Optional[Context] = None
+
     def __init__(
         self,
         cu_seqlens_q: Optional[torch.Tensor] = None,
@@ -183,6 +192,7 @@ class AttentionMetaData:
         reduce_indptr: Optional[torch.Tensor] = None,
         reduce_final_map: Optional[torch.Tensor] = None,
         reduce_partial_map: Optional[torch.Tensor] = None,
+        context: Optional[Context] = None,
     ):
         self.cu_seqlens_q = cu_seqlens_q
         self.cu_seqlens_k = cu_seqlens_k
@@ -206,6 +216,7 @@ class AttentionMetaData:
         self.reduce_indptr = reduce_indptr
         self.reduce_final_map = reduce_final_map
         self.reduce_partial_map = reduce_partial_map
+        self.context = context
 
     def asdict_zerocopy(self, skip_fields: Optional[Set[str]] = None) -> Dict[str, Any]:
         """Similar to dataclasses.asdict, but avoids deepcopying."""
@@ -224,25 +235,34 @@ class AttentionMetaData:
 class ForwardContext:
     # copy from vllm_config.compilation_config.static_forward_context
     no_compile_layers: dict[int, Any] = field(default_factory=dict)
-
+    """
+    Type Dict[str, AttentionMetadata] for v1, map from layer_name of each 
+    attention layer to its attention metadata
+    Type List[Dict[str, AttentionMetadata]] for DBO. List of size two, one
+    for each microbatch.
+    Set dynamically for each forward pass
+    """
     attn_metadata: Optional[
-        Union["AttentionMetaData", dict[str, "AttentionMetaData"]]
+        Union["ATOMAttentionMetadata", dict[str, "ATOMAttentionMetadata"]]
     ] = None
-
+    virtual_engine: int  # set dynamically for each forward pass
+    # TODO: remove the kv cache data
     kv_cache_data: dict[str, KVCacheTensor] = None
-
-    context: Optional[Context] = None
-
     dp_metadata: Optional[DPMetadata] = None
+    # determine the cudagraph style at runtime to be FULL, PIECEWISE, or NONE.
+    # by default NONE, no cudagraph is used.
+    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE
+    batch_descriptor: BatchDescriptor | None = None
+
+    ubatch_slices: UBatchSlices | None = None
 
     def __post_init__(self):
         if not hasattr(self, "no_compile_layers") or self.no_compile_layers is None:
             self.no_compile_layers = {}
-        # if self.attn_metadata is None:
-        #     self.attn_metadata = {}
 
 
-_forward_context: Optional[ForwardContext] = ForwardContext()
+_forward_context: ForwardContext | None = None
+# TODO: change here
 _forward_kv_cache_context: Optional[ForwardContext] = ForwardContext()
 
 
@@ -256,28 +276,43 @@ def get_forward_context() -> ForwardContext:
 
 
 def set_forward_context(
-    attn_metadata: AttentionMetaData, atom_config: Config, context: Context,
-    num_tokens: Optional[int] = None,
-    num_tokens_across_dp: Optional[torch.Tensor] = None,
-) -> None:
-    global _forward_context
+    attn_metadata: Any,
+    vllm_config: VllmConfig,
+    virtual_engine: int = 0,
+    num_tokens: int | None = None,
+    num_tokens_across_dp: torch.Tensor | None = None,
+    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
+    batch_descriptor: BatchDescriptor | None = None,
+    ubatch_slices: UBatchSlices | None = None,
+):
+    """A context manager that stores the current forward context,
+    can be attention metadata, etc.
+    Here we can inject common logic for every model forward pass.
+    """
     dp_metadata: Optional[DPMetadata] = None
+    atom_config = config_from_vllm(vllm_config)
     if atom_config.parallel_config.data_parallel_size > 1 and num_tokens is not None:
         dp_metadata = DPMetadata.make(atom_config.parallel_config,
                                       # attn_metadata,
                                       num_tokens or 0,
                                       num_tokens_across_dp)
 
-    _forward_context = ForwardContext(
+    _forward_context = create_forward_context(
         attn_metadata=attn_metadata,
-        no_compile_layers=atom_config.compilation_config.static_forward_context,
+        vllm_config=vllm_config,
+        virtual_engine=virtual_engine,
         kv_cache_data=_forward_kv_cache_context.kv_cache_data,
-        context=context,
         dp_metadata=dp_metadata,
-    )    # _forward_context.attn_metadata = attn_metadata
-    # _forward_context.no_compile_layers = atom_config.compilation_config.static_forward_context
-    # _forward_context = ForwardContext(no_compile_layers=atom_config.compilation_config.static_forward_context, attn_metadata=attn_metadata)
+        cudagraph_runtime_mode=cudagraph_runtime_mode,
+        batch_descriptor=batch_descriptor,
+        ubatch_slices=ubatch_slices,
+    )
 
+    try:
+        with override_forward_context(_forward_context):
+            yield
+    finally:
+        pass
 
 def reset_forward_context() -> None:
     global _forward_context
@@ -287,3 +322,50 @@ def reset_forward_context() -> None:
 def set_kv_cache_data(kv_cache_data: dict[int, KVCacheTensor]) -> None:
     global _forward_kv_cache_context
     _forward_kv_cache_context.kv_cache_data = kv_cache_data
+
+
+def is_forward_context_available() -> bool:
+    return _forward_context is not None
+
+
+def create_forward_context(
+    attn_metadata: Any,
+    vllm_config: VllmConfig,
+    virtual_engine: int = 0,
+    dp_metadata: DPMetadata | None = None,
+    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
+    batch_descriptor: BatchDescriptor | None = None,
+    ubatch_slices: UBatchSlices | None = None,
+):
+    atom_config = config_from_vllm(vllm_config)
+    return ForwardContext(
+        no_compile_layers=atom_config.compilation_config.static_forward_context,
+        virtual_engine=virtual_engine,
+        attn_metadata=attn_metadata,
+        dp_metadata=dp_metadata,
+        cudagraph_runtime_mode=cudagraph_runtime_mode,
+        batch_descriptor=batch_descriptor,
+        ubatch_slices=ubatch_slices,
+    )
+
+
+def override_forward_context(forward_context: ForwardContext | None):
+    """A context manager that overrides the current forward context.
+    This is used to override the forward context for a specific
+    forward pass.
+    """
+    global _forward_context
+    prev_context = _forward_context
+    _forward_context = forward_context
+    try:
+        yield
+    finally:
+        _forward_context = prev_context
+
+
+# monkey patch the vllm forward context method
+forward_context.get_forward_context = get_forward_context
+forward_context.is_forward_context_available = is_forward_context_available
+forward_context.create_forward_context = create_forward_context
+forward_context.override_forward_context = override_forward_context
+forward_context.set_forward_context = set_forward_context

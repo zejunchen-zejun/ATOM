@@ -10,13 +10,14 @@ from atom.config import KVCacheConfig, KVCacheTensor
 from atom.model_engine.scheduler import ScheduledBatch
 from atom.model_ops.attention_mla import MLAAttention
 from atom.utils import CpuGpuBuffer
-from atom.utils.forward_context import AttentionMetaData, Context
+from atom.utils.forward_context import ATOMAttentionMetadata, Context
 
 from aiter import dtypes, get_mla_metadata_info_v1, get_mla_metadata_v1
 from vllm.distributed.parallel_state import get_tp_group
 
 from .backends import AttentionBackend, CommonAttentionBuilder
-
+# TODO: for MLA, the attn backend should use vllm
+# from vllm.attention.backends.abstract import AttentionBackend
 
 class AiterMLABackend(AttentionBackend):
     @staticmethod
@@ -230,7 +231,7 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
         ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
         ctx_mla_ps = self.set_mla_persistent_worker_buffers(bs)
         ctx.update(ctx_mla_ps)
-        attn_metadata = AttentionMetaData(
+        attn_metadata = ATOMAttentionMetadata(
             dropout_p=dropout_p,
             max_q_len=max_q_len,
             **ctx,
@@ -241,11 +242,11 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
         #         print(f"{el}: {var}")
         return attn_metadata, positions
 
-    def build_for_cudagraph_capture(self, bs: int) -> AttentionMetaData:
+    def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
         var = self.model_runner.forward_vars
         sparse_kv_indptr = var["sparse_kv_indptr"].gpu if self.is_sparse else None
         ctx_mla_ps = self.set_mla_persistent_worker_buffers(bs)
-        attn_matadata = AttentionMetaData(
+        attn_matadata = ATOMAttentionMetadata(
             slot_mapping=var["slot_mapping"].gpu[:bs],
             context_lens=var["context_lens"].gpu[:bs],
             block_tables=var["block_tables"].gpu[:bs],
@@ -261,4 +262,5 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
         context = Context(
             positions=positions, is_prefill=False, batch_size=bs, graph_bs=bs
         )
-        return attn_matadata, context
+        attn_matadata.context = context
+        return attn_matadata

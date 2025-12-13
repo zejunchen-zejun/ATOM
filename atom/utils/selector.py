@@ -47,4 +47,4 @@ def get_attn_backend_cls(block_size, use_mla) -> str:
                 f"does not support block size {block_size}."
                 "(currently only supports block size 1)")
 
-    return "atom.model_ops.attentions.aiter_attention.AiterBackend"  # noqa: E501
+    return "atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend"  # noqa: E501

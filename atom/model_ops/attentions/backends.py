@@ -10,7 +10,7 @@ from atom.model_engine.scheduler import ScheduledBatch
 from atom.model_engine.sequence import Sequence
 from atom.model_ops.attention_mla import MLAModules
 from atom.utils import CpuGpuBuffer
-from atom.utils.forward_context import AttentionMetaData
+from atom.utils.forward_context import ATOMAttentionMetadata
 from torch import nn
 
 T = TypeVar("T", bound="BroadcastableModelInput")
@@ -84,7 +84,7 @@ class AttentionMetadataBuilder(ABC, Generic[T]):
         raise NotImplementedError
 
     @abstractmethod
-    def build_for_cudagraph_capture(self, bs: int) -> AttentionMetaData:
+    def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
         raise NotImplementedError
 
 
@@ -183,7 +183,7 @@ class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
             vars_used.append(("block_tables", bs))
 
         ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
-        attn_metadata = AttentionMetaData(
+        attn_metadata = ATOMAttentionMetadata(
             cu_seqlens_k=cu_seqlens_k.cuda(non_blocking=True),
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
