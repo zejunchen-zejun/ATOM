@@ -4,7 +4,7 @@
 from typing import Type, ClassVar
 
 import torch
-from atom.model_ops.attention_mha import ATOMAttention
+from atom.model_ops.attention_mha import ATOMAttentionImpl
 from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
 from atom.utils import CpuGpuBuffer
 
@@ -39,8 +39,8 @@ class ATOMAttentionBackend(AttentionBackend):
         return "CUSTOM"
 
     @staticmethod
-    def get_impl_cls() -> Type["ATOMAttention"]:
-        return ATOMAttention
+    def get_impl_cls() -> Type["ATOMAttentionImpl"]:
+        return ATOMAttentionImpl
 
     @staticmethod
     def get_builder_cls() -> Type["ATOMAttentionMetadataBuilder"]:

@@ -117,13 +117,11 @@ class Qwen3Attention(nn.Module):
 
         # TODO: concustruct the attention instance
         self.attn = Attention(
-            self.num_heads,
-            self.head_dim,
-            self.scaling,
-            self.num_kv_heads,
-            kv_cache_dtype=kv_cache_dtype,
-            layer_num=layer_num,
-            use_mla=False,
+            num_heads=self.num_heads,
+            head_size=self.head_dim,
+            scale=self.scaling,
+            num_kv_heads=self.num_kv_heads,
+            alibi_slopes=None,
             prefix=f"{prefix}.attn",
         )
 

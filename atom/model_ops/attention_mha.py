@@ -2,50 +2,44 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 # from flash_attn import flash_attn_with_kvcache
-from dataclasses import dataclass
-
 import aiter
 import torch
-
 from torch import nn
-from typing import Optional
 
-# from atom.utils.forward_context import get_forward_context
-
-from .attention_mla import MLAModules
 from aiter.ops.triton.unified_attention import unified_attention
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 
 from atom.utils.attn_metadata import ATOMAttentionMetadata
 
-class ATOMAttention(nn.Module):
+from vllm.attention.backends.abstract import AttentionType
+
+class ATOMAttentionImpl(nn.Module):
 
     def __init__(
         self,
-        num_heads,
-        head_dim,
-        scale,
-        num_kv_heads,
-        kv_cache_dtype="bf16",
-        layer_num=0,
-        mla_modules: Optional[MLAModules] = None,
-        sinks: Optional[nn.Parameter] = None,
-        sliding_window: Optional[int] = None,
-        rotary_emb: Optional[torch.nn.Module] = None,
-        **kwargs,
+        num_heads: int,
+        head_size: int,
+        scale: float,
+        num_kv_heads: int,
+        alibi_slopes: list[float] | None,
+        sliding_window: int | None,
+        kv_cache_dtype: str,
+        logits_soft_cap: float | None = None,
+        attn_type: AttentionType = AttentionType.DECODER,
+        kv_sharing_target_layer_name: int | None = None,
     ):
         print('[zejun] ATOM init atom attention forward', flush=True)
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = head_dim
+        self.head_dim = head_size
         self.scale = scale
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
         self.kv_cache_dtype = kv_cache_dtype
         self.max_model_len = 0
         self.k_scale = self.v_scale = None
-        self.layer_num = layer_num
         self.one_scale = torch.tensor(1.0, dtype=torch.float32)
+        # TODO: handle the sinks and rope args
         self.sinks = sinks
         self.sliding_window = (
             (sliding_window - 1, 0) if sliding_window is not None else (-1, -1)
