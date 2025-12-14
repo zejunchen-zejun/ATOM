@@ -6,16 +6,12 @@ from dataclasses import dataclass
 
 import aiter
 import torch
-import triton
-import triton.language as tl
-from aiter.paged_attn import PagedAttention
+
 from torch import nn
 from typing import Optional
 
-from atom.utils.forward_context import (
-    ForwardContext,
-    get_forward_context,
-)
+from atom.utils.forward_context import get_forward_context
+
 from .attention_mla import MLAModules
 from aiter.ops.triton.unified_attention import unified_attention
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
@@ -74,7 +70,7 @@ class Attention(nn.Module):
                 "fused output quantization is not yet supported for FlashAttentionImpl"
         )
 
-        forward_context: ForwardContext = get_forward_context()
+        forward_context = get_forward_context()
         attn_metadata = forward_context.attn_metadata
 
         # profiler run
