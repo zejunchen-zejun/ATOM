@@ -23,7 +23,7 @@ from vllm.config.vllm import VllmConfig
 from vllm.v1.kv_cache_interface import AttentionSpec
 
 # TODO: use vllm father class
-@register_backend(AttentionBackendEnum.CUSTOM)
+@register_backend(AttentionBackendEnum.CUSTOM, "atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend")
 class ATOMAttentionBackend(AttentionBackend):
     accept_output_buffer: bool = True
     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
@@ -38,7 +38,7 @@ class ATOMAttentionBackend(AttentionBackend):
 
     @staticmethod
     def get_name() -> str:
-        return "ATOM_ATTENTION"
+        return "CUSTOM"
 
     @staticmethod
     def get_impl_cls() -> Type["ATOMAttention"]:
