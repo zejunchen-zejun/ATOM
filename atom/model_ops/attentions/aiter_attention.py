@@ -4,7 +4,7 @@
 from typing import Type, ClassVar
 
 import torch
-from atom.model_ops.attention_mha import Attention
+from atom.model_ops.attention_mha import ATOMAttention
 from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
 from atom.utils import CpuGpuBuffer
 
@@ -23,7 +23,7 @@ from vllm.config.vllm import VllmConfig
 from vllm.v1.kv_cache_interface import AttentionSpec
 
 # TODO: use vllm father class
-@register_backend(AttentionBackendEnum.CUSTOM, "atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend")
+@register_backend(AttentionBackendEnum.CUSTOM)
 class ATOMAttentionBackend(AttentionBackend):
     accept_output_buffer: bool = True
     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
@@ -41,8 +41,8 @@ class ATOMAttentionBackend(AttentionBackend):
         return "ATOM_ATTENTION"
 
     @staticmethod
-    def get_impl_cls() -> Type["Attention"]:
-        return Attention
+    def get_impl_cls() -> Type["ATOMAttention"]:
+        return ATOMAttention
 
     @staticmethod
     def get_builder_cls() -> Type["ATOMAttentionMetadataBuilder"]:

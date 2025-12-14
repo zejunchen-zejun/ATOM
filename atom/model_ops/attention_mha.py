@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from typing import Optional
 
-from atom.utils.forward_context import get_forward_context
+# from atom.utils.forward_context import get_forward_context
 
 from .attention_mla import MLAModules
 from aiter.ops.triton.unified_attention import unified_attention
@@ -18,7 +18,7 @@ from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 
 from atom.utils.attn_metadata import ATOMAttentionMetadata
 
-class Attention(nn.Module):
+class ATOMAttention(nn.Module):
 
     def __init__(
         self,
