@@ -16,6 +16,7 @@ from vllm import forward_context
 from vllm.forward_context import BatchDescriptor
 from vllm.config import VllmConfig
 
+from atom.model_ops.attentions.aiter_attention import ATOMAttentionMetadata
 
 def _compute_chunked_local_num_tokens(num_tokens_across_dp_cpu: list[int],
                                       max_num_tokens: int,
@@ -235,7 +236,7 @@ class ATOMAttentionMetadata:
 @dataclass
 class ForwardContext:
     # copy from vllm_config.compilation_config.static_forward_context
-    no_compile_layers: dict[int, Any] = field(default_factory=dict)
+    no_compile_layers: dict[int, Any]
     """
     Type Dict[str, AttentionMetadata] for v1, map from layer_name of each 
     attention layer to its attention metadata
@@ -243,10 +244,8 @@ class ForwardContext:
     for each microbatch.
     Set dynamically for each forward pass
     """
-    attn_metadata: Optional[Union["ATOMAttentionMetadata", dict[str, "ATOMAttentionMetadata"]]]
+    attn_metadata: dict[str, "ATOMAttentionMetadata"] | list[dict[str, "ATOMAttentionMetadata"]]
     virtual_engine: int  # set dynamically for each forward pass
-    # TODO: remove the kv cache data
-    kv_cache_data: dict[str, KVCacheTensor] = None
     dp_metadata: Optional[DPMetadata] = None
     # determine the cudagraph style at runtime to be FULL, PIECEWISE, or NONE.
     # by default NONE, no cudagraph is used.
@@ -261,8 +260,6 @@ class ForwardContext:
 
 
 _forward_context: ForwardContext | None = None
-# TODO: change here
-_forward_kv_cache_context: Optional[ForwardContext] = ForwardContext()
 
 
 def get_forward_context() -> ForwardContext:
@@ -300,7 +297,6 @@ def set_forward_context(
         attn_metadata=attn_metadata,
         vllm_config=vllm_config,
         virtual_engine=virtual_engine,
-        kv_cache_data=_forward_kv_cache_context.kv_cache_data,
         dp_metadata=dp_metadata,
         cudagraph_runtime_mode=cudagraph_runtime_mode,
         batch_descriptor=batch_descriptor,
@@ -313,14 +309,10 @@ def set_forward_context(
     finally:
         pass
 
+
 def reset_forward_context() -> None:
     global _forward_context
     _forward_context = ForwardContext()
-
-
-def set_kv_cache_data(kv_cache_data: dict[int, KVCacheTensor]) -> None:
-    global _forward_kv_cache_context
-    _forward_kv_cache_context.kv_cache_data = kv_cache_data
 
 
 def is_forward_context_available() -> bool:

@@ -28,5 +28,5 @@ vllm serve $model_path \
     --enforce-eager \
     --async-scheduling \
     --load-format fastsafetensors \
-    --enable-chunked-prefill False \
+    --no-enable-chunked-prefill \
     2>&1 | tee log.serve.log &
