@@ -4,7 +4,6 @@
 from typing import Type, ClassVar
 
 import torch
-from atom.model_engine.scheduler import ScheduledBatch
 from atom.model_ops.attention_mha import Attention
 from atom.utils.forward_context import ATOMAttentionMetadata, Context
 from atom.utils import CpuGpuBuffer
@@ -253,7 +252,6 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
                 graph_bs=bs
             ),
             cu_seqlens_q=cu_seqlens_q,
-            slot_mapping=common_attn_metadata.slot_mapping,
             context_lens=common_attn_metadata.seq_lens,
         )
         return attn_metadata
