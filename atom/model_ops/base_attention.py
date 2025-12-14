@@ -51,6 +51,9 @@ def unified_attention_with_output_base(
 ) -> torch.Tensor:
     atom_config = get_current_atom_config()
     self = atom_config.compilation_config.static_forward_context[layer_name]
+
+    print('[zejun] ATOM, unified_attention_with_output_base, self.impl = ', self.impl, flush=True)
+
     return self.impl.forward(q, k, v, positions, q_scale)
 
 

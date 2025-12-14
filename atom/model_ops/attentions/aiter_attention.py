@@ -8,9 +8,9 @@ from atom.model_ops.attention_mha import Attention
 from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
 from atom.utils import CpuGpuBuffer
 
-from .backends import AttentionBackend
+# from .backends import AttentionBackend
 # TODO: for MLA, the attn backend should use vllm
-# from vllm.attention.backends.abstract import AttentionBackend
+from vllm.attention.backends.abstract import AttentionBackend
 from vllm.attention.backends.abstract import MultipleOf
 from vllm.attention.backends.registry import (AttentionBackendEnum,
                                               register_backend)

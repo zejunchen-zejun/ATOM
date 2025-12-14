@@ -34,6 +34,7 @@ class Attention(nn.Module):
         rotary_emb: Optional[torch.nn.Module] = None,
         **kwargs,
     ):
+        print('[zejun] ATOM init atom attention forward', flush=True)
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -64,21 +65,26 @@ class Attention(nn.Module):
         output_block_scale: torch.Tensor | None = None,
     ) -> torch.Tensor:
 
+        print('[zejun] ATOM call atom attention forward', flush=True)
+
         assert output is not None, "Output tensor must be provided."
         if output_scale is not None or output_block_scale is not None:
             raise NotImplementedError(
                 "fused output quantization is not yet supported for FlashAttentionImpl"
         )
 
-        forward_context = get_forward_context()
-        attn_metadata = forward_context.attn_metadata
+        # forward_context = get_forward_context()
+        # attn_metadata = forward_context.attn_metadata
 
         # profiler run
         if attn_metadata is None:
             return output.fill_(0)
 
-        context = forward_context.context
-        position = forward_context.positions
+        # context = forward_context.context
+        # position = forward_context.positions
+
+        context = attn_metadata.context
+        position = context.positions
 
         q = query.view(-1, self.num_heads, self.head_dim)
         k = key.view(-1, self.num_kv_heads, self.head_dim)

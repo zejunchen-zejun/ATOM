@@ -244,8 +244,14 @@ def override_forward_context(forward_context: ForwardContext | None):
 
 
 # monkey patch the vllm forward context method
+print('[zeun] ATOM, monkey patch the vllm forward context method', flush=True)
 forward_context.get_forward_context = get_forward_context
 forward_context.is_forward_context_available = is_forward_context_available
 forward_context.create_forward_context = create_forward_context
 forward_context.override_forward_context = override_forward_context
 forward_context.set_forward_context = set_forward_context
+print('[zejun] ATOM, after monkey patch, forward_context.get_forward_context = ', forward_context.get_forward_context, flush=True)
+print('[zejun] ATOM, after monkey patch, forward_context.is_forward_context_available = ', forward_context.is_forward_context_available, flush=True)
+print('[zejun] ATOM, after monkey patch, forward_context.create_forward_context = ', forward_context.create_forward_context, flush=True)
+print('[zejun] ATOM, after monkey patch, forward_context.override_forward_context = ', forward_context.override_forward_context, flush=True)
+print('[zejun] ATOM, after monkey patch, forward_context.set_forward_context = ', forward_context.set_forward_context, flush=True)

@@ -34,7 +34,7 @@ from atom.config import QuantizationConfig, Config
 
 from atom.model_ops.activation import SiluAndMul
 # from atom.model_ops.attention import Attention
-from atom.model_ops.base_attention import Attention
+# from atom.model_ops.base_attention import Attention
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
     ATOMQKVParallelLinear,
@@ -57,6 +57,7 @@ from vllm.config.vllm import VllmConfig
 from vllm.distributed.parallel_state import get_tp_group
 from vllm.sequence import IntermediateTensors
 from vllm.model_executor.models.utils import maybe_prefix, AutoWeightsLoader
+from vllm.attention import Attention
 
 class Qwen3Attention(nn.Module):
 
@@ -113,6 +114,8 @@ class Qwen3Attention(nn.Module):
             base=rope_theta,
             rope_scaling=rope_scaling,
         )
+
+        # TODO: concustruct the attention instance
         self.attn = Attention(
             self.num_heads,
             self.head_dim,
@@ -123,6 +126,7 @@ class Qwen3Attention(nn.Module):
             use_mla=False,
             prefix=f"{prefix}.attn",
         )
+
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
 
