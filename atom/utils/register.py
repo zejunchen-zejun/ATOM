@@ -1,3 +1,5 @@
+import os
+
 from atom.model_ops.embed_head import ATOMVocabParallelEmbedding
 from atom.model_ops.linear import (
     ATOMQKVParallelLinear,
@@ -24,6 +26,7 @@ def _register_custom_op():
 
 def _register_custom_attention():
     from vllm.attention.backends.registry import register_backend, AttentionBackendEnum
+    print('[zejun][PID:', os.getpid(), '][atom] Registering ATOM custom attention to vllm', flush=True)
     register_backend(AttentionBackendEnum.CUSTOM, "atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend")
 
 # TODO: resgiter model for sglang, default for vllm
