@@ -15,11 +15,16 @@ _REGISTERED_ATOM_OPS = {
     "ColumnParallelLinear": ATOMColumnParallelLinear,
 }
 
-def _resgiter_custom_op():
+def _register_custom_op():
+    # register custom op for running the model, which has not been registered by ATOM
     from vllm.model_executor.custom_op import CustomOp
     for name, op_cls in _REGISTERED_ATOM_OPS.items():
         print('[zejun][atom] Registering ', op_cls, ' to vllm for ', name, flush=True)
         CustomOp.register_oot(_decorated_op_cls=op_cls, name=name)
+
+def _register_custom_attention():
+    from vllm.attention.backends.registry import register_backend, AttentionBackendEnum
+    register_backend(AttentionBackendEnum.CUSTOM, "atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend")
 
 # TODO: resgiter model for sglang, default for vllm
 def register_custom_model():
@@ -31,6 +36,9 @@ def register_custom_model():
         "Qwen3ForCausalLM",
         "atom.models.qwen3:ATOMQwen3ForCausalLM")
 
-    # register custom op for ATOM custom model
-    _resgiter_custom_op()
+    # register custom op
+    _register_custom_op()
     print('[zejun][atom] Registering ATOM custom op to vllm', flush=True)
+
+    # register custom attention
+    _register_custom_attention()

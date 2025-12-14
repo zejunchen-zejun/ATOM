@@ -12,8 +12,7 @@ from atom.utils import CpuGpuBuffer
 # TODO: for MLA, the attn backend should use vllm
 from vllm.attention.backends.abstract import AttentionBackend
 from vllm.attention.backends.abstract import MultipleOf
-from vllm.attention.backends.registry import (AttentionBackendEnum,
-                                              register_backend)
+
 from vllm.v1.attention.backends.utils import (
     AttentionCGSupport,
     CommonAttentionMetadata,
@@ -23,7 +22,6 @@ from vllm.config.vllm import VllmConfig
 from vllm.v1.kv_cache_interface import AttentionSpec
 
 # TODO: use vllm father class
-@register_backend(AttentionBackendEnum.CUSTOM, "atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend")
 class ATOMAttentionBackend(AttentionBackend):
     accept_output_buffer: bool = True
     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
