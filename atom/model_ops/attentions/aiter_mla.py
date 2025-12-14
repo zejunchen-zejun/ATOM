@@ -10,7 +10,7 @@ from atom.config import KVCacheConfig, KVCacheTensor
 from atom.model_engine.scheduler import ScheduledBatch
 from atom.model_ops.attention_mla import MLAAttention
 from atom.utils import CpuGpuBuffer
-from atom.utils.forward_context import ATOMAttentionMetadata, Context
+from atom.utils.attn_metadata import ATOMAttentionMetadata, Context
 
 from aiter import dtypes, get_mla_metadata_info_v1, get_mla_metadata_v1
 from vllm.distributed.parallel_state import get_tp_group

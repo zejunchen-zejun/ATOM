@@ -10,7 +10,7 @@ from atom.model_engine.scheduler import ScheduledBatch
 from atom.model_engine.sequence import Sequence
 from atom.model_ops.attention_mla import MLAModules
 from atom.utils import CpuGpuBuffer
-from atom.utils.forward_context import ATOMAttentionMetadata
+from atom.utils.attn_metadata import ATOMAttentionMetadata
 from torch import nn
 
 T = TypeVar("T", bound="BroadcastableModelInput")

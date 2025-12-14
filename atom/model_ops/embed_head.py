@@ -11,8 +11,6 @@ from vllm.distributed.parallel_state import get_tp_group
 from aiter.tuned_gemm import tgemm
 from torch import nn
 
-# from atom.utils.forward_context import get_forward_context
-
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
 from vllm.model_executor.layers.vocab_parallel_embedding import (

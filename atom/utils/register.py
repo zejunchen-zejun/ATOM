@@ -12,7 +12,7 @@ _REGISTERED_ATOM_OPS = {
     "QKVParallelLinear": ATOMQKVParallelLinear,
     "RowParallelLinear": ATOMRowParallelLinear,
     "MergedColumnParallelLinear": ATOMMergedColumnParallelLinear,
-    "ATOMColumnParallelLinear": ATOMColumnParallelLinear,
+    "ColumnParallelLinear": ATOMColumnParallelLinear,
 }
 
 def _resgiter_custom_op():
@@ -25,6 +25,8 @@ def _resgiter_custom_op():
 def register_custom_model():
     from vllm import ModelRegistry
     print('[zejun][atom] Registering ATOM model plugin to vllm', flush=True)
+
+    # register custom model for ATOM
     ModelRegistry.register_model(
         "Qwen3ForCausalLM",
         "atom.models.qwen3:ATOMQwen3ForCausalLM")

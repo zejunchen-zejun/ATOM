@@ -5,7 +5,7 @@ from typing import Type, ClassVar
 
 import torch
 from atom.model_ops.attention_mha import Attention
-from atom.utils.forward_context import ATOMAttentionMetadata, Context
+from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
 from atom.utils import CpuGpuBuffer
 
 from .backends import AttentionBackend
@@ -47,10 +47,6 @@ class ATOMAttentionBackend(AttentionBackend):
     @staticmethod
     def get_builder_cls() -> Type["ATOMAttentionMetadataBuilder"]:
         return ATOMAttentionMetadataBuilder
-
-
-# @dataclass
-# class ATOMAttentionMetadata:
 
 
 class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadata]):

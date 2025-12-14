@@ -16,7 +16,7 @@ from .attention_mla import MLAModules
 from aiter.ops.triton.unified_attention import unified_attention
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 
-from atom.utils.forward_context import ATOMAttentionMetadata
+from atom.utils.attn_metadata import ATOMAttentionMetadata
 
 class Attention(nn.Module):
 
