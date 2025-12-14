@@ -155,6 +155,7 @@ def get_forward_context() -> ForwardContext:
     return _forward_context
 
 
+@contextmanager
 def set_forward_context(
     attn_metadata: Any,
     vllm_config: VllmConfig,
@@ -165,6 +166,7 @@ def set_forward_context(
     batch_descriptor: BatchDescriptor | None = None,
     ubatch_slices: UBatchSlices | None = None,
 ):
+    print('[zeun] ATOM, set_forward_context', flush=True)
     """A context manager that stores the current forward context,
     can be attention metadata, etc.
     Here we can inject common logic for every model forward pass.
@@ -212,6 +214,7 @@ def create_forward_context(
     batch_descriptor: BatchDescriptor | None = None,
     ubatch_slices: UBatchSlices | None = None,
 ):
+    print('[zeun] ATOM, create_forward_context', flush=True)
     atom_config = config_from_vllm(vllm_config)
     return ForwardContext(
         no_compile_layers=atom_config.compilation_config.static_forward_context,
@@ -224,11 +227,13 @@ def create_forward_context(
     )
 
 
+@contextmanager
 def override_forward_context(forward_context: ForwardContext | None):
     """A context manager that overrides the current forward context.
     This is used to override the forward context for a specific
     forward pass.
     """
+    print('[zeun] ATOM, override_forward_context', flush=True)
     global _forward_context
     prev_context = _forward_context
     _forward_context = forward_context
