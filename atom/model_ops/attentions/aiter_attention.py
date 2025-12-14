@@ -7,9 +7,9 @@ import torch
 from atom.model_engine.scheduler import ScheduledBatch
 from atom.model_ops.attention_mha import Attention
 from atom.utils.forward_context import ATOMAttentionMetadata, Context
-from vllm.vllm.vllm.inputs import data
+from atom.utils import CpuGpuBuffer
 
-from .backends import AttentionBackend, CommonAttentionBuilder
+from .backends import AttentionBackend
 # TODO: for MLA, the attn backend should use vllm
 # from vllm.attention.backends.abstract import AttentionBackend
 from vllm.attention.backends.abstract import MultipleOf
@@ -17,8 +17,11 @@ from vllm.attention.backends.registry import (AttentionBackendEnum,
                                               register_backend)
 from vllm.v1.attention.backends.utils import (
     AttentionCGSupport,
-    CommonAttentionMetadata
+    CommonAttentionMetadata,
+    AttentionMetadataBuilder,
 )
+from vllm.config.vllm import VllmConfig
+from vllm.v1.kv_cache_interface import AttentionSpec
 
 # TODO: use vllm father class
 @register_backend(AttentionBackendEnum.CUSTOM, "atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend")
@@ -47,15 +50,15 @@ class ATOMAttentionBackend(AttentionBackend):
         return ATOMAttentionMetadataBuilder
 
 
-@dataclass
-class ATOMAttentionMetadata:
+# @dataclass
+# class ATOMAttentionMetadata:
 
 
-class ATOMAttentionMetadataBuilder(CommonAttentionBuilder):
+class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadata]):
     BLOCK_TABLE_EXTENDER: list[list[int]] = [[]]
+    # TODO: add cudagraph support
     _cudagraph_support = AttentionCGSupport.NEVER
     reorder_batch_threshold: int = 1
-
 
     def __init__(
         self,
@@ -81,13 +84,13 @@ class ATOMAttentionMetadataBuilder(CommonAttentionBuilder):
         self.aot_sliding_window: tuple[int, int] | None = None
         self.total_tokens: int = 0
 
-        # self.extend_workspace = torch.empty(
-        #     [2, _CP_TOKENS_PER_ITER_ROCM, self.num_heads_kv, self.headdim],
-        #     dtype=self.model_config.dtype,
-        #     device=device,
-        # )
+        # for recording position info
+        i64_kwargs = {"dtype": torch.int64, "device": device}
+        max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
+        self.positions = CpuGpuBuffer(max_num_batched_tokens, **i64_kwargs),
 
     def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
+        assert False, "Not implemented for cuda graph capture for now"
         var = self.model_runner.forward_vars
         attn_matadata = ATOMAttentionMetadata(
             slot_mapping=var["slot_mapping"].gpu[:bs],
@@ -104,6 +107,157 @@ class ATOMAttentionMetadataBuilder(CommonAttentionBuilder):
         attn_matadata.context = context
         return attn_matadata
 
+    def build_decode(self,
+        common_prefix_len: int,
+        common_attn_metadata: CommonAttentionMetadata,
+        fast_build: bool = False
+    ):
+        bs = common_attn_metadata.num_reqs
+        # self.total_blocks = 0
+        dropout_p = 0.0
+        max_q_len = 1
+        min_seqlen_q = 0
+
+        context_lens = common_attn_metadata.seq_lens_cpu
+        max_seqlen_k = max(context_lens)
+        positions = [i - 1 for i in context_lens]
+        # slot_mapping = [
+        #     block_table[-1] * self.block_size + last_block_num - 1
+        #     for block_table, last_block_num in zip(
+        #         batch.block_tables, batch.last_block_num_tokens
+        #     )
+        # ]
+        # slot_mapping.extend([-1] * (bs - scheduled_bs))
+
+        # self.prepare_block_tables(batch)
+
+        # var = self.model_runner.forward_vars
+
+        # for decode, sum scheduled tokens is equal to bs
+        sum_scheduled_tokens = bs
+        cu_seqlens_q = common_attn_metadata.query_start_loc - common_attn_metadata.query_start_loc[0]
+        # sum_scheduled_tokens = batch.total_tokens_num_decode
+
+        # var["slot_mapping"].np[:bs] = slot_mapping
+        # var["positions"].np[:sum_scheduled_tokens] = positions
+        self.positions.np[:sum_scheduled_tokens] = positions
+
+        # var["context_lens"].np[:bs] = context_lens
+        # vars_used = [
+        #     # ("slot_mapping", bs),  # TODO: MTP support
+        #     ("context_lens", bs),
+        #     # ("block_tables", bs),
+        # ]
+
+        # if self.has_sliding_window:
+            # vars_used.append(("cu_seqlens_q", bs + 1))
+        # ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
+
+        attn_metadata = ATOMAttentionMetadata(
+            dropout_p=dropout_p,
+            max_q_len=max_q_len,
+            max_seqlen_q=max_q_len,
+            max_seqlen_k=max_seqlen_k,
+            min_seqlen_q=min_seqlen_q,
+            slot_mapping=common_attn_metadata.slot_mapping,
+            block_tables=common_attn_metadata.block_table_tensor,
+            context=Context(
+                positions=self.positions.copy_to_gpu(sum_scheduled_tokens),
+                is_prefill=False,
+                batch_size=bs,
+                graph_bs=bs
+            ),
+            cu_seqlens_q=cu_seqlens_q,
+            context_lens=common_attn_metadata.seq_lens,
+        )
+
+        # positions = var["positions"].copy_to_gpu(sum_scheduled_tokens)
+        return attn_metadata
+
+    def build_prefill(self,
+        common_prefix_len: int,
+        common_attn_metadata: CommonAttentionMetadata,
+        fast_build: bool = False
+    ):
+        bs = common_attn_metadata.num_reqs
+        sum_scheduled_tokens = common_attn_metadata.num_actual_tokens
+
+        # var = forward_vars
+        positions = []
+        cu_seqlens_k = [0]
+        max_seqlen_q = 0
+        max_seqlen_k = 0
+
+        context_lens = common_attn_metadata.seq_lens_cpu
+        num_cached_tokens = common_attn_metadata.num_computed_tokens_cpu
+
+        for i in range(bs):
+            seqlen = context_lens[i]
+            cached_seqlen = num_cached_tokens[i]
+            positions.extend(list(range(cached_seqlen, seqlen)))
+            seqlen_q = seqlen - cached_seqlen
+            seqlen_k = seqlen
+            cu_seqlens_k.append(cu_seqlens_k[-1] + seqlen_k)
+            max_seqlen_q = max(seqlen_q, max_seqlen_q)
+            max_seqlen_k = max(seqlen_k, max_seqlen_k)
+            # num_blocks = (seqlen + self.block_size - 1) // self.block_size
+            # num_cached_blocks = (cached_seqlen + self.block_size - 1) // self.block_size
+            # last_block_tokens = batch.last_block_num_tokens[i]
+            # block_table = batch.block_tables[i]
+            # for i in range(num_cached_blocks, num_blocks):
+            #     start = block_table[i] * self.block_size
+            #     if i != num_blocks - 1:
+            #         end = start + self.block_size
+            #     else:
+            #         end = start + last_block_tokens
+            #     slot_mapping.extend(list(range(start, end)))
+
+        # if cu_seqlens_k[-1] > batch.total_tokens_num:  # prefix cache
+        #     self.prepare_block_tables(batch)
+        # var["positions"].np[:sum_scheduled_tokens] = positions
+        self.positions.np[:sum_scheduled_tokens] = positions
+        # var["slot_mapping"].np[: len(slot_mapping)] = slot_mapping
+        
+        cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, pin_memory=True)
+
+        # for now, all requests are prefill
+        cu_seqlens_q = common_attn_metadata.query_start_loc - common_attn_metadata.query_start_loc[0]
+
+        min_seqlen_q = 0
+        dropout_p = 0.0
+        # vars_used = [
+        #     ("cu_seqlens_q", bs + 1),
+        #     ("slot_mapping", len(slot_mapping)),
+        # ]
+
+        # TODO: support sliding window
+        # if self.has_sliding_window:
+        #     var["context_lens"].np[:bs] = batch.context_lens[:bs]
+        #     vars_used.append(("context_lens", bs))
+        #     self.prepare_block_tables(batch)
+        #     vars_used.append(("block_tables", bs))
+
+        # ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
+        attn_metadata = ATOMAttentionMetadata(
+            cu_seqlens_k=cu_seqlens_k.cuda(non_blocking=True),
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
+            min_seqlen_q=min_seqlen_q,
+            dropout_p=dropout_p,
+            block_tables=common_attn_metadata.block_table_tensor,
+            slot_mapping=common_attn_metadata.slot_mapping,
+            context=Context(
+                positions=self.positions.copy_to_gpu(sum_scheduled_tokens),
+                is_prefill=True,
+                batch_size=bs,
+                graph_bs=bs
+            ),
+            cu_seqlens_q=cu_seqlens_q,
+            slot_mapping=common_attn_metadata.slot_mapping,
+            context_lens=common_attn_metadata.seq_lens,
+        )
+        return attn_metadata
+
     def build(
         self,
         common_prefix_len: int,
@@ -111,49 +265,13 @@ class ATOMAttentionMetadataBuilder(CommonAttentionBuilder):
         fast_build: bool = False,
     ) -> "ATOMAttentionMetadata":
 
-
-
-    # def prepare_decode(self, batch: ScheduledBatch, bs: int):
-        scheduled_bs = batch.total_seqs_num_decode
-        dropout_p = 0.0
-        max_q_len = 1
-        min_seqlen_q = 0
-
-        context_lens = batch.context_lens
-        max_seqlen_k = max(context_lens)
-        positions = [i - 1 for i in context_lens]
-        slot_mapping = [
-            block_table[-1] * self.block_size + last_block_num - 1
-            for block_table, last_block_num in zip(
-                batch.block_tables, batch.last_block_num_tokens
-            )
-        ]
-        slot_mapping.extend([-1] * (bs - scheduled_bs))
-
-        self.prepare_block_tables(batch)
-
-        var = self.model_runner.forward_vars
-        sum_scheduled_tokens = batch.total_tokens_num_decode
-        var["slot_mapping"].np[:bs] = slot_mapping
-        var["positions"].np[:sum_scheduled_tokens] = positions
-        var["context_lens"].np[:scheduled_bs] = context_lens
-        vars_used = [
-            ("slot_mapping", bs),  # TODO: MTP support
-            ("context_lens", bs),
-            ("block_tables", bs),
-        ]
-        if self.has_sliding_window:
-            vars_used.append(("cu_seqlens_q", bs + 1))
-        ctx = {el: var[el].copy_to_gpu(num) for el, num in vars_used}
-        attn_metadata = ATOMAttentionMetadata(
-            dropout_p=dropout_p,
-            max_q_len=max_q_len,
-            max_seqlen_q=max_q_len,
-            max_seqlen_k=max_seqlen_k,
-            min_seqlen_q=min_seqlen_q,
-            **ctx,
-        )
-
-        positions = var["positions"].copy_to_gpu(sum_scheduled_tokens)
-        return attn_metadata, positions
-
+        # TODO: for now chunked prefill doesn't support
+        # TODO: disable the chunked prefill
+        print('[zejun] ATOM ATOMAttentionMetadataBuilder build', flush=True)
+        _build_prefill = common_attn_metadata.max_query_len > 1
+        if _build_prefill:
+            print('[zejun] ATOM ATOMAttentionMetadataBuilder build prefill', flush=True)
+            return self.build_prefill(common_prefix_len, common_attn_metadata, fast_build)
+        else:
+            print('[zejun] ATOM ATOMAttentionMetadataBuilder build decode', flush=True)
+            return self.build_decode(common_prefix_len, common_attn_metadata, fast_build)

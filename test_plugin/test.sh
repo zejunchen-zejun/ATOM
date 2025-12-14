@@ -1,6 +1,7 @@
 #!/bin/bash
 export CUDA_VISIBLE_DEVICES=7
 export VLLM_ROCM_USE_ATOM_PLUGIN=1
+export VLLM_ATTENTION_BACKEND=CUSTOM
 
 export SAFETENSORS_FAST_GPU=1
 export VLLM_ROCM_USE_AITER=1
@@ -27,4 +28,5 @@ vllm serve $model_path \
     --enforce-eager \
     --async-scheduling \
     --load-format fastsafetensors \
+    --enable-chunked-prefill False \
     2>&1 | tee log.serve.log &

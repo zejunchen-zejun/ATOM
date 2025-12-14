@@ -137,6 +137,7 @@ class Context:
         self.graph_bs = graph_bs
 
 
+# TODO: move to another place
 @dataclass
 class ATOMAttentionMetadata:
     """Attention metadata for prefill and decode batched together."""
@@ -242,9 +243,7 @@ class ForwardContext:
     for each microbatch.
     Set dynamically for each forward pass
     """
-    attn_metadata: Optional[
-        Union["ATOMAttentionMetadata", dict[str, "ATOMAttentionMetadata"]]
-    ] = None
+    attn_metadata: Optional[Union["ATOMAttentionMetadata", dict[str, "ATOMAttentionMetadata"]]]
     virtual_engine: int  # set dynamically for each forward pass
     # TODO: remove the kv cache data
     kv_cache_data: dict[str, KVCacheTensor] = None

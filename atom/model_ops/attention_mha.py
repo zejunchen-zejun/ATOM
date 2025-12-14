@@ -20,6 +20,7 @@ from .attention_mla import MLAModules
 from aiter.ops.triton.unified_attention import unified_attention
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 
+from atom.utils.forward_context import ATOMAttentionMetadata
 
 class Attention(nn.Module):
 
@@ -56,40 +57,46 @@ class Attention(nn.Module):
 
     def forward(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        position: torch.Tensor = None,
-        q_scale: torch.Tensor=None,
-    ):
-        o = torch.empty_like(q)
+        layer: torch.nn.Module,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        kv_cache: torch.Tensor,
+        attn_metadata: ATOMAttentionMetadata,
+        output: torch.Tensor | None = None,
+        output_scale: torch.Tensor | None = None,
+        output_block_scale: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+
+        assert output is not None, "Output tensor must be provided."
+        if output_scale is not None or output_block_scale is not None:
+            raise NotImplementedError(
+                "fused output quantization is not yet supported for FlashAttentionImpl"
+        )
 
         forward_context: ForwardContext = get_forward_context()
         attn_metadata = forward_context.attn_metadata
 
         # profiler run
         if attn_metadata is None:
-            return o
+            return output.fill_(0)
 
         context = forward_context.context
-        kv_cache_data = forward_context.kv_cache_data
+        position = forward_context.positions
 
-        q = q.view(-1, self.num_heads, self.head_dim)
-        k = k.view(-1, self.num_kv_heads, self.head_dim)
-        v = v.view(-1, self.num_kv_heads, self.head_dim)
+        q = query.view(-1, self.num_heads, self.head_dim)
+        k = key.view(-1, self.num_kv_heads, self.head_dim)
+        v = value.view(-1, self.num_kv_heads, self.head_dim)
 
         use_triton_unified_attention = (
             self.sliding_window != (-1, -1) or self.head_dim != 128
         )
 
         if attn_metadata.slot_mapping.numel():
-            # not dummy run
-            k_cache = kv_cache_data[f"layer_{self.layer_num}"].k_cache
-            v_cache = kv_cache_data[f"layer_{self.layer_num}"].v_cache
-            k_scale = kv_cache_data[f"layer_{self.layer_num}"].k_scale
-            v_scale = kv_cache_data[f"layer_{self.layer_num}"].v_scale
+            k_cache, v_cache = kv_cache.unbind(0)
+            k_scale = layer._k_scale
+            v_scale = layer._v_scale
         else:
-            # dummy run before allocate kv_cache, thus we create manually
             k_cache = v_cache = torch.tensor([])
             k_scale = v_scale = None
 
@@ -176,7 +183,7 @@ class Attention(nn.Module):
                     q,
                     k_cache,
                     v_cache,
-                    o,
+                    output,
                     cu_seqlens_q=attn_metadata.cu_seqlens_q,
                     seqused_k=attn_metadata.context_lens,
                     max_seqlen_q=attn_metadata.max_seqlen_q,
@@ -195,7 +202,7 @@ class Attention(nn.Module):
         elif context.is_prefill:
             # if context.block_tables is not None:  # prefix cache
             #     k, v = k_cache, v_cache
-            o = aiter.flash_attn_varlen_func(
+            output = aiter.flash_attn_varlen_func(
                 q,
                 k,
                 v,
@@ -207,9 +214,10 @@ class Attention(nn.Module):
                 dropout_p=attn_metadata.dropout_p,
                 softmax_scale=self.scale,
                 causal=True,
+                out=output,
             )
         else:  # decode
-            o = aiter.pa_fwd_asm(
+            aiter.pa_fwd_asm(
                 q,
                 k_cache,
                 v_cache,
@@ -218,9 +226,9 @@ class Attention(nn.Module):
                 attn_metadata.block_tables.stride(0),
                 K_QScale=k_scale,
                 V_QScale=v_scale,
-                out_=None,
+                out_=output,
                 high_precision=0,
             )
 
-        o = o.view(-1, self.num_heads * self.head_dim)
-        return o
+        output = output.view(-1, self.num_heads * self.head_dim)
+        return output
