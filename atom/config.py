@@ -632,7 +632,6 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
         compilation_config=vllm_config.compilation_config,
         quant_config=vllm_config.quant_config,
         enable_expert_parallel=vllm_config.parallel_config.enable_expert_parallel,
-        quant_config=vllm_config.quant_config,
     )
 
     # set the current atom config for the custom model
