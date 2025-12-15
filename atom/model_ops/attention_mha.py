@@ -203,6 +203,11 @@ class ATOMAttentionImpl(AttentionImpl):
                     # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_scale = ', k_scale, flush=True)
                     # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v_scale = ', v_scale, flush=True)
                     # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), attn_metadata.slot_mapping.shape = ', attn_metadata.slot_mapping.shape, flush=True)
+
+                    # view kv cache from U8(vllm) to FP8(aiter)
+                    k_cache = k_cache.view(torch.float8_e4m3fn)
+                    v_cache = v_cache.view(torch.float8_e4m3fn)
+
                     aiter.reshape_and_cache_with_pertoken_quant(
                         k,
                         v,
