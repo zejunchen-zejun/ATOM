@@ -157,6 +157,14 @@ class ATOMAttentionImpl(AttentionImpl):
                     assert position is not None
                     q, k = self.rotary_emb(position, q, k)
                 if self.kv_cache_dtype == "fp8":
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant', flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, k.shape = ', k.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, v.shape = ', v.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, k_cache.shape = ', k_cache.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, v_cache.shape = ', v_cache.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, k_scale.shape = ', k_scale.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, v_scale.shape = ', v_scale.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, attn_metadata.slot_mapping.shape = ', attn_metadata.slot_mapping.shape, flush=True)
                     aiter.reshape_and_cache_with_pertoken_quant(
                         k,
                         v,
