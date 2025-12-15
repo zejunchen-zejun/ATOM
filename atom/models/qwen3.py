@@ -340,10 +340,7 @@ class ATOMQwen3ForCausalLM(nn.Module):
         # for name, w in weights:
             # print('[zejun] ATOM load_weights, name = ', name, '. w.shape:', w.shape, '. w.dtype:', w.dtype, flush=True)
         # TODO: weights may consume mem
-        loaded_weights_record = load_model(self,
-                                           self.atom_config.model, 
-                                           self.atom_config.hf_config, 
-                                           self.atom_config.load_dummy)
+        loaded_weights_record = load_model(self, self.atom_config)
         # print('[zejun] ATOM loaded_weights_record = \n', loaded_weights_record, flush=True)
         # return to vllm
         return loaded_weights_record

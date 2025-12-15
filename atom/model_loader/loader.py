@@ -11,7 +11,6 @@ import safetensors
 import torch
 from torch import nn
 from tqdm import tqdm
-from transformers import AutoConfig
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME
 
 from atom.model_loader.weight_utils import (
@@ -21,6 +20,7 @@ from atom.model_loader.weight_utils import (
 from atom.model_ops.base_config import QuantizeMethodBase
 from atom.model_ops.moe import is_rocm_aiter_fusion_shared_expert_enabled
 from vllm.distributed.parallel_state import get_tp_group
+from atom.config import Config
 
 
 def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):
@@ -71,9 +71,7 @@ def safetensors_weights_iterator(
 
 def load_model(
     model: nn.Module,
-    model_name_or_path: str,
-    hf_config: AutoConfig,
-    load_dummy: bool = False,
+    atom_config: Config,
 ) -> set[str]:
     loaded_weights_record = set[str]()
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
@@ -178,8 +176,9 @@ def load_model(
         for future in concurrent.futures.as_completed(futures):
             future.result()
     for _, module in model.named_modules():
+        print('[zejun] ATOM, module prepare to load model(process_weights_after_loading) = ', module, flush=True)
         if hasattr(module, "process_weights_after_loading"):
-            module.process_weights_after_loading()
+            module.process_weights_after_loading(act_type=atom_config.model_config.dtype)
         quant_method = getattr(module, "quant_method", None)
         if isinstance(quant_method, QuantizeMethodBase):
             quant_method.process_weights_after_loading(module)

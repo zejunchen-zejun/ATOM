@@ -295,6 +295,7 @@ class ModelRunner:
         self.model = suppot_model_arch_dict[hf_config.architectures[0]](config)
         self.use_kv_indptr = False
         torch.set_default_device(None)
+        # TODO: remove here runner for being as plugin
         loaded_weights_record = load_model(self.model, config.model, config.hf_config, config.load_dummy)
         if isinstance(self.model, DeepseekV2ForCausalLM):
             self.use_kv_indptr = True

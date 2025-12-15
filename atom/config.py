@@ -7,7 +7,8 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Union
+from pydantic import Field
+from typing import Any, Optional, Union
 
 import torch
 from atom.utils import envs, get_open_port
@@ -19,7 +20,9 @@ from aiter import QuantType
 from aiter.dist.parallel_state import get_dp_group
 from aiter.utility.dtypes import d_dtypes
 
+
 from vllm.config.vllm import VllmConfig
+from vllm.config.model import ModelConfig
 
 logger = logging.getLogger("atom")
 
@@ -488,7 +491,7 @@ class ParallelConfig:
 
 @dataclass
 class Config:
-    model: str
+    model_config: ModelConfig = Field(default=None)
     max_num_batched_tokens: int = 16384
     max_num_seqs: int = 512
     max_model_len: int | None = None
@@ -535,7 +538,7 @@ class Config:
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
         assert 1 <= self.tensor_parallel_size <= 8
-        self.hf_config = get_hf_config(self.model)
+        self.hf_config = get_hf_config(self.model_config.model)
         self.quant_config = get_quant_config(self.hf_config)
         hf_config_max_position_embeddings = getattr(
             self.hf_config, "max_position_embeddings", 8192
@@ -619,7 +622,8 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
     '''
     Translate vllm config to atom config, be called when create the custom model
     '''
-    atom_config = Config(vllm_config.model_config.model)
+    atom_config = Config()
+    atom_config.model_config = vllm_config.model_config
     atom_config.max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
     atom_config.max_num_seqs = vllm_config.scheduler_config.max_num_seqs
     atom_config.max_model_len = vllm_config.scheduler_config.max_model_len
