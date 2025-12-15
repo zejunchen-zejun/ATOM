@@ -176,13 +176,13 @@ class ATOMAttentionImpl(AttentionImpl):
 
                 if self.kv_cache_dtype == "fp8":
                     print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache)', flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k.shape = ', k.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v.shape = ', v.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_cache.shape = ', k_cache.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v_cache.shape = ', v_cache.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_scale.shape = ', k_scale.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v_scale.shape = ', v_scale.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), attn_metadata.slot_mapping.shape = ', attn_metadata.slot_mapping.shape, flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k.shape = ', k.shape, flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v.shape = ', v.shape, flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_cache.shape = ', k_cache.shape, flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v_cache.shape = ', v_cache.shape, flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_scale = ', k_scale, flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v_scale = ', v_scale, flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), attn_metadata.slot_mapping.shape = ', attn_metadata.slot_mapping.shape, flush=True)
                     aiter.reshape_and_cache_with_pertoken_quant(
                         k,
                         v,
