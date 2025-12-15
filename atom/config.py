@@ -17,7 +17,6 @@ from torch.distributed import ProcessGroup, ReduceOp
 from transformers import AutoConfig, PretrainedConfig
 
 from aiter import QuantType
-from aiter.dist.parallel_state import get_dp_group
 from aiter.utility.dtypes import d_dtypes
 
 
@@ -512,6 +511,7 @@ class Config:
     num_kvcache_blocks: int = -1
     kv_cache_dtype: str = "bf16"
     enable_prefix_caching: bool = False
+    max_model_len: int | None = None
     port: int = 8006
     torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
     compilation_config: CompilationConfig = Field(default_factory=CompilationConfig)
@@ -633,6 +633,7 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
         num_kvcache_blocks=vllm_config.cache_config.num_gpu_blocks,
         kv_cache_dtype=vllm_config.cache_config.cache_dtype,
         enable_prefix_caching=vllm_config.cache_config.enable_prefix_caching,
+        max_model_len=vllm_config.scheduler_config.max_model_len,
         compilation_config=vllm_config.compilation_config,
         quant_config=vllm_config.quant_config,
         enable_expert_parallel=vllm_config.parallel_config.enable_expert_parallel,
