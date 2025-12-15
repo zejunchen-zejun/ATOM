@@ -517,7 +517,6 @@ class Config:
     enable_expert_parallel: bool = False
     master_addr: str = "127.0.0.1"
     graph_bs: Optional[list[int]] = None
-    enable_dp_attention: bool = False
     torch_dtype: torch.dtype = field(init=False)
 
     def _set_cudagraph_sizes(self):
@@ -630,7 +629,6 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
         gpu_memory_utilization=vllm_config.cache_config.gpu_memory_utilization,
         tensor_parallel_size=vllm_config.parallel_config.tensor_parallel_size,
         enforce_eager=vllm_config.model_config.enforce_eager,
-        hf_config=vllm_config.model_config.hf_config,
         parallel_config=vllm_config.parallel_config,
         kv_cache_block_size=vllm_config.cache_config.block_size,
         num_kvcache_blocks=vllm_config.cache_config.num_gpu_blocks,
