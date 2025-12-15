@@ -192,7 +192,7 @@ class LinearBase(nn.Module):
         param_data = param.data
         param.weight_loader_process(param_data, loaded_weight)
 
-    def process_weights_after_loading(self):
+    def process_weights_after_loading(self, act_type: torch.dtype):
         if (
             self.quant_type == QuantType.per_Tensor
             and len(self.output_partition_sizes) > 1
@@ -304,6 +304,7 @@ class ATOMReplicatedLinear(LinearBase):
         param.weight_loader_process(param_data, loaded_weight)
 
 
+#TODO: inherit from the vllm LinearBase
 class ATOMColumnParallelLinear(LinearBase):
 
     def __init__(
