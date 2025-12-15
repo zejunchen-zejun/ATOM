@@ -629,7 +629,6 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
         cache_config=vllm_config.cache_config,
         parallel_config=vllm_config.parallel_config,
         scheduler_config=vllm_config.scheduler_config,
-        parallel_config=vllm_config.parallel_config,
         kv_cache_block_size=vllm_config.cache_config.block_size,
         num_kvcache_blocks=vllm_config.cache_config.num_gpu_blocks,
         kv_cache_dtype=vllm_config.cache_config.cache_dtype,
