@@ -48,7 +48,7 @@ from atom.model_ops.embed_head import ATOMVocabParallelEmbedding, ParallelLMHead
 from atom.config import config_from_vllm
 from atom.model_loader.loader import load_model
 
-# from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
+from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 # from vllm.model_executor.models.interfaces import (MixtureOfExperts,
 #                                                    SupportsLoRA, SupportsPP)
 
@@ -295,7 +295,7 @@ class Qwen3Model(nn.Module):
         return hidden_states
 
 
-class ATOMQwen3ForCausalLM(nn.Module):
+class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
     packed_modules_mapping = {
         "q_proj": ("qkv_proj", "q"),
         "k_proj": ("qkv_proj", "k"),
@@ -305,7 +305,7 @@ class ATOMQwen3ForCausalLM(nn.Module):
     }
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
-        super().__init__()
+        super(Qwen3ForCausalLM, self).__init__()
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
 
         # TODO: use original vllm config instead of atom config
