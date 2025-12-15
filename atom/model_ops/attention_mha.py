@@ -2,6 +2,7 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 # from flash_attn import flash_attn_with_kvcache
+from typing import Optional
 import aiter
 import torch
 from torch import nn
@@ -28,6 +29,7 @@ class ATOMAttentionImpl(nn.Module):
         attn_type: AttentionType = AttentionType.DECODER,
         kv_sharing_target_layer_name: int | None = None,
         sinks: torch.Tensor | None = None,
+        rotary_emb: Optional[torch.nn.Module] = None,
     ):
         print('[zejun] ATOM init atom attention forward', flush=True)
         super().__init__()
@@ -44,6 +46,7 @@ class ATOMAttentionImpl(nn.Module):
         self.sliding_window = (
             (sliding_window - 1, 0) if sliding_window is not None else (-1, -1)
         )
+        # TODO: remove the ROPE layer
         self.rotary_emb = rotary_emb
 
     def forward(
