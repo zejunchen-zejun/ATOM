@@ -274,13 +274,16 @@ class Qwen3Model(nn.Module):
         self.embed_tokens = ATOMVocabParallelEmbedding(
             config.vocab_size, config.hidden_size
         )
+
+        # TODO: here we use vllm quant config passed from vllm, 
+        # but inside the function, the atom specific quant logic will be used
         self.layers = nn.ModuleList(
             [
                 Qwen3DecoderLayer(
                     config,
                     kv_cache_dtype=kv_cache_dtype,
                     cache_config=atom_config.cache_config,
-                    quant_config=atom_config.atom_quant_config,
+                    quant_config=atom_config.vllm_quant_config,
                     layer_num=layer_num,
                     prefix=f"{prefix}.layers.{layer_num}",
                 )
