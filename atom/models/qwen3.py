@@ -59,7 +59,7 @@ from vllm.sequence import IntermediateTensors
 from vllm.model_executor.models.utils import maybe_prefix, AutoWeightsLoader
 from vllm.attention import Attention, AttentionType
 from vllm.config.cache import CacheConfig
-from vllm.model_executor.layers.quantization import QuantizationConfig
+from vllm.model_executor.layers.quantization import QuantizationConfig as VllmQuantizationConfig
 
 class Qwen3Attention(nn.Module):
 
@@ -77,7 +77,7 @@ class Qwen3Attention(nn.Module):
         kv_cache_dtype: str = "fp16", # TODO: remove because no use
         layer_num: int = 0,
         cache_config: Optional[CacheConfig] = None,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         prefix: str = "",
         attn_type: str = AttentionType.DECODER,
     ) -> None:
@@ -160,7 +160,7 @@ class Qwen3MLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -196,7 +196,7 @@ class Qwen3DecoderLayer(nn.Module):
         config: Qwen3Config,
         kv_cache_dtype: str = "bf16",
         cache_config: Optional[CacheConfig] = None,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         layer_num: int = 0,
         prefix: str = "",
     ) -> None:

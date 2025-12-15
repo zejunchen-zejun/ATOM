@@ -19,12 +19,14 @@ from aiter import (
 
 # import torch.distributed as dist
 from vllm.distributed.parallel_state import get_tp_group
+from vllm.model_executor.layers.quantization import QuantizationConfig as VllmQuantizationConfig
+
 from aiter.ops.shuffle import shuffle_weight
 from aiter.tuned_gemm import tgemm
 from aiter.utility import fp4_utils
 from torch import nn
 
-from atom.config import QuantizationConfig
+from atom.config import QuantizationConfig, get_current_atom_config
 from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_max_scale
 
 def divide(numerator, denominator):
@@ -73,6 +75,7 @@ def gemm_a4w4_quant(x: torch.Tensor, weight: torch.Tensor, otype: torch.dtype, w
 
 
 # TODO: remove it and use vllm one
+# TODO: for now leave impl code in forward
 class LinearBase(nn.Module):
     def __init__(
         self,
@@ -84,7 +87,6 @@ class LinearBase(nn.Module):
         reduce_results: bool = False,
         prefix: str = "",
     ):
-        # print('[zejun] ATOM LinearBase __init__', flush=True)
         super().__init__()
         if quant_config is None:
             quant_config = QuantizationConfig()
@@ -195,6 +197,7 @@ class LinearBase(nn.Module):
         param.weight_loader_process(param_data, loaded_weight)
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
+        print('[zejun] ATOM LinearBase process_weights_after_loading', flush=True)
         if (
             self.quant_type == QuantType.per_Tensor
             and len(self.output_partition_sizes) > 1
@@ -290,15 +293,16 @@ class ATOMReplicatedLinear(LinearBase):
         input_size: int,
         output_size: int,
         bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         **kwargs,
     ):
+        self.atom_quant_config = get_current_atom_config().atom_quant_config
         super().__init__(
             input_size,
             output_size,
             tp_dim=None,
             bias=bias,
-            quant_config=quant_config,
+            quant_config=self.atom_quant_config,
         )
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
@@ -315,18 +319,18 @@ class ATOMColumnParallelLinear(LinearBase):
         input_size: int,
         output_size: int | list[int],
         bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         prefix: str = "",
         **kwargs,
     ):
-        # print('[zejun] ATOM ATOMColumnParallelLinear __init__', flush=True)
+        self.atom_quant_config = get_current_atom_config().atom_quant_config
         self.tp_dim = 0
         super().__init__(
             input_size=input_size,
             output_size=output_size,
             tp_dim=self.tp_dim,
             bias=bias,
-            quant_config=quant_config,
+            quant_config=self.atom_quant_config,
             prefix=prefix,
         )
 
@@ -347,17 +351,19 @@ class ATOMMergedColumnParallelLinear(LinearBase):
         input_size: int,
         output_sizes: list[int],
         bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         prefix: str = "",
         **kwargs,
     ):
         self.output_sizes = output_sizes
+        self.atom_quant_config = get_current_atom_config().atom_quant_config
+
         super().__init__(
             input_size,
             output_sizes,
             tp_dim=0,
             bias=bias,
-            quant_config=quant_config,
+            quant_config=self.atom_quant_config,
             prefix=prefix,
         )
 
@@ -394,7 +400,7 @@ class ATOMQKVParallelLinear(ATOMColumnParallelLinear):
         total_num_heads: int,
         total_num_kv_heads: int | None = None,
         bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         prefix: str = "",
         **kwargs,
     ):
@@ -471,17 +477,19 @@ class ATOMRowParallelLinear(LinearBase):
         input_size: int,
         output_size: int,
         bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         reduce_results: bool = True,
         **kwargs,
     ):
         self.tp_rank = get_tp_group().rank_in_group
+        self.atom_quant_config = get_current_atom_config().atom_quant_config
+
         super().__init__(
             input_size,
             output_size,
             tp_dim=1,
             bias=bias,
-            quant_config=quant_config,
+            quant_config=self.atom_quant_config,
             reduce_results=reduce_results,
         )
 
@@ -509,15 +517,18 @@ class ATOMMergedReplicatedLinear(ATOMReplicatedLinear):
         input_size: int,
         output_size: list[int],
         bias: bool = False,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[VllmQuantizationConfig] = None,
         **kwargs,
     ):
         self.output_sizes = output_size
+        self.atom_quant_config = get_current_atom_config().atom_quant_config
+
+        # TODO: what is sum output size
         super().__init__(
             input_size,
-            sum(output_size),  # ？
+            sum(output_size),
             bias=bias,
-            quant_config=quant_config,
+            quant_config=self.atom_quant_config,
         )
 
     def weight_loader(

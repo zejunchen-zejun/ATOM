@@ -12,7 +12,7 @@ from aiter.tuned_gemm import tgemm
 from torch import nn
 
 from vllm.model_executor.layers.quantization.base_config import (
-    QuantizationConfig)
+    QuantizationConfig as VllmQuantizationConfig)
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE,
     VocabParallelEmbedding
@@ -27,7 +27,7 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         params_dtype: torch.dtype | None = None,
         org_num_embeddings: int | None = None,
         padding_size: int = DEFAULT_VOCAB_PADDING_SIZE,
-        quant_config: QuantizationConfig | None = None,
+        quant_config: VllmQuantizationConfig | None = None,
         prefix: str = "",
     ):
         super().__init__(num_embeddings=num_embeddings, embedding_dim=embedding_dim, prefix=prefix)
