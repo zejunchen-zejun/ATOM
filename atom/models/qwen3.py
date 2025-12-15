@@ -280,7 +280,7 @@ class Qwen3Model(nn.Module):
                     config,
                     kv_cache_dtype=kv_cache_dtype,
                     cache_config=atom_config.cache_config,
-                    quant_config=atom_config.quant_config,
+                    quant_config=atom_config.atom_quant_config,
                     layer_num=layer_num,
                     prefix=f"{prefix}.layers.{layer_num}",
                 )
