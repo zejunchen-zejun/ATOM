@@ -104,9 +104,16 @@ class ATOMAttentionImpl(AttentionImpl):
             k_cache = v_cache = torch.tensor([])
             k_scale = v_scale = None
 
+        print('[zejun] ATOM call atom attention forward, layer = ', layer, flush=True)
+        print('[zejun] ATOM call atom attention forward, k_cache.shape = ', k_cache.shape, flush=True)
+        print('[zejun] ATOM call atom attention forward, v_cache.shape = ', v_cache.shape, flush=True)
+        print('[zejun] ATOM call atom attention forward, k_scale = ', k_scale, flush=True)
+        print('[zejun] ATOM call atom attention forward, v_scale = ', v_scale, flush=True)
+
         assert self.rotary_emb is None or (self.rotary_emb is not None and position is not None)
         if k_cache.numel() and v_cache.numel():
             if use_triton_unified_attention:
+                # TODO: never update
                 k_scale = v_scale = self.one_scale
                 k_cache = k_cache.view(
                     k_cache.shape[0], -1, self.num_kv_heads, self.head_size
