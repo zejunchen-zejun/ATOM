@@ -95,6 +95,7 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         self.positions = CpuGpuBuffer(max_num_batched_tokens, **i64_kwargs),
 
     def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
+        # TODO: support cuda graph
         assert False, "Not implemented for cuda graph capture for now"
         var = self.model_runner.forward_vars
         attn_matadata = ATOMAttentionMetadata(
