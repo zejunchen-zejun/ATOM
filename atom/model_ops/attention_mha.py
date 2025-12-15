@@ -34,7 +34,7 @@ class ATOMAttentionImpl(nn.Module):
         print('[zejun] ATOM init atom attention forward', flush=True)
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = head_size
+        self.head_size = head_size
         self.scale = scale
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
@@ -83,12 +83,12 @@ class ATOMAttentionImpl(nn.Module):
         context = attn_metadata.context
         position = context.positions
 
-        q = query.view(-1, self.num_heads, self.head_dim)
-        k = key.view(-1, self.num_kv_heads, self.head_dim)
-        v = value.view(-1, self.num_kv_heads, self.head_dim)
+        q = query.view(-1, self.num_heads, self.head_size)
+        k = key.view(-1, self.num_kv_heads, self.head_size)
+        v = value.view(-1, self.num_kv_heads, self.head_size)
 
         use_triton_unified_attention = (
-            self.sliding_window != (-1, -1) or self.head_dim != 128
+            self.sliding_window != (-1, -1) or self.head_size != 128
         )
 
         if attn_metadata.slot_mapping.numel():
@@ -104,10 +104,10 @@ class ATOMAttentionImpl(nn.Module):
             if use_triton_unified_attention:
                 k_scale = v_scale = self.one_scale
                 k_cache = k_cache.view(
-                    k_cache.shape[0], -1, self.num_kv_heads, self.head_dim
+                    k_cache.shape[0], -1, self.num_kv_heads, self.head_size
                 )
                 v_cache = v_cache.view(
-                    v_cache.shape[0], -1, self.num_kv_heads, self.head_dim
+                    v_cache.shape[0], -1, self.num_kv_heads, self.head_size
                 )
                 if context.is_prefill or self.rotary_emb is None:
                     if self.rotary_emb is not None:
@@ -229,5 +229,5 @@ class ATOMAttentionImpl(nn.Module):
                 high_precision=0,
             )
 
-        output = output.view(-1, self.num_heads * self.head_dim)
+        output = output.view(-1, self.num_heads * self.head_size)
         return output
