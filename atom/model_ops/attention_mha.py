@@ -66,7 +66,7 @@ class ATOMAttentionImpl(AttentionImpl):
         output_block_scale: torch.Tensor | None = None,
     ) -> torch.Tensor:
 
-        print('[zejun] ATOM call atom attention forward', flush=True)
+        print('[zejun] ATOM call atom attention forward, layer = ', layer, flush=True)
 
         assert output is not None, "Output tensor must be provided."
         if output_scale is not None or output_block_scale is not None:
@@ -156,15 +156,26 @@ class ATOMAttentionImpl(AttentionImpl):
                 if self.rotary_emb is not None:
                     assert position is not None
                     q, k = self.rotary_emb(position, q, k)
+
+                # shuffle the k_cache and v_cache, whose layout is required by kernel
+                x = 16 // k_cache.element_size()
+                # assert for not mla
+                num_blocks, block_size, num_kv_heads, head_size = k_cache.shape
+                k_cache = k_cache.view(num_blocks, block_size, num_kv_heads, head_size // x, x)
+                # k_cache: [num_blocks, num_kv_heads, head_size // x, block_size, x]
+                k_cache = k_cache.permute(0, 2, 3, 1, 4)
+                # v_cache: [num_blocks, head_size, block_size, num_kv_heads]
+                v_cache = v_cache.permute(0, 2, 3, 1)
+
                 if self.kv_cache_dtype == "fp8":
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant', flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, k.shape = ', k.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, v.shape = ', v.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, k_cache.shape = ', k_cache.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, v_cache.shape = ', v_cache.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, k_scale.shape = ', k_scale.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, v_scale.shape = ', v_scale.shape, flush=True)
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant, attn_metadata.slot_mapping.shape = ', attn_metadata.slot_mapping.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache)', flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k.shape = ', k.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v.shape = ', v.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_cache.shape = ', k_cache.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v_cache.shape = ', v_cache.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_scale.shape = ', k_scale.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v_scale.shape = ', v_scale.shape, flush=True)
+                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), attn_metadata.slot_mapping.shape = ', attn_metadata.slot_mapping.shape, flush=True)
                     aiter.reshape_and_cache_with_pertoken_quant(
                         k,
                         v,
