@@ -94,7 +94,7 @@ class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
         self.block_size = model_runner.block_size
         self.device = model_runner.device
         config = model_runner.config
-        hf_config = config.hf_config
+        hf_config = config.model_config.hf_config
         self.max_num_batched_tokens = model_runner.max_num_batched_tokens
         self.max_bs = model_runner.max_bs
         self.max_num_blocks_per_seq = (

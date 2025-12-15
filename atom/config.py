@@ -23,6 +23,8 @@ from aiter.utility.dtypes import d_dtypes
 
 from vllm.config.vllm import VllmConfig
 from vllm.config.model import ModelConfig
+from vllm.config.cache import CacheConfig
+from vllm.config.scheduler import SchedulerConfig
 
 logger = logging.getLogger("atom")
 
@@ -389,6 +391,12 @@ def get_hf_config(model: str) -> PretrainedConfig:
 
 @dataclass
 class ParallelConfig:
+    """Configuration for the distributed execution."""
+
+    pipeline_parallel_size: int = 1
+    """Number of pipeline parallel groups."""
+    tensor_parallel_size: int = 1
+    """Number of tensor parallel groups."""
     data_parallel_size: int = 1
     """Number of data parallel groups. MoE layers will be sharded according to
     the product of the tensor parallel size and data parallel size."""
@@ -489,17 +497,15 @@ class ParallelConfig:
         self.data_parallel_master_port = get_open_port()
 
 
+# TODO: refine here to align with the vllm config
+# or just use the vllm config directly
+# TODO: leave as for freedom, but need to refine later
 @dataclass
 class Config:
     model_config: ModelConfig = Field(default=None)
-    max_num_batched_tokens: int = 16384
-    max_num_seqs: int = 512
-    max_model_len: int | None = None
-    gpu_memory_utilization: float = 0.9
-    tensor_parallel_size: int = 1
-    enforce_eager: bool = False
-    hf_config: PretrainedConfig = field(init=False)
-    parallel_config: ParallelConfig = field(default_factory=ParallelConfig)
+    cache_config: CacheConfig = Field(default_factory=CacheConfig)
+    parallel_config: ParallelConfig = Field(default_factory=ParallelConfig)
+    scheduler_config: SchedulerConfig = Field(default_factory=SchedulerConfig)
     bos_token_id: int = -1
     eos_token_id: int = -1
     kv_cache_block_size: int = 16
@@ -508,11 +514,10 @@ class Config:
     enable_prefix_caching: bool = False
     port: int = 8006
     torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
-    compilation_config: CompilationConfig = field(default_factory=CompilationConfig)
-    quant_config: QuantizationConfig = field(
+    compilation_config: CompilationConfig = Field(default_factory=CompilationConfig)
+    quant_config: QuantizationConfig = Field(
         default_factory=lambda: QuantizationConfig()
     )
-    asyncio_mode: bool = False
     load_dummy: bool = False
     enable_expert_parallel: bool = False
     master_addr: str = "127.0.0.1"
@@ -532,15 +537,14 @@ class Config:
                 self.graph_bs = cuda_graph_sizes
 
     def __post_init__(self):
-        # assert os.path.isdir(self.model)
         assert (
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
-        assert 1 <= self.tensor_parallel_size <= 8
-        self.hf_config = get_hf_config(self.model_config.model)
-        self.quant_config = get_quant_config(self.hf_config)
+        assert 1 <= self.parallel_config.tensor_parallel_size <= 8
+        hf_config = self.model_config.hf_config
+        self.quant_config = get_quant_config(hf_config)
         hf_config_max_position_embeddings = getattr(
-            self.hf_config, "max_position_embeddings", 8192
+            hf_config, "max_position_embeddings", 8192
         )
         if self.max_model_len is None:
             self.max_model_len = hf_config_max_position_embeddings
@@ -560,8 +564,8 @@ class Config:
             self.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
             self.compilation_config.init_with_cudagraph_sizes()
         self.torch_dtype = (
-            self.hf_config.torch_dtype
-            if getattr(self.hf_config, "torch_dtype", None) is not None
+            hf_config.torch_dtype
+            if getattr(hf_config, "torch_dtype", None) is not None
             else torch.bfloat16
         )
 
@@ -591,8 +595,7 @@ class Config:
             vllm_factors.append(self.parallel_config.compute_hash())
 
         factors.append(vllm_factors)
-        factors.append(self.tensor_parallel_size)
-        factors.append(self.enable_dp_attention)
+        factors.append(self.parallel_config.tensor_parallel_size)
 
         hash_str = hashlib.md5(
             str(factors).encode(), usedforsecurity=False
@@ -623,12 +626,9 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
     '''
     atom_config = Config(
         model_config=vllm_config.model_config,
-        max_num_batched_tokens=vllm_config.scheduler_config.max_num_batched_tokens,
-        max_num_seqs=vllm_config.scheduler_config.max_num_seqs,
-        max_model_len=vllm_config.scheduler_config.max_model_len,
-        gpu_memory_utilization=vllm_config.cache_config.gpu_memory_utilization,
-        tensor_parallel_size=vllm_config.parallel_config.tensor_parallel_size,
-        enforce_eager=vllm_config.model_config.enforce_eager,
+        cache_config=vllm_config.cache_config,
+        parallel_config=vllm_config.parallel_config,
+        scheduler_config=vllm_config.scheduler_config,
         parallel_config=vllm_config.parallel_config,
         kv_cache_block_size=vllm_config.cache_config.block_size,
         num_kvcache_blocks=vllm_config.cache_config.num_gpu_blocks,
@@ -638,31 +638,6 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
         quant_config=vllm_config.quant_config,
         enable_expert_parallel=vllm_config.parallel_config.enable_expert_parallel,
     )
-    # atom_config.max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
-    # atom_config.max_num_seqs = vllm_config.scheduler_config.max_num_seqs
-    # atom_config.max_model_len = vllm_config.scheduler_config.max_model_len
-    # atom_config.gpu_memory_utilization = vllm_config.cache_config.gpu_memory_utilization
-    # atom_config.tensor_parallel_size = vllm_config.parallel_config.tensor_parallel_size
-    # atom_config.enforce_eager = vllm_config.model_config.enforce_eager
-    # atom_config.hf_config = vllm_config.model_config.hf_config
-    # atom_config.parallel_config = vllm_config.parallel_config
-    # TODO: check here
-    # atom_config.bos_token_id = 
-    # atom_config.eos_token_id = 
-    # atom_config.kv_cache_block_size = vllm_config.cache_config.block_size
-    # atom_config.num_kvcache_blocks = vllm_config.cache_config.num_gpu_blocks
-    # atom_config.kv_cache_dtype = vllm_config.cache_config.cache_dtype
-    # atom_config.enable_prefix_caching = vllm_config.cache_config.enable_prefix_caching
-    # atom_config.port = 
-    # atom_config.torch_profiler_dir = 
-    # atom_config.compilation_config = vllm_config.compilation_config
-    # atom_config.quant_config = vllm_config.quant_config
-    # atom_config.asyncio_mode = 
-    # atom_config.enable_expert_parallel = vllm_config.parallel_config.enable_expert_parallel
-    # atom_config.master_addr = 
-    # atom_config.graph_bs = 
-    # atom_config.enable_dp_attention = 
-    # atom_config.torch_dtype = 
 
     # set the current atom config for the custom model
     set_current_atom_config(atom_config)

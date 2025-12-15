@@ -38,7 +38,7 @@ def set_device_control_env_var(config: "Config", local_dp_rank: int):
     Temporarily set CUDA_VISIBLE_DEVICES or equivalent
     for engine subprocess.
     """
-    world_size = config.tensor_parallel_size
+    world_size = config.parallel_config.tensor_parallel_size
     evar = "VLLM_DEVICE_CONTROL_ENV_VAR_PLACEHOLDER"
 
     value = get_device_indices(evar, local_dp_rank, world_size)

@@ -77,7 +77,7 @@ def load_model(
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
     weights_mapping = getattr(model, "weights_mapping", {})
     params_dict = dict(model.named_parameters())
-    hf_config = atom_config.hf_config
+    hf_config = atom_config.model_config.hf_config
     model_name_or_path = atom_config.model_config.model
 
     with concurrent.futures.ThreadPoolExecutor() as executor:

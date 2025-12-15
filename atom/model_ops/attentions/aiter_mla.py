@@ -41,7 +41,7 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
         )
         assert self.block_size == 1, "AITER MLA requires only block size 1."
         config = model_runner.config
-        hf_config = config.hf_config
+        hf_config = config.model_config.hf_config
         self.num_attention_heads = (
             hf_config.num_attention_heads // get_tp_group().world_size
         )

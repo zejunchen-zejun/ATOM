@@ -262,7 +262,7 @@ class Qwen3Model(nn.Module):
 
     def __init__(self, *, atom_config: Config, prefix: str = "") -> None:
         super().__init__()
-        config = atom_config.hf_config
+        config = atom_config.model_config.hf_config
         cache_config = atom_config.kv_cache_dtype
         quant_config = atom_config.quant_config
         self.embed_tokens = ATOMVocabParallelEmbedding(
@@ -311,7 +311,7 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         # TODO: use original vllm config instead of atom config
         self.atom_config = config_from_vllm(vllm_config)
 
-        self.config = self.atom_config.hf_config
+        self.config = self.atom_config.model_config.hf_config
         self.model = Qwen3Model(
             atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model")
         )
