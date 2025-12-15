@@ -16,14 +16,14 @@ from atom.utils.distributed.utils import stateless_init_torch_distributed_proces
 from torch.distributed import ProcessGroup, ReduceOp
 from transformers import AutoConfig, PretrainedConfig
 
-from aiter import QuantType
-from aiter.utility.dtypes import d_dtypes
-
+# from aiter import QuantType
+# from aiter.utility.dtypes import d_dtypes
 
 from vllm.config.vllm import VllmConfig
 from vllm.config.model import ModelConfig
 from vllm.config.cache import CacheConfig
 from vllm.config.scheduler import SchedulerConfig
+from vllm.model_executor.layers.quantization import QuantizationConfig
 
 logger = logging.getLogger("atom")
 
@@ -254,110 +254,110 @@ class CompilationConfig:
             ]
 
 
-class QuantizationConfig(dict):
-    def __init__(
-        self,
-        quant_type=QuantType.No,
-        quant_dtype=torch.bfloat16,
-        is_dynamic=True,
-        quant_name="",
-        quant_method=None,
-    ):
-        super().__init__()
-        self["quant_type"] = quant_type if quant_type is not None else QuantType.No
-        self["quant_dtype"] = quant_dtype if quant_dtype is not None else torch.bfloat16
-        self["quant_name"] = quant_name
-        self["is_dynamic"] = is_dynamic
-        self["quant_method"] = quant_method
+# class QuantizationConfig(dict):
+#     def __init__(
+#         self,
+#         quant_type=QuantType.No,
+#         quant_dtype=torch.bfloat16,
+#         is_dynamic=True,
+#         quant_name="",
+#         quant_method=None,
+#     ):
+#         super().__init__()
+#         self["quant_type"] = quant_type if quant_type is not None else QuantType.No
+#         self["quant_dtype"] = quant_dtype if quant_dtype is not None else torch.bfloat16
+#         self["quant_name"] = quant_name
+#         self["is_dynamic"] = is_dynamic
+#         self["quant_method"] = quant_method
 
-    def get_name(self):
-        return self["quant_name"]
+#     def get_name(self):
+#         return self["quant_name"]
 
-    def compute_hash(self) -> str:
-        """
-        WARNING: Whenever a new field is added to this config,
-        ensure that it is included in the factors list if
-        it affects the computation graph.
+#     def compute_hash(self) -> str:
+#         """
+#         WARNING: Whenever a new field is added to this config,
+#         ensure that it is included in the factors list if
+#         it affects the computation graph.
 
-        Provide a hash that uniquely identifies all the configs
-        that affect the structure of the computation
-        graph from input ids/embeddings to the final hidden states,
-        excluding anything before input ids/embeddings and after
-        the final hidden states.
-        """
-        factors: list[Any] = []
-        factors.append(self["quant_type"])
-        factors.append(self["quant_dtype"])
-        factors.append(self["quant_name"])
-        factors.append(self["is_dynamic"])
-        factors.append(self["quant_method"])
-        str_factors = str(factors)
-        # assert_hashable(str_factors)
-        return hashlib.sha256(str(factors).encode()).hexdigest()
+#         Provide a hash that uniquely identifies all the configs
+#         that affect the structure of the computation
+#         graph from input ids/embeddings to the final hidden states,
+#         excluding anything before input ids/embeddings and after
+#         the final hidden states.
+#         """
+#         factors: list[Any] = []
+#         factors.append(self["quant_type"])
+#         factors.append(self["quant_dtype"])
+#         factors.append(self["quant_name"])
+#         factors.append(self["is_dynamic"])
+#         factors.append(self["quant_method"])
+#         str_factors = str(factors)
+#         # assert_hashable(str_factors)
+#         return hashlib.sha256(str(factors).encode()).hexdigest()
 
 
-def get_quant_config(config: PretrainedConfig) -> QuantizationConfig:
-    torch_dtype = getattr(config, "torch_dtype", "bf16")
-    orig_quant_config = getattr(config, "quantization_config", None)
-    if orig_quant_config is None:
-        return QuantizationConfig(
-            quant_type=QuantType.No,
-            quant_dtype=torch_dtype,
-        )
+# def get_quant_config(config: PretrainedConfig) -> QuantizationConfig:
+#     torch_dtype = getattr(config, "torch_dtype", "bf16")
+#     orig_quant_config = getattr(config, "quantization_config", None)
+#     if orig_quant_config is None:
+#         return QuantizationConfig(
+#             quant_type=QuantType.No,
+#             quant_dtype=torch_dtype,
+#         )
 
-    quant_method = orig_quant_config.get("quant_method", None)
-    RE_QUANT_BLOCKSIZE = r"\'(?:group_size|weight_block_size)\'\:\s*(?:\[\n*)\s*(\d+),"
-    orig_quant_config_str = str(orig_quant_config)
-    if quant_method == "compressed-tensors" or "channel'," in orig_quant_config_str:
-        quant_type = QuantType.per_Token
-    elif group_size := re.search(RE_QUANT_BLOCKSIZE, orig_quant_config_str):
-        group_size = int(group_size.group(1))
-        assert group_size in (32, 128), f"Unsupported group size {group_size}"
-        if group_size == 128:
-            quant_type = QuantType.per_1x128
-        elif group_size == 32:
-            quant_type = QuantType.per_1x32
-    else:
-        quant_type = QuantType.per_Tensor
+#     quant_method = orig_quant_config.get("quant_method", None)
+#     RE_QUANT_BLOCKSIZE = r"\'(?:group_size|weight_block_size)\'\:\s*(?:\[\n*)\s*(\d+),"
+#     orig_quant_config_str = str(orig_quant_config)
+#     if quant_method == "compressed-tensors" or "channel'," in orig_quant_config_str:
+#         quant_type = QuantType.per_Token
+#     elif group_size := re.search(RE_QUANT_BLOCKSIZE, orig_quant_config_str):
+#         group_size = int(group_size.group(1))
+#         assert group_size in (32, 128), f"Unsupported group size {group_size}"
+#         if group_size == 128:
+#             quant_type = QuantType.per_1x128
+#         elif group_size == 32:
+#             quant_type = QuantType.per_1x32
+#     else:
+#         quant_type = QuantType.per_Tensor
 
-    RE_QUANT_DTYPE = r"\'(?:d?type|weight_dtype|quant_method)\'\:\s*\'(\w+)\'"
-    quant_dtype = None
-    m = re.search(RE_QUANT_DTYPE, orig_quant_config_str)
-    if m and m.group(1).lower() in ["fp8", "fp4", "int8", "int4", "fp8_e4m3", "mxfp4"]:
-        dtype = m.group(1).lower().split("_")[0]
-        if dtype == "mxfp4":
-            dtype = "fp4"
-        if dtype.endswith("4"):
-            dtype += "x2"
-        quant_dtype = d_dtypes[dtype]
-    else:
-        bit_match = re.search(r"\'(?:num_)?bits\'\:\s*(\d+)", orig_quant_config_str)
-        if bit_match:
-            bit = int(bit_match.group(1))
-            dtype_match = re.search(RE_QUANT_DTYPE, orig_quant_config_str)
-            if dtype_match:
-                dtype = dtype_match.group(1).lower()
-                dtype_prefix = "i" if dtype.startswith("int") else "fp"
-            else:
-                dtype_prefix = "i"
-            quant_dtype_str = (
-                f"{dtype_prefix}{bit}" if bit != 4 else f"{dtype_prefix}{bit}x2"
-            )
-            quant_dtype = d_dtypes.get(quant_dtype_str, None)
-    assert (
-        quant_dtype is not None
-    ), f"Cannot parse quant dtype from {orig_quant_config_str}"
-    if quant_dtype == d_dtypes["fp4x2"]:
-        quant_type = QuantType.per_1x32
+#     RE_QUANT_DTYPE = r"\'(?:d?type|weight_dtype|quant_method)\'\:\s*\'(\w+)\'"
+#     quant_dtype = None
+#     m = re.search(RE_QUANT_DTYPE, orig_quant_config_str)
+#     if m and m.group(1).lower() in ["fp8", "fp4", "int8", "int4", "fp8_e4m3", "mxfp4"]:
+#         dtype = m.group(1).lower().split("_")[0]
+#         if dtype == "mxfp4":
+#             dtype = "fp4"
+#         if dtype.endswith("4"):
+#             dtype += "x2"
+#         quant_dtype = d_dtypes[dtype]
+#     else:
+#         bit_match = re.search(r"\'(?:num_)?bits\'\:\s*(\d+)", orig_quant_config_str)
+#         if bit_match:
+#             bit = int(bit_match.group(1))
+#             dtype_match = re.search(RE_QUANT_DTYPE, orig_quant_config_str)
+#             if dtype_match:
+#                 dtype = dtype_match.group(1).lower()
+#                 dtype_prefix = "i" if dtype.startswith("int") else "fp"
+#             else:
+#                 dtype_prefix = "i"
+#             quant_dtype_str = (
+#                 f"{dtype_prefix}{bit}" if bit != 4 else f"{dtype_prefix}{bit}x2"
+#             )
+#             quant_dtype = d_dtypes.get(quant_dtype_str, None)
+#     assert (
+#         quant_dtype is not None
+#     ), f"Cannot parse quant dtype from {orig_quant_config_str}"
+#     if quant_dtype == d_dtypes["fp4x2"]:
+#         quant_type = QuantType.per_1x32
 
-    RE_STATIC_QUANT = r"\'(?:activation_scheme)\'\:\s*\'(static)\'"
-    if re.search(RE_STATIC_QUANT, orig_quant_config_str):
-        is_dynamic = False
-    else:
-        is_dynamic = True
-    return QuantizationConfig(
-        quant_type, quant_dtype, is_dynamic, quant_method=quant_method
-    )
+#     RE_STATIC_QUANT = r"\'(?:activation_scheme)\'\:\s*\'(static)\'"
+#     if re.search(RE_STATIC_QUANT, orig_quant_config_str):
+#         is_dynamic = False
+#     else:
+#         is_dynamic = True
+#     return QuantizationConfig(
+#         quant_type, quant_dtype, is_dynamic, quant_method=quant_method
+#     )
 
 
 _CONFIG_REGISTRY: dict[str, str] = {
@@ -512,15 +512,10 @@ class Config:
     kv_cache_dtype: str = "bf16"
     enable_prefix_caching: bool = False
     max_model_len: int | None = None
-    port: int = 8006
-    torch_profiler_dir: str | None = os.getenv("ATOM_TORCH_PROFILER_DIR", None)
     compilation_config: CompilationConfig = Field(default_factory=CompilationConfig)
-    quant_config: QuantizationConfig = Field(
-        default_factory=lambda: QuantizationConfig()
-    )
+    quant_config: QuantizationConfig | None = None
     load_dummy: bool = False
     enable_expert_parallel: bool = False
-    master_addr: str = "127.0.0.1"
     graph_bs: Optional[list[int]] = None
     torch_dtype: torch.dtype = field(init=False)
 
@@ -542,7 +537,6 @@ class Config:
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
         assert 1 <= self.parallel_config.tensor_parallel_size <= 8
         hf_config = self.model_config.hf_config
-        self.quant_config = get_quant_config(hf_config)
         hf_config_max_position_embeddings = getattr(
             hf_config, "max_position_embeddings", 8192
         )
@@ -638,6 +632,7 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
         compilation_config=vllm_config.compilation_config,
         quant_config=vllm_config.quant_config,
         enable_expert_parallel=vllm_config.parallel_config.enable_expert_parallel,
+        quant_config=vllm_config.quant_config,
     )
 
     # set the current atom config for the custom model

@@ -30,7 +30,7 @@ from torch import nn
 # import torch.distributed as dist
 from typing import Any, Optional, Iterable
 from transformers import Qwen3Config
-from atom.config import QuantizationConfig, Config
+from atom.config import Config
 
 from atom.model_ops.activation import SiluAndMul
 # from atom.model_ops.attention import Attention
@@ -59,6 +59,7 @@ from vllm.sequence import IntermediateTensors
 from vllm.model_executor.models.utils import maybe_prefix, AutoWeightsLoader
 from vllm.attention import Attention, AttentionType
 from vllm.config.cache import CacheConfig
+from vllm.model_executor.layers.quantization import QuantizationConfig
 
 class Qwen3Attention(nn.Module):
 
