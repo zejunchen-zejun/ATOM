@@ -7,7 +7,8 @@ from typing import Callable, List, Optional, Tuple
 
 from dataclasses import dataclass
 
-from atom.utils.forward_context import ForwardContext, get_forward_context
+# from atom.utils.forward_context import ForwardContext, get_forward_context
+from vllm.forward_context import ForwardContext, get_forward_context
 import torch
 from aiter import ActivationType, QuantType, dtypes, get_hip_quant
 from vllm.distributed.parallel_state import get_tp_group, get_dp_group

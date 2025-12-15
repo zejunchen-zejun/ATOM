@@ -14,13 +14,15 @@ from aiter import (
 from aiter.mla import mla_decode_fwd
 from aiter.rotary_embedding import RotaryEmbedding
 from torch import nn
-from tqdm import tqdm
+# from tqdm import tqdm
 
 from atom.model_ops.utils import get_and_maybe_dequant_weights
-from atom.utils.forward_context import (
-    ForwardContext,
-    get_forward_context,
-)
+# from atom.utils.forward_context import (
+#     ForwardContext,
+#     get_forward_context,
+# )
+from vllm.forward_context import ForwardContext, get_forward_context
+
 from atom.utils.attn_metadata import ATOMAttentionMetadata
 
 from aiter.ops.triton.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant import (  # noqa: E501 # isort: skip

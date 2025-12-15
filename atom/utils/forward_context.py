@@ -117,141 +117,143 @@ class DPMetadata:
         return self.local_sizes
 
 
-@dataclass
-class ForwardContext:
-    # copy from vllm_config.compilation_config.static_forward_context
-    no_compile_layers: dict[int, Any]
-    """
-    Type Dict[str, AttentionMetadata] for v1, map from layer_name of each 
-    attention layer to its attention metadata
-    Type List[Dict[str, AttentionMetadata]] for DBO. List of size two, one
-    for each microbatch.
-    Set dynamically for each forward pass
-    """
-    attn_metadata: dict[str, "ATOMAttentionMetadata"] | list[dict[str, "ATOMAttentionMetadata"]]
-    virtual_engine: int  # set dynamically for each forward pass
-    dp_metadata: Optional[DPMetadata] = None
-    # determine the cudagraph style at runtime to be FULL, PIECEWISE, or NONE.
-    # by default NONE, no cudagraph is used.
-    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE
-    batch_descriptor: BatchDescriptor | None = None
+# @dataclass
+# class ForwardContext:
+#     # copy from vllm_config.compilation_config.static_forward_context
+#     no_compile_layers: dict[int, Any]
+#     """
+#     Type Dict[str, AttentionMetadata] for v1, map from layer_name of each 
+#     attention layer to its attention metadata
+#     Type List[Dict[str, AttentionMetadata]] for DBO. List of size two, one
+#     for each microbatch.
+#     Set dynamically for each forward pass
+#     """
+#     attn_metadata: dict[str, "ATOMAttentionMetadata"] | list[dict[str, "ATOMAttentionMetadata"]]
+#     virtual_engine: int  # set dynamically for each forward pass
+#     dp_metadata: Optional[DPMetadata] = None
+#     # determine the cudagraph style at runtime to be FULL, PIECEWISE, or NONE.
+#     # by default NONE, no cudagraph is used.
+#     cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE
+#     batch_descriptor: BatchDescriptor | None = None
 
-    ubatch_slices: UBatchSlices | None = None
+#     ubatch_slices: UBatchSlices | None = None
 
-    def __post_init__(self):
-        if not hasattr(self, "no_compile_layers") or self.no_compile_layers is None:
-            self.no_compile_layers = {}
-
-
-_forward_context: ForwardContext | None = None
+#     def __post_init__(self):
+#         if not hasattr(self, "no_compile_layers") or self.no_compile_layers is None:
+#             self.no_compile_layers = {}
 
 
-def get_forward_context() -> ForwardContext:
-    """Get the current forward context."""
-    assert _forward_context is not None, (
-        "Forward context is not set. "
-        "Please use `set_forward_context` to set the forward context."
-    )
-    return _forward_context
+# _forward_context: ForwardContext | None = None
 
 
-@contextmanager
-def set_forward_context(
-    attn_metadata: Any,
-    vllm_config: VllmConfig,
-    virtual_engine: int = 0,
-    num_tokens: int | None = None,
-    num_tokens_across_dp: torch.Tensor | None = None,
-    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
-    batch_descriptor: BatchDescriptor | None = None,
-    ubatch_slices: UBatchSlices | None = None,
-):
-    print('[zejun] ATOM, set_forward_context', flush=True)
-    """A context manager that stores the current forward context,
-    can be attention metadata, etc.
-    Here we can inject common logic for every model forward pass.
-    """
-    dp_metadata: Optional[DPMetadata] = None
-    atom_config = config_from_vllm(vllm_config)
-    if atom_config.parallel_config.data_parallel_size > 1 and num_tokens is not None:
-        dp_metadata = DPMetadata.make(atom_config.parallel_config,
-                                      # attn_metadata,
-                                      num_tokens or 0,
-                                      num_tokens_across_dp)
-
-    _forward_context = create_forward_context(
-        attn_metadata=attn_metadata,
-        vllm_config=vllm_config,
-        virtual_engine=virtual_engine,
-        dp_metadata=dp_metadata,
-        cudagraph_runtime_mode=cudagraph_runtime_mode,
-        batch_descriptor=batch_descriptor,
-        ubatch_slices=ubatch_slices,
-    )
-
-    try:
-        with override_forward_context(_forward_context):
-            yield
-    finally:
-        pass
+# def get_forward_context() -> ForwardContext:
+#     """Get the current forward context."""
+#     assert _forward_context is not None, (
+#         "Forward context is not set. "
+#         "Please use `set_forward_context` to set the forward context."
+#     )
+#     print('[zejun] ATOM, get_forward_context, _forward_context is None: ', bool(_forward_context is None), flush=True)
+#     return _forward_context
 
 
-def reset_forward_context() -> None:
-    global _forward_context
-    _forward_context = ForwardContext()
+# @contextmanager
+# def set_forward_context(
+#     attn_metadata: Any,
+#     vllm_config: VllmConfig,
+#     virtual_engine: int = 0,
+#     num_tokens: int | None = None,
+#     num_tokens_across_dp: torch.Tensor | None = None,
+#     cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
+#     batch_descriptor: BatchDescriptor | None = None,
+#     ubatch_slices: UBatchSlices | None = None,
+# ):
+#     print('[zejun] ATOM, set_forward_context', flush=True)
+#     """A context manager that stores the current forward context,
+#     can be attention metadata, etc.
+#     Here we can inject common logic for every model forward pass.
+#     """
+#     dp_metadata: Optional[DPMetadata] = None
+#     atom_config = config_from_vllm(vllm_config)
+#     if atom_config.parallel_config.data_parallel_size > 1 and num_tokens is not None:
+#         dp_metadata = DPMetadata.make(atom_config.parallel_config,
+#                                       # attn_metadata,
+#                                       num_tokens or 0,
+#                                       num_tokens_across_dp)
+
+#     _forward_context = create_forward_context(
+#         attn_metadata=attn_metadata,
+#         vllm_config=vllm_config,
+#         virtual_engine=virtual_engine,
+#         dp_metadata=dp_metadata,
+#         cudagraph_runtime_mode=cudagraph_runtime_mode,
+#         batch_descriptor=batch_descriptor,
+#         ubatch_slices=ubatch_slices,
+#     )
+
+#     try:
+#         with override_forward_context(_forward_context):
+#             yield
+#     finally:
+#         pass
 
 
-def is_forward_context_available() -> bool:
-    return _forward_context is not None
+# def reset_forward_context() -> None:
+#     global _forward_context
+#     _forward_context = ForwardContext()
 
 
-def create_forward_context(
-    attn_metadata: Any,
-    vllm_config: VllmConfig,
-    virtual_engine: int = 0,
-    dp_metadata: DPMetadata | None = None,
-    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
-    batch_descriptor: BatchDescriptor | None = None,
-    ubatch_slices: UBatchSlices | None = None,
-):
-    print('[zejun] ATOM, create_forward_context', flush=True)
-    atom_config = config_from_vllm(vllm_config)
-    return ForwardContext(
-        no_compile_layers=atom_config.compilation_config.static_forward_context,
-        virtual_engine=virtual_engine,
-        attn_metadata=attn_metadata,
-        dp_metadata=dp_metadata,
-        cudagraph_runtime_mode=cudagraph_runtime_mode,
-        batch_descriptor=batch_descriptor,
-        ubatch_slices=ubatch_slices,
-    )
+# def is_forward_context_available() -> bool:
+#     return _forward_context is not None
 
 
-@contextmanager
-def override_forward_context(forward_context: ForwardContext | None):
-    """A context manager that overrides the current forward context.
-    This is used to override the forward context for a specific
-    forward pass.
-    """
-    print('[zejun] ATOM, override_forward_context', flush=True)
-    global _forward_context
-    prev_context = _forward_context
-    _forward_context = forward_context
-    try:
-        yield
-    finally:
-        _forward_context = prev_context
+# def create_forward_context(
+#     attn_metadata: Any,
+#     vllm_config: VllmConfig,
+#     virtual_engine: int = 0,
+#     dp_metadata: DPMetadata | None = None,
+#     cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
+#     batch_descriptor: BatchDescriptor | None = None,
+#     ubatch_slices: UBatchSlices | None = None,
+# ):
+#     print('[zejun] ATOM, create_forward_context', flush=True)
+#     atom_config = config_from_vllm(vllm_config)
+#     return ForwardContext(
+#         no_compile_layers=atom_config.compilation_config.static_forward_context,
+#         virtual_engine=virtual_engine,
+#         attn_metadata=attn_metadata,
+#         dp_metadata=dp_metadata,
+#         cudagraph_runtime_mode=cudagraph_runtime_mode,
+#         batch_descriptor=batch_descriptor,
+#         ubatch_slices=ubatch_slices,
+#     )
 
 
-# monkey patch the vllm forward context method
-print('[zejun] ATOM, monkey patch the vllm forward context method', flush=True)
-forward_context.get_forward_context = get_forward_context
-forward_context.is_forward_context_available = is_forward_context_available
-forward_context.create_forward_context = create_forward_context
-forward_context.override_forward_context = override_forward_context
-forward_context.set_forward_context = set_forward_context
-print('[zejun] ATOM, after monkey patch, forward_context.get_forward_context = ', forward_context.get_forward_context, flush=True)
-print('[zejun] ATOM, after monkey patch, forward_context.is_forward_context_available = ', forward_context.is_forward_context_available, flush=True)
-print('[zejun] ATOM, after monkey patch, forward_context.create_forward_context = ', forward_context.create_forward_context, flush=True)
-print('[zejun] ATOM, after monkey patch, forward_context.override_forward_context = ', forward_context.override_forward_context, flush=True)
-print('[zejun] ATOM, after monkey patch, forward_context.set_forward_context = ', forward_context.set_forward_context, flush=True)
+# @contextmanager
+# def override_forward_context(forward_context: ForwardContext | None):
+#     """A context manager that overrides the current forward context.
+#     This is used to override the forward context for a specific
+#     forward pass.
+#     """
+#     print('[zejun] ATOM, override_forward_context', flush=True)
+#     global _forward_context
+#     prev_context = _forward_context
+#     _forward_context = forward_context
+#     print('[zejun] ATOM, override_forward_context, _forward_context now is: ', _forward_context, flush=True)
+#     try:
+#         yield
+#     finally:
+#         _forward_context = prev_context
+
+
+# # monkey patch the vllm forward context method
+# print('[zejun] ATOM, monkey patch the vllm forward context method', flush=True)
+# forward_context.get_forward_context = get_forward_context
+# forward_context.is_forward_context_available = is_forward_context_available
+# forward_context.create_forward_context = create_forward_context
+# forward_context.override_forward_context = override_forward_context
+# forward_context.set_forward_context = set_forward_context
+# print('[zejun] ATOM, after monkey patch, forward_context.get_forward_context = ', forward_context.get_forward_context, flush=True)
+# print('[zejun] ATOM, after monkey patch, forward_context.is_forward_context_available = ', forward_context.is_forward_context_available, flush=True)
+# print('[zejun] ATOM, after monkey patch, forward_context.create_forward_context = ', forward_context.create_forward_context, flush=True)
+# print('[zejun] ATOM, after monkey patch, forward_context.override_forward_context = ', forward_context.override_forward_context, flush=True)
+# print('[zejun] ATOM, after monkey patch, forward_context.set_forward_context = ', forward_context.set_forward_context, flush=True)
