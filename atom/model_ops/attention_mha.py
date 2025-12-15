@@ -12,9 +12,9 @@ from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 
 from atom.utils.attn_metadata import ATOMAttentionMetadata
 
-from vllm.attention.backends.abstract import AttentionType
+from vllm.attention.backends.abstract import AttentionType, AttentionImpl
 
-class ATOMAttentionImpl(nn.Module):
+class ATOMAttentionImpl(AttentionImpl):
 
     def __init__(
         self,
@@ -32,7 +32,6 @@ class ATOMAttentionImpl(nn.Module):
         rotary_emb: Optional[torch.nn.Module] = None,
     ):
         print('[zejun] ATOM init atom attention forward', flush=True)
-        super().__init__()
         self.num_heads = num_heads
         self.head_size = head_size
         self.scale = scale
