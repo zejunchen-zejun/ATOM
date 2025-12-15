@@ -58,6 +58,7 @@ from vllm.distributed.parallel_state import get_tp_group
 from vllm.sequence import IntermediateTensors
 from vllm.model_executor.models.utils import maybe_prefix, AutoWeightsLoader
 from vllm.attention import Attention, AttentionType
+from vllm.config.cache import CacheConfig
 
 class Qwen3Attention(nn.Module):
 
@@ -74,6 +75,7 @@ class Qwen3Attention(nn.Module):
         rope_scaling: tuple | None = None,
         kv_cache_dtype: str = "fp16", # TODO: remove because no use
         layer_num: int = 0,
+        cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
         attn_type: str = AttentionType.DECODER,
@@ -122,6 +124,8 @@ class Qwen3Attention(nn.Module):
             head_size=self.head_dim,
             scale=self.scaling,
             num_kv_heads=self.num_kv_heads,
+            cache_config=cache_config,
+            quant_config=quant_config,
             alibi_slopes=None,
             prefix=f"{prefix}.attn",
             attn_type=attn_type,
@@ -190,6 +194,7 @@ class Qwen3DecoderLayer(nn.Module):
         self,
         config: Qwen3Config,
         kv_cache_dtype: str = "bf16",
+        cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
         layer_num: int = 0,
         prefix: str = "",
@@ -218,6 +223,7 @@ class Qwen3DecoderLayer(nn.Module):
             rope_scaling=getattr(config, "rope_scaling", None),
             kv_cache_dtype=kv_cache_dtype,
             layer_num=layer_num,
+            cache_config=cache_config,
             quant_config=quant_config,
             prefix=f"{prefix}.self_attn",
             attn_type=attn_type,
@@ -263,8 +269,7 @@ class Qwen3Model(nn.Module):
     def __init__(self, *, atom_config: Config, prefix: str = "") -> None:
         super().__init__()
         config = atom_config.model_config.hf_config
-        cache_config = atom_config.kv_cache_dtype
-        quant_config = atom_config.quant_config
+        kv_cache_dtype = atom_config.kv_cache_dtype
         self.embed_tokens = ATOMVocabParallelEmbedding(
             config.vocab_size, config.hidden_size
         )
@@ -272,8 +277,9 @@ class Qwen3Model(nn.Module):
             [
                 Qwen3DecoderLayer(
                     config,
-                    kv_cache_dtype=cache_config,
-                    quant_config=quant_config,
+                    kv_cache_dtype=kv_cache_dtype,
+                    cache_config=atom_config.cache_config,
+                    quant_config=atom_config.quant_config,
                     layer_num=layer_num,
                     prefix=f"{prefix}.layers.{layer_num}",
                 )
