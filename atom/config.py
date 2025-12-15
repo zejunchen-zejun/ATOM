@@ -547,11 +547,6 @@ class Config:
                 self.max_model_len, hf_config_max_position_embeddings
             )
         # assert self.max_num_batched_tokens >= self.max_model_len
-        if self.torch_profiler_dir is not None:
-            os.makedirs(self.torch_profiler_dir, exist_ok=True)
-        assert self.torch_profiler_dir is None or os.path.isdir(
-            self.torch_profiler_dir
-        ), f"torch_profiler_dir {self.torch_profiler_dir} is not a valid directory"
         if self.compilation_config.level == CompilationLevel.PIECEWISE:
             self.compilation_config.set_splitting_ops_for_v1()
             self._set_cudagraph_sizes()
