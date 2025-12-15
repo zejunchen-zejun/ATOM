@@ -57,7 +57,7 @@ from vllm.config.vllm import VllmConfig
 from vllm.distributed.parallel_state import get_tp_group
 from vllm.sequence import IntermediateTensors
 from vllm.model_executor.models.utils import maybe_prefix, AutoWeightsLoader
-from vllm.attention import Attention
+from vllm.attention import Attention, AttentionType
 
 class Qwen3Attention(nn.Module):
 
@@ -193,6 +193,16 @@ class Qwen3DecoderLayer(nn.Module):
     ) -> None:
         super().__init__()
         self.layer_num = layer_num
+
+        # By default, Qwen3 uses causal attention as it is a decoder-only model.
+        # You can override the HF config with `is_causal=False` to enable
+        # bidirectional attention, which is used in some embedding models
+        # (e.g. Alibaba-NLP/gte-Qwen3-7B-instruct)
+        if getattr(config, "is_causal", True):
+            attn_type = AttentionType.DECODER
+        else:
+            attn_type = AttentionType.ENCODER_ONLY
+
         self.self_attn = Qwen3Attention(
             hidden_size=config.hidden_size,
             num_heads=config.num_attention_heads,
@@ -207,6 +217,7 @@ class Qwen3DecoderLayer(nn.Module):
             layer_num=layer_num,
             quant_config=quant_config,
             prefix=f"{prefix}.self_attn",
+            attn_type=attn_type,
         )
         self.mlp = Qwen3MLP(
             hidden_size=config.hidden_size,
@@ -243,7 +254,7 @@ class Qwen3DecoderLayer(nn.Module):
         "positions": -1,
     }
 )
-class CustomQwen3Model(nn.Module):
+class Qwen3Model(nn.Module):
 
     def __init__(self, *, atom_config: Config, prefix: str = "") -> None:
         super().__init__()
@@ -260,7 +271,7 @@ class CustomQwen3Model(nn.Module):
                     cache_config=cache_config,
                     quant_config=quant_config,
                     layer_num=layer_num,
-                    prefix=prefix,
+                    prefix=f"{prefix}.layers.{layer_num}",
                 )
                 for layer_num in range(config.num_hidden_layers)
             ]
@@ -293,10 +304,13 @@ class ATOMQwen3ForCausalLM(nn.Module):
         super().__init__()
         print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
 
+        # TODO: use original vllm config instead of atom config
         self.atom_config = config_from_vllm(vllm_config)
 
         self.config = self.atom_config.hf_config
-        self.model = CustomQwen3Model(atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model"))
+        self.model = Qwen3Model(
+            atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model")
+        )
         self.lm_head = ParallelLMHead(self.config.vocab_size, self.config.hidden_size)
         if self.config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data

@@ -17,6 +17,7 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE,
     VocabParallelEmbedding
 )
+
 class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
 
     def __init__(
@@ -29,7 +30,7 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         quant_config: QuantizationConfig | None = None,
         prefix: str = "",
     ):
-        super().__init__(num_embeddings=num_embeddings, embedding_dim=embedding_dim)
+        super().__init__(num_embeddings=num_embeddings, embedding_dim=embedding_dim, prefix=prefix)
         self.tp_rank = get_tp_group().rank_in_group
         self.tp_size = get_tp_group().world_size
         assert num_embeddings % self.tp_size == 0
@@ -71,9 +72,15 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
         num_embeddings: int,
         embedding_dim: int,
         bias: bool = False,
+        prefix: str = "",
         **kwargs,
     ):
-        super().__init__(num_embeddings, embedding_dim)
+        super().__init__(
+            num_embeddings=num_embeddings,
+            embedding_dim=embedding_dim,
+            prefix=prefix,
+        )
+
         if bias:
             self.bias = nn.Parameter(torch.empty(self.num_embeddings_per_partition))
             self.bias.weight_loader = self.weight_loader
