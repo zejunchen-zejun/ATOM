@@ -72,10 +72,11 @@ class Qwen3Attention(nn.Module):
         qkv_bias: bool = False,
         rope_theta: float = 10000,
         rope_scaling: tuple | None = None,
-        kv_cache_dtype: str = "fp16",
+        kv_cache_dtype: str = "fp16", # TODO: remove because no use
         layer_num: int = 0,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
+        attn_type: str = AttentionType.DECODER,
     ) -> None:
         super().__init__()
         tp_size = get_tp_group().world_size
@@ -123,6 +124,7 @@ class Qwen3Attention(nn.Module):
             num_kv_heads=self.num_kv_heads,
             alibi_slopes=None,
             prefix=f"{prefix}.attn",
+            attn_type=attn_type,
         )
 
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
@@ -186,7 +188,7 @@ class Qwen3DecoderLayer(nn.Module):
     def __init__(
         self,
         config: Qwen3Config,
-        cache_config: str = "bf16",
+        kv_cache_dtype: str = "bf16",
         quant_config: Optional[QuantizationConfig] = None,
         layer_num: int = 0,
         prefix: str = "",
@@ -213,7 +215,7 @@ class Qwen3DecoderLayer(nn.Module):
             head_dim=getattr(config, "head_dim", None),
             rope_theta=getattr(config, "rope_theta", 1000000),
             rope_scaling=getattr(config, "rope_scaling", None),
-            kv_cache_dtype=cache_config,
+            kv_cache_dtype=kv_cache_dtype,
             layer_num=layer_num,
             quant_config=quant_config,
             prefix=f"{prefix}.self_attn",
@@ -268,7 +270,7 @@ class Qwen3Model(nn.Module):
             [
                 Qwen3DecoderLayer(
                     config,
-                    cache_config=cache_config,
+                    kv_cache_dtype=cache_config,
                     quant_config=quant_config,
                     layer_num=layer_num,
                     prefix=f"{prefix}.layers.{layer_num}",
