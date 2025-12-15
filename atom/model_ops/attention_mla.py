@@ -107,7 +107,7 @@ class MLAAttention(nn.Module):
         )
         self.layer_num = layer_num
 
-    def process_weights_after_loading(self):
+    def process_weights_after_loading(self, act_dtype: torch.dtype):
         kv_b_proj_weight = get_and_maybe_dequant_weights(self.kv_b_proj).T
         assert kv_b_proj_weight.shape == (
             self.kv_lora_rank,
