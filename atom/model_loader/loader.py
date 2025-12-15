@@ -179,7 +179,7 @@ def load_model(
         for future in concurrent.futures.as_completed(futures):
             future.result()
     for _, module in model.named_modules():
-        print('[zejun] ATOM, module prepare to load model(process_weights_after_loading) = ', module, flush=True)
+        # print('[zejun] ATOM, module prepare to load model(process_weights_after_loading) = ', module, flush=True)
         if hasattr(module, "process_weights_after_loading"):
             module.process_weights_after_loading(act_dtype=atom_config.model_config.dtype)
         quant_method = getattr(module, "quant_method", None)

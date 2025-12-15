@@ -21,7 +21,7 @@ vllm serve $model_path \
     --host localhost \
     --port 9090 \
     --tensor-parallel-size 1 \
-    --kv-cache-dtype "fp8" \
+    --kv-cache-dtype fp8 \
     --trust-remote-code \
     --disable-log-requests \
     --gpu_memory_utilization 0.2 \
