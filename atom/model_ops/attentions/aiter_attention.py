@@ -92,7 +92,7 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         # for recording position info
         i64_kwargs = {"dtype": torch.int64, "device": device}
         max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
-        self.positions = CpuGpuBuffer(max_num_batched_tokens, **i64_kwargs),
+        self.positions = CpuGpuBuffer(max_num_batched_tokens, **i64_kwargs)
 
     def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
         # TODO: support cuda graph
