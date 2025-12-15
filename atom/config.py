@@ -638,7 +638,6 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
         enable_prefix_caching=vllm_config.cache_config.enable_prefix_caching,
         compilation_config=vllm_config.compilation_config,
         quant_config=vllm_config.quant_config,
-        load_dummy=vllm_config.model_config.load_dummy,
         enable_expert_parallel=vllm_config.parallel_config.enable_expert_parallel,
     )
     # atom_config.max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
@@ -661,7 +660,6 @@ def config_from_vllm(vllm_config: VllmConfig) -> Config:
     # atom_config.compilation_config = vllm_config.compilation_config
     # atom_config.quant_config = vllm_config.quant_config
     # atom_config.asyncio_mode = 
-    # atom_config.load_dummy = vllm_config.model_config.load_dummy
     # atom_config.enable_expert_parallel = vllm_config.parallel_config.enable_expert_parallel
     # atom_config.master_addr = 
     # atom_config.graph_bs = 
