@@ -27,6 +27,7 @@ class ATOMAttentionImpl(nn.Module):
         logits_soft_cap: float | None = None,
         attn_type: AttentionType = AttentionType.DECODER,
         kv_sharing_target_layer_name: int | None = None,
+        sinks: torch.Tensor | None = None,
     ):
         print('[zejun] ATOM init atom attention forward', flush=True)
         super().__init__()
@@ -39,7 +40,6 @@ class ATOMAttentionImpl(nn.Module):
         self.max_model_len = 0
         self.k_scale = self.v_scale = None
         self.one_scale = torch.tensor(1.0, dtype=torch.float32)
-        # TODO: handle the sinks and rope args
         self.sinks = sinks
         self.sliding_window = (
             (sliding_window - 1, 0) if sliding_window is not None else (-1, -1)
