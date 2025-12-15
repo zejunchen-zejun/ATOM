@@ -72,6 +72,7 @@ def gemm_a4w4_quant(x: torch.Tensor, weight: torch.Tensor, otype: torch.dtype, w
     return y[:m, ...]
 
 
+# TODO: remove it and use vllm one
 class LinearBase(nn.Module):
     def __init__(
         self,
@@ -192,7 +193,7 @@ class LinearBase(nn.Module):
         param_data = param.data
         param.weight_loader_process(param_data, loaded_weight)
 
-    def process_weights_after_loading(self, act_type: torch.dtype):
+    def process_weights_after_loading(self, act_dtype: torch.dtype):
         if (
             self.quant_type == QuantType.per_Tensor
             and len(self.output_partition_sizes) > 1
