@@ -31,15 +31,15 @@ class ATOMAttentionImpl(AttentionImpl):
         sinks: torch.Tensor | None = None,
         rotary_emb: Optional[torch.nn.Module] = None,
     ):
-        print('[zejun] ATOM init atom attention forward', flush=True)
-        print('[zejun] ATOM init atom attention forward, num_heads = ', num_heads, flush=True)
-        print('[zejun] ATOM init atom attention forward, head_size = ', head_size, flush=True)
-        print('[zejun] ATOM init atom attention forward, scale = ', scale, flush=True)
-        print('[zejun] ATOM init atom attention forward, num_kv_heads = ', num_kv_heads, flush=True)
-        print('[zejun] ATOM init atom attention forward, kv_cache_dtype = ', kv_cache_dtype, flush=True)
-        print('[zejun] ATOM init atom attention forward, sliding_window = ', sliding_window, flush=True)
-        print('[zejun] ATOM init atom attention forward, sinks = ', sinks, flush=True)
-        print('[zejun] ATOM init atom attention forward, rotary_emb = ', rotary_emb, flush=True)
+        print('[zejun] ATOM init ATOMAttentionImpl __init__', flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, num_heads = ', num_heads, flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, head_size = ', head_size, flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, scale = ', scale, flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, num_kv_heads = ', num_kv_heads, flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, kv_cache_dtype = ', kv_cache_dtype, flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, sliding_window = ', sliding_window, flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, sinks = ', sinks, flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__, rotary_emb = ', rotary_emb, flush=True)
         self.num_heads = num_heads
         self.head_size = head_size
         self.scale = scale
@@ -52,6 +52,9 @@ class ATOMAttentionImpl(AttentionImpl):
         )
         # TODO: remove the ROPE layer
         self.rotary_emb = rotary_emb
+        # TODO: why need complex k v scale layout
+        self._k_scale: torch.Tensor | None = None
+        self._v_scale: torch.Tensor | None = None
 
     def forward(
         self,
@@ -66,7 +69,7 @@ class ATOMAttentionImpl(AttentionImpl):
         output_block_scale: torch.Tensor | None = None,
     ) -> torch.Tensor:
 
-        print('[zejun] ATOM call atom attention forward, layer = ', layer, flush=True)
+        print('[zejun] ATOM call ATOMAttentionImpl forward, layer = ', layer, flush=True)
 
         assert output is not None, "Output tensor must be provided."
         if output_scale is not None or output_block_scale is not None:
@@ -94,12 +97,29 @@ class ATOMAttentionImpl(AttentionImpl):
         use_triton_unified_attention = (
             self.sliding_window != (-1, -1) or self.head_size != 128
         )
-        print('[zejun] ATOM call atom attention forward, use_triton_unified_attention = ', use_triton_unified_attention, flush=True)
+        print('[zejun] ATOM call ATOMAttentionImpl forward, use_triton_unified_attention = ', use_triton_unified_attention, flush=True)
 
         if attn_metadata.slot_mapping.numel():
             k_cache, v_cache = kv_cache.unbind(0)
-            k_scale = layer._k_scale
-            v_scale = layer._v_scale
+            num_blocks, block_size, num_kv_heads, head_size = k_cache.shape
+            if self._k_scale is None:
+                self._k_scale = torch.zeros(
+                    num_blocks,
+                    block_size,
+                    num_kv_heads,
+                    dtype=torch.float32,
+                    device="cuda",
+                )
+            if self._v_scale is None:
+                self._v_scale = torch.zeros(
+                    num_blocks,
+                    block_size,
+                    num_kv_heads,
+                    dtype=torch.float32,
+                    device="cuda",
+                )
+            k_scale = self._k_scale
+            v_scale = self._v_scale
         else:
             k_cache = v_cache = torch.tensor([])
             k_scale = v_scale = None
@@ -107,8 +127,8 @@ class ATOMAttentionImpl(AttentionImpl):
         print('[zejun] ATOM call atom attention forward, layer = ', layer, flush=True)
         print('[zejun] ATOM call atom attention forward, k_cache.shape = ', k_cache.shape, flush=True)
         print('[zejun] ATOM call atom attention forward, v_cache.shape = ', v_cache.shape, flush=True)
-        print('[zejun] ATOM call atom attention forward, k_scale = ', k_scale, flush=True)
-        print('[zejun] ATOM call atom attention forward, v_scale = ', v_scale, flush=True)
+        print('[zejun] ATOM call atom attention forward, k_scale.shape = ', k_scale.shape, flush=True)
+        print('[zejun] ATOM call atom attention forward, v_scale.shape = ', v_scale.shape, flush=True)
 
         assert self.rotary_emb is None or (self.rotary_emb is not None and position is not None)
         if k_cache.numel() and v_cache.numel():
