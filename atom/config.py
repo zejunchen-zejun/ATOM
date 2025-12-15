@@ -612,7 +612,8 @@ def set_current_atom_config(atom_config: Config):
     # for MoE to check
     import os
 
-    os.environ["ATOM_ENFORCE_EAGER"] = "1" if atom_config.enforce_eager else "0"
+    enforce_eager = atom_config.model_config.enforce_eager
+    os.environ["ATOM_ENFORCE_EAGER"] = "1" if enforce_eager else "0"
 
 
 def get_current_atom_config() -> Config:
