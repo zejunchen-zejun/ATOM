@@ -32,14 +32,19 @@ class ATOMAttentionImpl(AttentionImpl):
         rotary_emb: Optional[torch.nn.Module] = None,
     ):
         print('[zejun] ATOM init atom attention forward', flush=True)
+        print('[zejun] ATOM init atom attention forward, num_heads = ', num_heads, flush=True)
+        print('[zejun] ATOM init atom attention forward, head_size = ', head_size, flush=True)
+        print('[zejun] ATOM init atom attention forward, scale = ', scale, flush=True)
+        print('[zejun] ATOM init atom attention forward, num_kv_heads = ', num_kv_heads, flush=True)
+        print('[zejun] ATOM init atom attention forward, kv_cache_dtype = ', kv_cache_dtype, flush=True)
+        print('[zejun] ATOM init atom attention forward, sliding_window = ', sliding_window, flush=True)
+        print('[zejun] ATOM init atom attention forward, sinks = ', sinks, flush=True)
+        print('[zejun] ATOM init atom attention forward, rotary_emb = ', rotary_emb, flush=True)
         self.num_heads = num_heads
         self.head_size = head_size
         self.scale = scale
         self.num_kv_heads = num_kv_heads
-        self.k_cache = self.v_cache = torch.tensor([])
         self.kv_cache_dtype = kv_cache_dtype
-        self.max_model_len = 0
-        self.k_scale = self.v_scale = None
         self.one_scale = torch.tensor(1.0, dtype=torch.float32)
         self.sinks = sinks
         self.sliding_window = (
@@ -89,6 +94,7 @@ class ATOMAttentionImpl(AttentionImpl):
         use_triton_unified_attention = (
             self.sliding_window != (-1, -1) or self.head_size != 128
         )
+        print('[zejun] ATOM call atom attention forward, use_triton_unified_attention = ', use_triton_unified_attention, flush=True)
 
         if attn_metadata.slot_mapping.numel():
             k_cache, v_cache = kv_cache.unbind(0)
