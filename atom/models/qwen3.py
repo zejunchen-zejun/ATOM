@@ -177,6 +177,7 @@ class Qwen3MLP(nn.Module):
         self.act_fn = SiluAndMul()
 
     def forward(self, x):
+        print('[zejun] ATOM Qwen3MLP forward', flush=True)
         gate_up = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x = self.down_proj(x)
@@ -239,6 +240,7 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        print('[zejun] ATOM Qwen3DecoderLayer[', self.layer_num, '] forward', flush=True)
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)

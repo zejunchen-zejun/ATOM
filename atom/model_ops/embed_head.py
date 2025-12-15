@@ -54,6 +54,7 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         print('[zejun] finish ATOM ATOMVocabParallelEmbedding weight_loader', flush=True)
 
     def forward(self, x: torch.Tensor):
+        print('[zejun] ATOM ATOMVocabParallelEmbedding forward', flush=True)
         if self.tp_size > 1:
             mask = torch.logical_and(x >= self.vocab_start_idx, x < self.vocab_end_idx)
             # mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)

@@ -129,6 +129,7 @@ class RMSNorm(nn.Module):
         x: torch.Tensor,
         residual: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        print('[zejun] ATOM RMSNorm forward', flush=True)
         if self.x_pad_to_multiple > 0:
             assert not self.fused_allreduce, "fused_allreduce_rmsnorm is not supported with rms_norm padding!"
             if residual is None:
