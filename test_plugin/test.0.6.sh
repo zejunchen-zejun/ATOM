@@ -1,4 +1,5 @@
 #!/bin/bash
+alias gg='git fetch && git checkout origin/zejun/plugin_for_atom'
 export CUDA_VISIBLE_DEVICES=7
 export VLLM_ROCM_USE_ATOM_PLUGIN=1
 export VLLM_ATTENTION_BACKEND=CUSTOM

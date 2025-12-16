@@ -1,5 +1,7 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=7
+
+alias gg='git fetch && git checkout origin/zejun/plugin_for_atom'
+
 export VLLM_ROCM_USE_ATOM_PLUGIN=1
 export VLLM_ATTENTION_BACKEND=CUSTOM
 
@@ -20,11 +22,11 @@ model_path=/raid/data/model/Qwen3-8B
 vllm serve $model_path \
     --host localhost \
     --port 9090 \
-    --tensor-parallel-size 1 \
+    --tensor-parallel-size 8 \
     --kv-cache-dtype fp8 \
     --trust-remote-code \
     --disable-log-requests \
-    --gpu_memory_utilization 0.2 \
+    --gpu_memory_utilization 0.5 \
     --enforce-eager \
     --async-scheduling \
     --load-format fastsafetensors \
