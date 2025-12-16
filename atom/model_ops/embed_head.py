@@ -16,7 +16,11 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE,
     VocabParallelEmbedding
 )
-from vllm.forward_context import get_forward_context
+from atom.model_ops.attention_mha import (
+    _IS_PREFILL_FOR_PARALLEL_LMHEAD, 
+    _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD
+)
+
 
 class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
 
@@ -89,9 +93,8 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
             self.register_parameter("bias", None)
 
     def forward(self, x: torch.Tensor):
-        attn_metadata = get_forward_context().attn_metadata
-        if attn_metadata.context.is_prefill:
-            last_indices = attn_metadata.cu_seqlens_q[1:] - 1
+        if _IS_PREFILL_FOR_PARALLEL_LMHEAD:
+            last_indices = _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD[1:] - 1
             x = x[last_indices].contiguous()
         logits = tgemm.mm(x, self.weight, self.bias)
         if self.tp_size > 1:

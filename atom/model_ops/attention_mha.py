@@ -14,6 +14,9 @@ from atom.utils.attn_metadata import ATOMAttentionMetadata
 
 from vllm.attention.backends.abstract import AttentionType, AttentionImpl
 
+_IS_PREFILL_FOR_PARALLEL_LMHEAD: bool = False
+_CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD: torch.Tensor = None
+
 class ATOMAttentionImpl(AttentionImpl):
 
     def __init__(
@@ -87,6 +90,13 @@ class ATOMAttentionImpl(AttentionImpl):
         # context = forward_context.context
         # position = forward_context.positions
 
+        # TODO: lm head needs the status from attention metadata
+        # assign for parallel lm head
+        global _IS_PREFILL_FOR_PARALLEL_LMHEAD
+        global _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD
+        _IS_PREFILL_FOR_PARALLEL_LMHEAD = attn_metadata.is_prefill
+        _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD = attn_metadata.cu_seqlens_q
+
         context = attn_metadata.context
         position = context.positions
 
@@ -125,10 +135,10 @@ class ATOMAttentionImpl(AttentionImpl):
             k_scale = v_scale = None
 
         print('[zejun] ATOM call atom attention forward, layer = ', layer, flush=True)
-        print('[zejun] ATOM call atom attention forward, k_cache.shape = ', k_cache.shape, flush=True)
-        print('[zejun] ATOM call atom attention forward, v_cache.shape = ', v_cache.shape, flush=True)
-        print('[zejun] ATOM call atom attention forward, k_scale.shape = ', k_scale.shape, flush=True)
-        print('[zejun] ATOM call atom attention forward, v_scale.shape = ', v_scale.shape, flush=True)
+        # print('[zejun] ATOM call atom attention forward, k_cache.shape = ', k_cache.shape, flush=True)
+        # print('[zejun] ATOM call atom attention forward, v_cache.shape = ', v_cache.shape, flush=True)
+        # print('[zejun] ATOM call atom attention forward, k_scale.shape = ', k_scale.shape, flush=True)
+        # print('[zejun] ATOM call atom attention forward, v_scale.shape = ', v_scale.shape, flush=True)
 
         assert self.rotary_emb is None or (self.rotary_emb is not None and position is not None)
         if k_cache.numel() and v_cache.numel():
