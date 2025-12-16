@@ -103,7 +103,10 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
 
         print('[zejun] ATOM ParallelLMHead forward, x shape = ', x.shape, '. dtype = ', x.dtype, flush=True)
         print('[zejun] ATOM ParallelLMHead forward, weight shape = ', self.weight.shape, '. dtype = ', self.weight.dtype, flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, bias shape = ', self.bias.shape, '. dtype = ', self.bias.dtype, flush=True)
+        if self.bias is not None:
+            print('[zejun] ATOM ParallelLMHead forward, bias shape = ', self.bias.shape, '. dtype = ', self.bias.dtype, flush=True)
+        else:
+            print('[zejun] ATOM ParallelLMHead forward, bias is None', flush=True)
 
         logits = tgemm.mm(x, self.weight, self.bias)
         if self.tp_size > 1:
