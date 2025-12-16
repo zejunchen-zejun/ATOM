@@ -14,8 +14,8 @@ from atom.utils.attn_metadata import ATOMAttentionMetadata
 
 from vllm.attention.backends.abstract import AttentionType, AttentionImpl
 
-_IS_PREFILL_FOR_PARALLEL_LMHEAD: bool = False
-_CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD: torch.Tensor = None
+_IS_PREFILL_FOR_PARALLEL_LMHEAD: Optional[bool] = None
+_CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD: Optional[torch.Tensor] = None
 
 class ATOMAttentionImpl(AttentionImpl):
 
@@ -34,7 +34,7 @@ class ATOMAttentionImpl(AttentionImpl):
         sinks: torch.Tensor | None = None,
         rotary_emb: Optional[torch.nn.Module] = None,
     ):
-        print('[zejun] ATOM init ATOMAttentionImpl __init__', flush=True)
+        # print('[zejun] ATOM init ATOMAttentionImpl __init__', flush=True)
         # print('[zejun] ATOM init ATOMAttentionImpl __init__, num_heads = ', num_heads, flush=True)
         # print('[zejun] ATOM init ATOMAttentionImpl __init__, head_size = ', head_size, flush=True)
         # print('[zejun] ATOM init ATOMAttentionImpl __init__, scale = ', scale, flush=True)
@@ -72,7 +72,7 @@ class ATOMAttentionImpl(AttentionImpl):
         output_block_scale: torch.Tensor | None = None,
     ) -> torch.Tensor:
 
-        print('[zejun] ATOM call ATOMAttentionImpl forward, layer = ', layer, flush=True)
+        # print('[zejun] ATOM ATOMAttentionImpl forward, layer = ', layer, flush=True)
 
         assert output is not None, "Output tensor must be provided."
         if output_scale is not None or output_block_scale is not None:
@@ -91,11 +91,13 @@ class ATOMAttentionImpl(AttentionImpl):
         # position = forward_context.positions
 
         # TODO: lm head needs the status from attention metadata
+        # TODO: assign global variables is ugly and we need to refine here
         # assign for parallel lm head
         global _IS_PREFILL_FOR_PARALLEL_LMHEAD
         global _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD
         _IS_PREFILL_FOR_PARALLEL_LMHEAD = attn_metadata.context.is_prefill
         _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD = attn_metadata.cu_seqlens_q
+        # print('[zejun] ATOM ATOMAttentionImpl forward, is_prefill = ', _IS_PREFILL_FOR_PARALLEL_LMHEAD, flush=True)
 
         context = attn_metadata.context
         position = context.positions
@@ -107,7 +109,6 @@ class ATOMAttentionImpl(AttentionImpl):
         use_triton_unified_attention = (
             self.sliding_window != (-1, -1) or self.head_size != 128
         )
-        print('[zejun] ATOM call ATOMAttentionImpl forward, use_triton_unified_attention = ', use_triton_unified_attention, flush=True)
 
         if attn_metadata.slot_mapping.numel():
             k_cache, v_cache = kv_cache.unbind(0)
@@ -134,7 +135,7 @@ class ATOMAttentionImpl(AttentionImpl):
             k_cache = v_cache = torch.tensor([])
             k_scale = v_scale = None
 
-        print('[zejun] ATOM call atom attention forward, layer = ', layer, flush=True)
+        # print('[zejun] ATOM call atom attention forward, layer = ', layer, flush=True)
         # print('[zejun] ATOM call atom attention forward, k_cache.shape = ', k_cache.shape, flush=True)
         # print('[zejun] ATOM call atom attention forward, v_cache.shape = ', v_cache.shape, flush=True)
         # print('[zejun] ATOM call atom attention forward, k_scale.shape = ', k_scale.shape, flush=True)
@@ -205,7 +206,7 @@ class ATOMAttentionImpl(AttentionImpl):
                 v_cache = v_cache.permute(0, 2, 3, 1)
 
                 if self.kv_cache_dtype == "fp8":
-                    print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache)', flush=True)
+                    # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache)', flush=True)
                     # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k.shape = ', k.shape, flush=True)
                     # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), v.shape = ', v.shape, flush=True)
                     # print('[zejun] ATOM call reshape_and_cache_with_pertoken_quant(for fp8 kv cache), k_cache.shape = ', k_cache.shape, flush=True)

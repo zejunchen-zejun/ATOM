@@ -48,7 +48,7 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         self.weight.weight_loader = self.weight_loader
 
     def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
-        print('[zejun] ATOM ATOMVocabParallelEmbedding weight_loader', flush=True)
+        # print('[zejun] ATOM ATOMVocabParallelEmbedding weight_loader', flush=True)
         param_data = param.data
         shard_size = param_data.size(0)
         start_idx = self.tp_rank * shard_size
@@ -58,7 +58,7 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         # print('[zejun] finish ATOM ATOMVocabParallelEmbedding weight_loader', flush=True)
 
     def forward(self, x: torch.Tensor):
-        print('[zejun] ATOM ATOMVocabParallelEmbedding forward', flush=True)
+        # print('[zejun] ATOM ATOMVocabParallelEmbedding forward', flush=True)
         if self.tp_size > 1:
             mask = torch.logical_and(x >= self.vocab_start_idx, x < self.vocab_end_idx)
             # mask = (x >= self.vocab_start_idx) & (x < self.vocab_end_idx)

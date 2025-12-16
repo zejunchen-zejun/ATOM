@@ -118,6 +118,7 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         common_attn_metadata: CommonAttentionMetadata,
         fast_build: bool = False
     ):
+        print('[zejun] ATOM ATOMAttentionMetadataBuilder build_decode', flush=True)
         bs = common_attn_metadata.num_reqs
         # self.total_blocks = 0
         dropout_p = 0.0
@@ -185,6 +186,7 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         common_attn_metadata: CommonAttentionMetadata,
         fast_build: bool = False
     ):
+        print('[zejun] ATOM ATOMAttentionMetadataBuilder build_prefill', flush=True)
         bs = common_attn_metadata.num_reqs
         sum_scheduled_tokens = common_attn_metadata.num_actual_tokens
 
@@ -275,8 +277,8 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         print('[zejun] ATOM ATOMAttentionMetadataBuilder build', flush=True)
         _build_prefill = common_attn_metadata.max_query_len > 1
         if _build_prefill:
-            print('[zejun] ATOM ATOMAttentionMetadataBuilder build prefill', flush=True)
+            # print('[zejun] ATOM ATOMAttentionMetadataBuilder build prefill', flush=True)
             return self.build_prefill(common_prefix_len, common_attn_metadata, fast_build)
         else:
-            print('[zejun] ATOM ATOMAttentionMetadataBuilder build decode', flush=True)
+            # print('[zejun] ATOM ATOMAttentionMetadataBuilder build decode', flush=True)
             return self.build_decode(common_prefix_len, common_attn_metadata, fast_build)

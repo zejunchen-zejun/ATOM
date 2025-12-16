@@ -7,7 +7,6 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, Type, TypeVar
 import numpy as np
 import torch
 from atom.model_engine.scheduler import ScheduledBatch
-from atom.model_engine.sequence import Sequence
 from atom.model_ops.attention_mla import MLAModules
 from atom.utils import CpuGpuBuffer
 from atom.utils.attn_metadata import ATOMAttentionMetadata
