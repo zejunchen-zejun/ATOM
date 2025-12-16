@@ -282,7 +282,7 @@ class LinearBase(nn.Module):
                 if self.bias is not None:
                     y += self.bias
         if self.tp_dim == 1 and self.tp_size > 1 and self.reduce_results:
-            y = get_tp_group().all_reduce(y, ca_fp8_quant=False)
+            y = get_tp_group().all_reduce(y)
         return y
 
 

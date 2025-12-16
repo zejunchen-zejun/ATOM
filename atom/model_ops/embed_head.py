@@ -62,7 +62,7 @@ class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
         y = F.embedding(x, self.weight)
         if self.tp_size > 1:
             y.masked_fill_(~mask.unsqueeze(1), 0)
-            y = get_tp_group().all_reduce(y, ca_fp8_quant=False)
+            y = get_tp_group().all_reduce(y)
         return y
 
 

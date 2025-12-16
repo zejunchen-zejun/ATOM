@@ -1672,9 +1672,7 @@ class FusedMoE(torch.nn.Module):
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             # Default set to False. (May have to add shared expert outputs.)
-            final_hidden_states = get_tp_group().all_reduce(
-                final_hidden_states, ca_fp8_quant=False
-            )
+            final_hidden_states = get_tp_group().all_reduce(final_hidden_states)
 
         return final_hidden_states
 
@@ -1724,9 +1722,7 @@ class FusedMoE(torch.nn.Module):
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             # Default set to False. (May have to add shared expert outputs.)
-            final_hidden_states = get_tp_group().all_reduce(
-                final_hidden_states, ca_fp8_quant=False
-            )
+            final_hidden_states = get_tp_group().all_reduce(final_hidden_states)
 
         return final_hidden_states
 
