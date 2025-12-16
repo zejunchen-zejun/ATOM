@@ -4,18 +4,18 @@
 # from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 # from atom.config import Config, KVCacheTensor
 import torch
-from atom.config import ParallelConfig, config_from_vllm
+from atom.config import ParallelConfig
 
-from vllm.config import CUDAGraphMode
-from vllm.v1.worker.ubatch_utils import UBatchSlices
-from vllm import forward_context
-from vllm.forward_context import BatchDescriptor
-from vllm.config import VllmConfig
+# from vllm.config import CUDAGraphMode
+# from vllm.v1.worker.ubatch_utils import UBatchSlices
+# from vllm import forward_context
+# from vllm.forward_context import BatchDescriptor
+# from vllm.config import VllmConfig
 
-from atom.utils.attn_metadata import ATOMAttentionMetadata
+# from atom.utils.attn_metadata import ATOMAttentionMetadata
 
 def _compute_chunked_local_num_tokens(num_tokens_across_dp_cpu: list[int],
                                       max_num_tokens: int,
@@ -50,7 +50,7 @@ class DPMetadata:
         num_tokens_tensor = torch.tensor(num_tokens_across_dp,
                                          device="cpu",
                                          dtype=torch.int32)
-        from aiter.dist.parallel_state import get_dp_group
+        from vllm.distributed.parallel_state import get_dp_group
         import torch.distributed as dist
         dist.all_reduce(num_tokens_tensor, group=get_dp_group().cpu_group)
         return num_tokens_tensor

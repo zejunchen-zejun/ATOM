@@ -2,14 +2,13 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 import torch
-import torch.distributed as dist
-import torch.nn.functional as F
-from aiter import logger
-from aiter.dist.communication_op import tensor_model_parallel_all_gather
-# from vllm.distributed.parallel_state import get_tp_group
-from vllm.distributed.parallel_state import get_tp_group
-from aiter.tuned_gemm import tgemm
 from torch import nn
+import torch.nn.functional as F
+
+from aiter.tuned_gemm import tgemm
+
+from vllm.distributed.parallel_state import get_tp_group
+from vllm.distributed.communication_op import tensor_model_parallel_all_gather
 
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig as VllmQuantizationConfig)
@@ -17,6 +16,7 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE,
     VocabParallelEmbedding
 )
+from vllm.forward_context import get_forward_context
 
 class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
 
@@ -89,21 +89,11 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
             self.register_parameter("bias", None)
 
     def forward(self, x: torch.Tensor):
-        # forward_context = get_forward_context()
-        # context = forward_context.context
-        # attn_metadata = forward_context.attn_metadata
-        # # context = get_context()
-        # if context.is_prefill:
-        #     last_indices = attn_metadata.cu_seqlens_q[1:] - 1
-        #     x = x[last_indices].contiguous()
+        attn_metadata = get_forward_context().attn_metadata
+        if attn_metadata.context.is_prefill:
+            last_indices = attn_metadata.cu_seqlens_q[1:] - 1
+            x = x[last_indices].contiguous()
         logits = tgemm.mm(x, self.weight, self.bias)
         if self.tp_size > 1:
             logits = tensor_model_parallel_all_gather(logits)
-            # all_logits = (
-            #     [torch.empty_like(logits) for _ in range(self.tp_size)]
-            #     if self.tp_rank == 0
-            #     else None
-            # )
-            # dist.gather(logits, all_logits, 0)
-            # logits = torch.cat(all_logits, -1) if self.tp_rank == 0 else None
         return logits

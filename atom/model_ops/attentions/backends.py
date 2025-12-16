@@ -88,6 +88,7 @@ class AttentionMetadataBuilder(ABC, Generic[T]):
         raise NotImplementedError
 
 
+# TODO: remove later
 class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
     def __init__(self, model_runner):
         self.model_runner = model_runner
