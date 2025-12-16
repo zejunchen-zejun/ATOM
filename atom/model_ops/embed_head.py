@@ -93,7 +93,12 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
             self.register_parameter("bias", None)
 
     def forward(self, x: torch.Tensor):
+        print('[zejun] ATOM ParallelLMHead forward', flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, _IS_PREFILL_FOR_PARALLEL_LMHEAD = ', _IS_PREFILL_FOR_PARALLEL_LMHEAD, flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD = ', _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD, flush=True)
+
         if _IS_PREFILL_FOR_PARALLEL_LMHEAD:
+            print('[zejun] ATOM ParallelLMHead forward, last_indices = ', last_indices, flush=True)
             last_indices = _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD[1:] - 1
             x = x[last_indices].contiguous()
         logits = tgemm.mm(x, self.weight, self.bias)

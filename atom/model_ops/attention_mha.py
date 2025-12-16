@@ -94,7 +94,7 @@ class ATOMAttentionImpl(AttentionImpl):
         # assign for parallel lm head
         global _IS_PREFILL_FOR_PARALLEL_LMHEAD
         global _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD
-        _IS_PREFILL_FOR_PARALLEL_LMHEAD = attn_metadata.is_prefill
+        _IS_PREFILL_FOR_PARALLEL_LMHEAD = attn_metadata.context.is_prefill
         _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD = attn_metadata.cu_seqlens_q
 
         context = attn_metadata.context
