@@ -14,8 +14,12 @@ from atom.utils.attn_metadata import ATOMAttentionMetadata
 
 from vllm.attention.backends.abstract import AttentionType, AttentionImpl
 
-_IS_PREFILL_FOR_PARALLEL_LMHEAD: Optional[bool] = None
-_CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD: Optional[torch.Tensor] = None
+# Use a mutable dict to store shared state for parallel LM head
+# This allows other modules to access the current state even when using direct import
+_PARALLEL_LMHEAD_STATE = {
+    "is_prefill": None,
+    "cu_seqlens_q": None,
+}
 
 class ATOMAttentionImpl(AttentionImpl):
 
@@ -91,13 +95,11 @@ class ATOMAttentionImpl(AttentionImpl):
         # position = forward_context.positions
 
         # TODO: lm head needs the status from attention metadata
-        # TODO: assign global variables is ugly and we need to refine here
-        # assign for parallel lm head
-        global _IS_PREFILL_FOR_PARALLEL_LMHEAD
-        global _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD
-        _IS_PREFILL_FOR_PARALLEL_LMHEAD = attn_metadata.context.is_prefill
-        _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD = attn_metadata.cu_seqlens_q
-        # print('[zejun] ATOM ATOMAttentionImpl forward, is_prefill = ', _IS_PREFILL_FOR_PARALLEL_LMHEAD, flush=True)
+        # Update shared state for parallel lm head
+        # Using dict allows other modules to access current values even with direct import
+        _PARALLEL_LMHEAD_STATE["is_prefill"] = attn_metadata.context.is_prefill
+        _PARALLEL_LMHEAD_STATE["cu_seqlens_q"] = attn_metadata.cu_seqlens_q
+        # print('[zejun] ATOM ATOMAttentionImpl forward, is_prefill = ', _PARALLEL_LMHEAD_STATE["is_prefill"], flush=True)
 
         context = attn_metadata.context
         position = context.positions

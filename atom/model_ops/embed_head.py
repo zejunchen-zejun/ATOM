@@ -16,10 +16,9 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE,
     VocabParallelEmbedding
 )
-from atom.model_ops.attention_mha import (
-    _IS_PREFILL_FOR_PARALLEL_LMHEAD, 
-    _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD
-)
+# Import the shared state dict - since dicts are mutable objects,
+# we can access the updated values even with direct import
+from atom.model_ops.attention_mha import _PARALLEL_LMHEAD_STATE
 
 
 class ATOMVocabParallelEmbedding(VocabParallelEmbedding):
@@ -94,12 +93,12 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
 
     def forward(self, x: torch.Tensor):
         print('[zejun] ATOM ParallelLMHead forward', flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, _IS_PREFILL_FOR_PARALLEL_LMHEAD = ', _IS_PREFILL_FOR_PARALLEL_LMHEAD, flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD = ', _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD, flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, is_prefill = ', _PARALLEL_LMHEAD_STATE["is_prefill"], flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, cu_seqlens_q = ', _PARALLEL_LMHEAD_STATE["cu_seqlens_q"], flush=True)
 
-        if _IS_PREFILL_FOR_PARALLEL_LMHEAD:
+        if _PARALLEL_LMHEAD_STATE["is_prefill"]:
+            last_indices = _PARALLEL_LMHEAD_STATE["cu_seqlens_q"][1:] - 1
             print('[zejun] ATOM ParallelLMHead forward, last_indices = ', last_indices, flush=True)
-            last_indices = _CU_SEQLENS_Q_FOR_PARALLEL_LMHEAD[1:] - 1
             x = x[last_indices].contiguous()
         logits = tgemm.mm(x, self.weight, self.bias)
         if self.tp_size > 1:
