@@ -100,7 +100,13 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
             last_indices = _PARALLEL_LMHEAD_STATE["cu_seqlens_q"][1:] - 1
             print('[zejun] ATOM ParallelLMHead forward, last_indices = ', last_indices, flush=True)
             x = x[last_indices].contiguous()
+
+        print('[zejun] ATOM ParallelLMHead forward, x shape = ', x.shape, '. dtype = ', x.dtype, flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, weight shape = ', self.weight.shape, '. dtype = ', self.weight.dtype, flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, bias shape = ', self.bias.shape, '. dtype = ', self.bias.dtype, flush=True)
+
         logits = tgemm.mm(x, self.weight, self.bias)
         if self.tp_size > 1:
+            print('[zejun] ATOM ParallelLMHead forward, gather logits, logits shape = ', logits.shape, '. dtype = ', logits.dtype, flush=True)
             logits = tensor_model_parallel_all_gather(logits)
         return logits
