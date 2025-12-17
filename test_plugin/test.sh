@@ -26,6 +26,7 @@ vllm serve $model_path \
     --trust-remote-code \
     --disable-log-requests \
     --gpu_memory_utilization 0.03 \
+    --compilation-config '{"cudagraph_mode": "FULL_DECODE_ONLY"}' \
     --async-scheduling \
     --load-format fastsafetensors \
     --no-enable-chunked-prefill \

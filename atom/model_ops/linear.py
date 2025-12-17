@@ -282,7 +282,7 @@ class LinearBase(nn.Module):
                 if self.bias is not None:
                     y += self.bias
         if self.tp_dim == 1 and self.tp_size > 1 and self.reduce_results:
-            print('[zejun] ATOM call all_reduce in LinearBase forward, y shape = ', y.shape, '. dtype = ', y.dtype, flush=True)
+            # print('[zejun] ATOM call all_reduce in LinearBase forward, y shape = ', y.shape, '. dtype = ', y.dtype, flush=True)
             y = get_tp_group().all_reduce(y)
         return y
 

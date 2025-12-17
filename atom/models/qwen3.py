@@ -140,7 +140,7 @@ class Qwen3Attention(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
-        print('[zejun] ATOM Qwen3Attention forward', flush=True)
+        # print('[zejun] ATOM Qwen3Attention forward', flush=True)
         qkv = self.qkv_proj(hidden_states)
         q, k, v = torch.split(qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1)
 
@@ -182,7 +182,7 @@ class Qwen3MLP(nn.Module):
         self.act_fn = SiluAndMul()
 
     def forward(self, x):
-        print('[zejun] ATOM Qwen3MLP forward', flush=True)
+        # print('[zejun] ATOM Qwen3MLP forward', flush=True)
         gate_up = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x = self.down_proj(x)
@@ -247,7 +247,7 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        print('[zejun] ATOM Qwen3DecoderLayer[', self.layer_num, '] forward', flush=True)
+        # print('[zejun] ATOM Qwen3DecoderLayer[', self.layer_num, '] forward', flush=True)
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -316,7 +316,7 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super(Qwen3ForCausalLM, self).__init__()
-        print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
+        # print('[zejun] ATOM ATOMQwen3ForCausalLM init', flush=True)
 
         # TODO: use original vllm config instead of atom config
         self.atom_config = config_from_vllm(vllm_config)
@@ -336,7 +336,7 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
-        print('[zejun] ATOM ATOMQwen3ForCausalLM fwd, input_ids = ', input_ids.shape, flush=True)
+        # print('[zejun] ATOM ATOMQwen3ForCausalLM fwd, input_ids = ', input_ids.shape, flush=True)
         hidden_states = self.model(input_ids, positions)
         return hidden_states
 
@@ -345,9 +345,9 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
         # TODO: add LogitsProcessor design
-        print('[zejun] ATOM call ATOM compute_logits', flush=True)
+        # print('[zejun] ATOM call ATOM compute_logits', flush=True)
         logits = self.lm_head(hidden_states)
-        print('[zejun] ATOM finish call ATOM compute_logits', flush=True)
+        # print('[zejun] ATOM finish call ATOM compute_logits', flush=True)
         return logits
 
     # need to provide this method for vllm to load weights for the custom model

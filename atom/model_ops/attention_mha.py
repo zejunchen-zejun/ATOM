@@ -93,7 +93,7 @@ class ATOMAttentionImpl(AttentionImpl):
         # context = forward_context.context
         # position = forward_context.positions
 
-        # TODO: lm head needs the status from attention metadata
+        # TODO: lm head needs the status from attention metadata to do contiguous
         # Update shared state for parallel lm head
         # Using dict allows other modules to access current values even with direct import
         _PARALLEL_LMHEAD_STATE["is_prefill"] = attn_metadata.context.is_prefill

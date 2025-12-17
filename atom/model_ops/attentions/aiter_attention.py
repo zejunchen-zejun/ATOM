@@ -60,9 +60,7 @@ class ATOMAttentionBackend(AttentionBackend):
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
 class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadata]):
-    BLOCK_TABLE_EXTENDER: list[list[int]] = [[]]
-    # TODO: add cudagraph support
-    _cudagraph_support = AttentionCGSupport.NEVER
+    _cudagraph_support = AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
     reorder_batch_threshold: int = 1
 
     def __init__(
@@ -77,16 +75,16 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         self.model_config = vllm_config.model_config
         self.parallel_config = vllm_config.parallel_config
         self.cache_config = vllm_config.cache_config
+        self.scheduler_config = vllm_config.scheduler_config
 
-        self.num_heads_q = self.model_config.get_num_attention_heads(
-            self.parallel_config
-        )
-        self.num_heads_kv = self.model_config.get_num_kv_heads(self.parallel_config)
-        self.headdim = self.model_config.get_head_size()
-        self.block_size = kv_cache_spec.block_size
+        # self.num_heads_q = self.model_config.get_num_attention_heads(
+        #     self.parallel_config
+        # )
+        # self.num_heads_kv = self.model_config.get_num_kv_heads(self.parallel_config)
+        # self.block_size = kv_cache_spec.block_size
         # Sliding window size to be used with the AOT scheduler will be
         # populated on first build() call.
-        self.aot_sliding_window: tuple[int, int] | None = None
+        # self.aot_sliding_window: tuple[int, int] | None = None
         self.total_tokens: int = 0
 
         # for recording position info
@@ -94,24 +92,31 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
         self.positions = CpuGpuBuffer(max_num_batched_tokens, **i64_kwargs)
 
-    def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
-        # TODO: support cuda graph
-        assert False, "Not implemented for cuda graph capture for now"
-        var = self.model_runner.forward_vars
-        attn_matadata = ATOMAttentionMetadata(
-            slot_mapping=var["slot_mapping"].gpu[:bs],
-            context_lens=var["context_lens"].gpu[:bs],
-            block_tables=var["block_tables"].gpu[:bs],
-            max_q_len=1,
-            cu_seqlens_q=var["cu_seqlens_q"].gpu[: bs + 1],
-            max_seqlen_k=self.model_runner.config.max_model_len,
+    def build_for_cudagraph_capture(
+        self, common_attn_metadata: CommonAttentionMetadata
+    ):
+        self.total_tokens = (
+            self.model_config.max_model_len
+            * self.scheduler_config.max_num_partial_prefills
         )
-        positions = var["positions"].copy_to_gpu(bs)
-        context = Context(
-            positions=positions, is_prefill=False, batch_size=bs, graph_bs=bs
-        )
-        attn_matadata.context = context
-        return attn_matadata
+        # var = self.model_runner.forward_vars
+        # attn_matadata = ATOMAttentionMetadata(
+        #     slot_mapping=var["slot_mapping"].gpu[:bs],
+        #     context_lens=var["context_lens"].gpu[:bs],
+        #     block_tables=var["block_tables"].gpu[:bs],
+        #     max_q_len=1,
+        #     cu_seqlens_q=var["cu_seqlens_q"].gpu[: bs + 1],
+        #     max_seqlen_k=self.model_runner.config.max_model_len,
+        # )
+        # positions = var["positions"].copy_to_gpu(bs)
+        # context = Context(
+        #     positions=positions, is_prefill=False, batch_size=bs, graph_bs=bs
+        # )
+        # attn_matadata.context = context
+
+        attn_metadata = self.build(common_prefix_len=0, common_attn_metadata=common_attn_metadata)
+        self.total_tokens = 0
+        return attn_metadata
 
     def build_decode(self,
         common_prefix_len: int,
@@ -273,7 +278,6 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
     ) -> "ATOMAttentionMetadata":
 
         # TODO: for now chunked prefill doesn't support
-        # TODO: disable the chunked prefill
         print('[zejun] ATOM ATOMAttentionMetadataBuilder build', flush=True)
         _build_prefill = common_attn_metadata.max_query_len > 1
         if _build_prefill:
