@@ -49,14 +49,10 @@ from atom.config import config_from_vllm
 from atom.model_loader.loader import load_model
 
 from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
-# from vllm.model_executor.models.interfaces import (MixtureOfExperts,
-#                                                    SupportsLoRA, SupportsPP)
-
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config.vllm import VllmConfig
 from vllm.distributed.parallel_state import get_tp_group
-from vllm.sequence import IntermediateTensors
-from vllm.model_executor.models.utils import maybe_prefix, AutoWeightsLoader
+from vllm.model_executor.models.utils import maybe_prefix
 from vllm.attention import Attention, AttentionType
 from vllm.config.cache import CacheConfig
 from vllm.model_executor.layers.quantization import QuantizationConfig as VllmQuantizationConfig
@@ -262,11 +258,7 @@ class Qwen3DecoderLayer(nn.Module):
 @support_torch_compile(
     dynamic_arg_dims={
         "input_ids": 0,
-        # positions is of shape (3, seq_len) if mrope is enabled for qwen2-vl,
-        # otherwise (seq_len, ).
         "positions": -1,
-        "intermediate_tensors": 0,
-        "inputs_embeds": 0,
     }
 )
 class Qwen3Model(nn.Module):
@@ -337,9 +329,7 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        intermediate_tensors: IntermediateTensors | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-    ) -> torch.Tensor | IntermediateTensors:
+    ) -> torch.Tensor:
         # print('[zejun] ATOM ATOMQwen3ForCausalLM fwd, input_ids = ', input_ids.shape, flush=True)
         hidden_states = self.model(input_ids, positions)
         return hidden_states
