@@ -9,6 +9,10 @@ export VLLM_ROCM_USE_AITER=1
 export VLLM_RPC_TIMEOUT=1800000
 
 export AMD_SERIALIZE_KERNEL=3
+export ROCM_DEBUG_AGENT_OPTIONS="--all"
+export HSA_TOOLS_LIB=/opt/rocm-7.1.0/lib/librocm-debug-agent.so.2
+export TORCH_LOGS="+dynamo"
+
 export VLLM_ROCM_USE_AITER_TRITON_ROPE=0
 
 # cache dir
@@ -26,7 +30,7 @@ vllm serve $model_path \
     --kv-cache-dtype fp8 \
     --trust-remote-code \
     --disable-log-requests \
-    --gpu_memory_utilization 0.03 \
+    --gpu_memory_utilization 0.1 \
     --compilation-config '{"cudagraph_mode": "None"}' \
     --async-scheduling \
     --load-format fastsafetensors \
