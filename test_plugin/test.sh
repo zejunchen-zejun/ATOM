@@ -9,9 +9,10 @@ export VLLM_ROCM_USE_AITER=1
 export VLLM_RPC_TIMEOUT=1800000
 
 export AMD_SERIALIZE_KERNEL=3
-export ROCM_DEBUG_AGENT_OPTIONS="--all"
-export HSA_TOOLS_LIB=/opt/rocm-7.1.0/lib/librocm-debug-agent.so.2
-export TORCH_LOGS="+dynamo"
+# export ROCM_DEBUG_AGENT_OPTIONS="--all"
+# export HSA_TOOLS_LIB=/opt/rocm-7.1.0/lib/librocm-debug-agent.so.2
+# export TORCH_LOGS="+dynamo"
+export AMD_LOG_LEVEL=4
 
 export VLLM_ROCM_USE_AITER_TRITON_ROPE=0
 
