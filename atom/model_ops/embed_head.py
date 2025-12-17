@@ -95,14 +95,14 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
         print('[zejun] ATOM ParallelLMHead forward', flush=True)
         print('[zejun] ATOM ParallelLMHead forward, is_prefill = ', _PARALLEL_LMHEAD_STATE["is_prefill"], flush=True)
         print('[zejun] ATOM ParallelLMHead forward, cu_seqlens_q = ', _PARALLEL_LMHEAD_STATE["cu_seqlens_q"], flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, x shape = ', x.shape, '. dtype = ', x.dtype, flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, weight shape = ', self.weight.shape, '. dtype = ', self.weight.dtype, flush=True)
 
         if _PARALLEL_LMHEAD_STATE["is_prefill"]:
             last_indices = _PARALLEL_LMHEAD_STATE["cu_seqlens_q"][1:] - 1
             print('[zejun] ATOM ParallelLMHead forward, last_indices = ', last_indices, flush=True)
             x = x[last_indices].contiguous()
 
-        print('[zejun] ATOM ParallelLMHead forward, x shape = ', x.shape, '. dtype = ', x.dtype, flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, weight shape = ', self.weight.shape, '. dtype = ', self.weight.dtype, flush=True)
         # if self.bias is not None:
             # print('[zejun] ATOM ParallelLMHead forward, bias shape = ', self.bias.shape, '. dtype = ', self.bias.dtype, flush=True)
         # else:
