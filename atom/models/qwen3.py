@@ -262,7 +262,11 @@ class Qwen3DecoderLayer(nn.Module):
 @support_torch_compile(
     dynamic_arg_dims={
         "input_ids": 0,
+        # positions is of shape (3, seq_len) if mrope is enabled for qwen2-vl,
+        # otherwise (seq_len, ).
         "positions": -1,
+        "intermediate_tensors": 0,
+        "inputs_embeds": 0,
     }
 )
 class Qwen3Model(nn.Module):
@@ -299,8 +303,8 @@ class Qwen3Model(nn.Module):
     ) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
         residual = None
-        for layer in self.layers:
-            hidden_states, residual = layer(positions, hidden_states, residual)
+        # for layer in self.layers:
+        #     hidden_states, residual = layer(positions, hidden_states, residual)
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 
