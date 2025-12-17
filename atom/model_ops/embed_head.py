@@ -93,8 +93,8 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
 
     def forward(self, x: torch.Tensor):
         print('[zejun] ATOM ParallelLMHead forward', flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, is_prefill = ', _PARALLEL_LMHEAD_STATE["is_prefill"], flush=True)
         if _PARALLEL_LMHEAD_STATE["is_prefill"]:
+            # TODO: check why need contiguous, remove better if ok
             x = x.contiguous()
 
         logits = tgemm.mm(x, self.weight, self.bias)
