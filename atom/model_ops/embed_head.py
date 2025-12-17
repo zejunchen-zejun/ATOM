@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from aiter.tuned_gemm import tgemm
 
 from vllm.distributed.parallel_state import get_tp_group
-from vllm.distributed.communication_op import tensor_model_parallel_all_gather
+from vllm.distributed import tensor_model_parallel_all_gather
 
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig as VllmQuantizationConfig)
@@ -103,10 +103,10 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
 
         print('[zejun] ATOM ParallelLMHead forward, x shape = ', x.shape, '. dtype = ', x.dtype, flush=True)
         print('[zejun] ATOM ParallelLMHead forward, weight shape = ', self.weight.shape, '. dtype = ', self.weight.dtype, flush=True)
-        if self.bias is not None:
-            print('[zejun] ATOM ParallelLMHead forward, bias shape = ', self.bias.shape, '. dtype = ', self.bias.dtype, flush=True)
-        else:
-            print('[zejun] ATOM ParallelLMHead forward, bias is None', flush=True)
+        # if self.bias is not None:
+            # print('[zejun] ATOM ParallelLMHead forward, bias shape = ', self.bias.shape, '. dtype = ', self.bias.dtype, flush=True)
+        # else:
+            # print('[zejun] ATOM ParallelLMHead forward, bias is None', flush=True)
 
         print('[zejun] ATOM ParallelLMHead forward, call tgemm.mm', flush=True)
         logits = tgemm.mm(x, self.weight, self.bias)

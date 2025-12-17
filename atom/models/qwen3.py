@@ -345,7 +345,9 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
         # TODO: add LogitsProcessor design
+        print('[zejun] call ATOM compute_logits', flush=True)
         logits = self.lm_head(hidden_states)
+        print('[zejun] finish call ATOM compute_logits', flush=True)
         return logits
 
     # need to provide this method for vllm to load weights for the custom model
