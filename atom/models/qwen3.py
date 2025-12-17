@@ -55,6 +55,7 @@ from vllm.distributed.parallel_state import get_tp_group
 from vllm.model_executor.models.utils import maybe_prefix
 from vllm.attention import Attention, AttentionType
 from vllm.config.cache import CacheConfig
+from vllm.sequence import IntermediateTensors
 from vllm.model_executor.layers.quantization import QuantizationConfig as VllmQuantizationConfig
 
 class Qwen3Attention(nn.Module):
@@ -329,6 +330,8 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
+        intermediate_tensors: IntermediateTensors | None = None,
+        inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # print('[zejun] ATOM ATOMQwen3ForCausalLM fwd, input_ids = ', input_ids.shape, flush=True)
         hidden_states = self.model(input_ids, positions)
