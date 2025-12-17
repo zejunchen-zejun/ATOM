@@ -94,26 +94,11 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
     def forward(self, x: torch.Tensor):
         print('[zejun] ATOM ParallelLMHead forward', flush=True)
         print('[zejun] ATOM ParallelLMHead forward, is_prefill = ', _PARALLEL_LMHEAD_STATE["is_prefill"], flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, cu_seqlens_q = ', _PARALLEL_LMHEAD_STATE["cu_seqlens_q"], flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, x shape = ', x.shape, '. dtype = ', x.dtype, flush=True)
-        print('[zejun] ATOM ParallelLMHead forward, weight shape = ', self.weight.shape, '. dtype = ', self.weight.dtype, flush=True)
-
         if _PARALLEL_LMHEAD_STATE["is_prefill"]:
-            last_indices = _PARALLEL_LMHEAD_STATE["cu_seqlens_q"][1:] - 1
-            print('[zejun] ATOM ParallelLMHead forward, last_indices = ', last_indices, flush=True)
-            x = x[last_indices].contiguous()
+            x = x.contiguous()
 
-        # if self.bias is not None:
-            # print('[zejun] ATOM ParallelLMHead forward, bias shape = ', self.bias.shape, '. dtype = ', self.bias.dtype, flush=True)
-        # else:
-            # print('[zejun] ATOM ParallelLMHead forward, bias is None', flush=True)
-
-        print('[zejun] ATOM ParallelLMHead forward, call tgemm.mm', flush=True)
         logits = tgemm.mm(x, self.weight, self.bias)
-        print('[zejun] ATOM ParallelLMHead forward, finish tgemm.mm', flush=True)
 
         if self.tp_size > 1:
-            print('[zejun] ATOM ParallelLMHead forward, before gather logits, logits shape = ', logits.shape, '. dtype = ', logits.dtype, flush=True)
             logits = tensor_model_parallel_all_gather(logits)
-            print('[zejun] ATOM ParallelLMHead forward, after gather logits, logits shape = ', logits.shape, '. dtype = ', logits.dtype, flush=True)
         return logits

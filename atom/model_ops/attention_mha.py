@@ -18,7 +18,6 @@ from vllm.attention.backends.abstract import AttentionType, AttentionImpl
 # This allows other modules to access the current state even when using direct import
 _PARALLEL_LMHEAD_STATE = {
     "is_prefill": None,
-    "cu_seqlens_q": None,
 }
 
 class ATOMAttentionImpl(AttentionImpl):
@@ -98,8 +97,6 @@ class ATOMAttentionImpl(AttentionImpl):
         # Update shared state for parallel lm head
         # Using dict allows other modules to access current values even with direct import
         _PARALLEL_LMHEAD_STATE["is_prefill"] = attn_metadata.context.is_prefill
-        _PARALLEL_LMHEAD_STATE["cu_seqlens_q"] = attn_metadata.cu_seqlens_q
-        # print('[zejun] ATOM ATOMAttentionImpl forward, is_prefill = ', _PARALLEL_LMHEAD_STATE["is_prefill"], flush=True)
 
         context = attn_metadata.context
         position = context.positions
