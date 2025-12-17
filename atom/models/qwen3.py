@@ -344,6 +344,7 @@ class ATOMQwen3ForCausalLM(Qwen3ForCausalLM):
         self,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
+        # TODO: add LogitsProcessor design
         logits = self.lm_head(hidden_states)
         return logits
 

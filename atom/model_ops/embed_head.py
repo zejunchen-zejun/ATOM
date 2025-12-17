@@ -108,11 +108,12 @@ class ParallelLMHead(ATOMVocabParallelEmbedding):
         else:
             print('[zejun] ATOM ParallelLMHead forward, bias is None', flush=True)
 
-        print('[zejun] ATOM ParallelLMHead forward, tgemm.mm', flush=True)
+        print('[zejun] ATOM ParallelLMHead forward, call tgemm.mm', flush=True)
         logits = tgemm.mm(x, self.weight, self.bias)
         print('[zejun] ATOM ParallelLMHead forward, finish tgemm.mm', flush=True)
 
         if self.tp_size > 1:
-            print('[zejun] ATOM ParallelLMHead forward, gather logits, logits shape = ', logits.shape, '. dtype = ', logits.dtype, flush=True)
+            print('[zejun] ATOM ParallelLMHead forward, before gather logits, logits shape = ', logits.shape, '. dtype = ', logits.dtype, flush=True)
             logits = tensor_model_parallel_all_gather(logits)
+            print('[zejun] ATOM ParallelLMHead forward, after gather logits, logits shape = ', logits.shape, '. dtype = ', logits.dtype, flush=True)
         return logits
