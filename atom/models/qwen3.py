@@ -48,17 +48,18 @@ from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 from atom.config import config_from_vllm
 from atom.model_loader.loader import load_model
 
+# TODO: refine the decorator to support vllm+sglang
 from vllm.compilation.decorators import support_torch_compile
-from vllm.config.vllm import VllmConfig
+# from vllm.config.vllm import VllmConfig
 
 # from vllm.distributed.parallel_state import get_tp_group
 from aiter.dist.parallel_state import get_tp_group
 
 from vllm.model_executor.models.utils import maybe_prefix
 from vllm.attention import Attention, AttentionType
-from vllm.config.cache import CacheConfig
-from vllm.sequence import IntermediateTensors
-from vllm.model_executor.layers.quantization import QuantizationConfig as VllmQuantizationConfig
+# from vllm.config.cache import CacheConfig
+# from vllm.sequence import IntermediateTensors
+# from vllm.model_executor.layers.quantization import QuantizationConfig as VllmQuantizationConfig
 
 class Qwen3Attention(nn.Module):
 
@@ -159,7 +160,7 @@ class Qwen3MLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
-        quant_config: Optional[VllmQuantizationConfig] = None,
+        quant_config = None,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -194,8 +195,8 @@ class Qwen3DecoderLayer(nn.Module):
         self,
         config: Qwen3Config,
         kv_cache_dtype: str = "bf16",
-        cache_config: Optional[CacheConfig] = None,
-        quant_config: Optional[VllmQuantizationConfig] = None,
+        cache_config = None,
+        quant_config = None,
         layer_num: int = 0,
         prefix: str = "",
     ) -> None:
@@ -328,7 +329,7 @@ class Qwen3ForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        intermediate_tensors: IntermediateTensors | None = None,
+        intermediate_tensors = None,
         inputs_embeds: torch.Tensor | None = None,
         **model_kwargs: dict[str, Any],
     ) -> torch.Tensor:

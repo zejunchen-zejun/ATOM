@@ -51,4 +51,4 @@ def prepare_model(config: Any, framework: str):
     # for backend, name in _ATTN_OVERRIDES.items():
     #     print('[zejun][', pid, '] ATOM get_model, backend = ', backend, '. name = ', name, flush=True)
 
-    return model_cls(config=config, framework=framework)
+    return model_cls(config=config)
