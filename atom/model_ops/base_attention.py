@@ -51,6 +51,9 @@ def unified_attention_with_output_base(
 ) -> torch.Tensor:
     atom_config = get_current_atom_config()
     self = atom_config.compilation_config.static_forward_context[layer_name]
+
+    # print('[zejun] ATOM, unified_attention_with_output_base, self.impl = ', self.impl, flush=True)
+
     return self.impl.forward(q, k, v, positions, q_scale)
 
 
@@ -74,7 +77,7 @@ class Attention(nn.Module):
     ):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = head_dim
+        self.head_size = head_dim
         self.scale = scale
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])

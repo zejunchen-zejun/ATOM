@@ -12,12 +12,14 @@ from aiter import (
     layernorm2d_fwd_with_add,
 )
 from aiter.dist.communication_op import tensor_model_parallel_fused_allreduce_rmsnorm
-from aiter.dist.parallel_state import get_tensor_model_parallel_world_size
+# from aiter.dist.parallel_state import get_tensor_model_parallel_world_size
+from vllm.distributed.parallel_state import get_tensor_model_parallel_world_size
 from aiter.ops.triton.fused_add_rmsnorm_pad import fused_add_rmsnorm_pad
 from aiter.jit.utils.torch_guard import torch_compile_guard
 
 
-@torch_compile_guard()
+#@torch_compile_guard()
+# FIXME: when using the torch_compile_guard(), there could be illegal mem access
 def rmsnorm2d_fwd_(
     x: torch.Tensor, weight: torch.Tensor, eps: float, dim: int
 ) -> torch.Tensor:
@@ -131,6 +133,7 @@ class RMSNorm(nn.Module):
         x: torch.Tensor,
         residual: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        # print('[zejun] ATOM RMSNorm forward', flush=True)
         if self.x_pad_to_multiple > 0:
             assert not self.fused_allreduce, "fused_allreduce_rmsnorm is not supported with rms_norm padding!"
             if residual is None:
@@ -142,6 +145,7 @@ class RMSNorm(nn.Module):
                     x, self.weight, self.eps, residual, self.x_pad_to_multiple
                 )
         if self.fused_allreduce and self.tp_size > 1:
+            # TODO: need to use aiter dist init
             assert residual is not None, "fused_allreduce_rmsnorm requires residual input!"
             return tensor_model_parallel_fused_allreduce_rmsnorm(
                 x, 

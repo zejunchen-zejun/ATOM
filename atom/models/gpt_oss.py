@@ -28,8 +28,8 @@ from aiter import (
 )
 
 from atom.model_ops.base_attention import Attention
-from atom.utils.decorators import support_torch_compile
-from atom.config import Config, QuantizationConfig, get_current_atom_config
+from vllm.compilation.decorators import support_torch_compile
+from atom.config import Config, ATOMQuantizationConfig, get_current_atom_config
 from aiter.dist.parallel_state import (
     get_dp_group,
     get_ep_group,
@@ -65,7 +65,7 @@ class OAIAttention(nn.Module):
     def __init__(
         self,
         config: GptOssConfig,
-        quant_config: Optional[QuantizationConfig] = None,
+        quant_config: Optional[ATOMQuantizationConfig] = None,
         cache_config: str = "bf16",
         prefix: str = "",
         layer_num: int = 0,
@@ -210,7 +210,7 @@ class TransformerBlock(torch.nn.Module):
     def __init__(
         self,
         atom_config: Config,
-        quant_config: QuantizationConfig,
+        quant_config: ATOMQuantizationConfig,
         prefix: str = "",
         layer_num: int = 0,
     ):
