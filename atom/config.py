@@ -14,7 +14,7 @@ from typing import Any, Optional, Union
 import torch
 from atom.utils import envs, get_open_port
 from atom.utils.distributed.utils import stateless_init_torch_distributed_process_group
-from atom.utils.prepare import is_vllm, is_sglang
+
 from torch.distributed import ProcessGroup, ReduceOp
 from transformers import AutoConfig, PretrainedConfig
 
@@ -666,6 +666,7 @@ def convert_config_to_atom(config: Any) -> Config:
     Translate vllm config to atom config, be called when create the custom model
     '''
     atom_config = None
+    from atom.utils.prepare import is_vllm, is_sglang
     if is_vllm():
         atom_config = Config(
             model_config=config.model_config,
