@@ -82,10 +82,15 @@ def _init_aiter_dist(config) -> None:
         data_parallel_rank=config.parallel_config.data_parallel_rank,
     )
 
-# TODO: add for sglang
-# TODO: direct register custom op
-def _register_ops() -> None:
+def _register_ops_to_vllm() -> None:
     '''
-    Register custom ops to upper framework
+    Register custom ops to vllm
     '''
     _register_custom_attention()
+
+# TODO: add for sglang
+def _register_ops_to_sglang() -> None:
+    '''
+    Register custom ops to sglang
+    '''
+    pass

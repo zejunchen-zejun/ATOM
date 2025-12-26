@@ -1,11 +1,4 @@
 #!/bin/bash
-alias gg='git fetch && git checkout origin/zejun/plugin_for_atom_1223'
-alias tt='bash ./test.model.impl.sh'
-alias cc='bash ./curl.sh'
-
-export CUDA_VISIBLE_DEVICES=7
-export AMD_SERIALIZE_KERNEL=3
-
 export VLLM_ATTENTION_BACKEND=CUSTOM
 
 export SAFETENSORS_FAST_GPU=1
@@ -25,7 +18,7 @@ model_path=/data/pretrained-models/Qwen3-0.6B
 vllm serve $model_path \
     --host localhost \
     --port 9090 \
-    --tensor-parallel-size 1 \
+    --tensor-parallel-size 8 \
     --kv-cache-dtype fp8 \
     --trust-remote-code \
     --disable-log-requests \

@@ -1,7 +1,6 @@
 #!/bin/bash
-alias gg='git fetch && git checkout origin/zejun/plugin_for_atom_1223'
-alias tt='bash ./test.moe.sh'
-alias cc='bash ./curl.sh'
+export CUDA_VISIBLE_DEVICES=7
+# export AMD_SERIALIZE_KERNEL=3
 
 export VLLM_ATTENTION_BACKEND=CUSTOM
 
@@ -17,22 +16,19 @@ export TORCHINDUCTOR_CACHE_DIR=/root/.cache/inductor
 
 rm -rf /root/.cache/
 
-model_path=/data/pretrained-models/Qwen3-235B-A22B-Thinking-2507-FP8
+model_path=/data/pretrained-models/Qwen3-0.6B
 
-# TODO: why need max model len
 vllm serve $model_path \
     --host localhost \
     --port 9090 \
-    --tensor-parallel-size 8 \
-    --enable-expert-parallel \
+    --tensor-parallel-size 1 \
     --kv-cache-dtype fp8 \
     --trust-remote-code \
     --disable-log-requests \
-    --gpu_memory_utilization 0.8 \
+    --gpu_memory_utilization 0.1 \
     --async-scheduling \
     --load-format fastsafetensors \
     --no-enable-chunked-prefill \
     --compilation-config '{"cudagraph_mode": "FULL_DECODE_ONLY"}' \
     --model-impl atom \
-    --max-model-len 16384 \
     2>&1 | tee log.serve.log &
