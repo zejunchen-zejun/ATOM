@@ -18,4 +18,5 @@ python3 -m sglang.launch_server \
     --kv-cache-dtype auto \
     --mem-fraction-static 0.1 \
     --model-impl atom \
+    --enforce-eager \
     2>&1 | tee log.serve.log &

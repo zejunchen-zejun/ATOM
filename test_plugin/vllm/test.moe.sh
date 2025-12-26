@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "run vllm"
 export VLLM_ATTENTION_BACKEND=CUSTOM
 
 export SAFETENSORS_FAST_GPU=1

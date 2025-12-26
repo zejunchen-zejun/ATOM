@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "run vllm"
 export CUDA_VISIBLE_DEVICES=7
 # export AMD_SERIALIZE_KERNEL=3
 
