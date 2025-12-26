@@ -14,6 +14,7 @@ from typing import Any, Optional, Union
 import torch
 from atom.utils import envs, get_open_port
 from atom.utils.distributed.utils import stateless_init_torch_distributed_process_group
+from atom.utils.prepare import is_vllm, is_sglang
 from torch.distributed import ProcessGroup, ReduceOp
 from transformers import AutoConfig, PretrainedConfig
 
@@ -660,24 +661,28 @@ def get_current_atom_config() -> Config:
     return _current_atom_config
 
 
-def config_from_vllm(vllm_config: VllmConfig) -> Config:
+def convert_config_to_atom(config: Any) -> Config:
     '''
     Translate vllm config to atom config, be called when create the custom model
     '''
-    atom_config = Config(
-        model_config=vllm_config.model_config,
-        cache_config=vllm_config.cache_config,
-        parallel_config=vllm_config.parallel_config,
-        scheduler_config=vllm_config.scheduler_config,
-        kv_cache_block_size=vllm_config.cache_config.block_size,
-        num_kvcache_blocks=vllm_config.cache_config.num_gpu_blocks,
-        kv_cache_dtype=vllm_config.cache_config.cache_dtype,
-        enable_prefix_caching=vllm_config.cache_config.enable_prefix_caching,
-        max_model_len=vllm_config.scheduler_config.max_model_len,
-        compilation_config=vllm_config.compilation_config,
-        vllm_quant_config=vllm_config.quant_config,
-        enable_expert_parallel=vllm_config.parallel_config.enable_expert_parallel,
-    )
+    atom_config = None
+    if is_vllm():
+        atom_config = Config(
+            model_config=config.model_config,
+            cache_config=config.cache_config,
+            parallel_config=config.parallel_config,
+            scheduler_config=config.scheduler_config,
+            kv_cache_block_size=config.cache_config.block_size,
+            num_kvcache_blocks=config.cache_config.num_gpu_blocks,
+            kv_cache_dtype=config.cache_config.cache_dtype,
+            enable_prefix_caching=config.cache_config.enable_prefix_caching,
+            max_model_len=config.scheduler_config.max_model_len,
+            compilation_config=config.compilation_config,
+            vllm_quant_config=config.quant_config,
+            enable_expert_parallel=config.parallel_config.enable_expert_parallel,
+        )
+    elif is_sglang():
+        atom_config = Config()
 
     # set the current atom config for the custom model
     set_current_atom_config(atom_config)

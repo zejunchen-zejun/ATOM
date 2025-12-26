@@ -28,7 +28,7 @@ from aiter.dist.communication_op import tensor_model_parallel_all_reduce
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 from atom.model_ops.moe import FusedMoE
-from atom.config import config_from_vllm
+from atom.config import convert_config_to_atom
 from atom.model_loader.loader import load_model
 from aiter.dist.parallel_state import (
     get_pp_group,
@@ -429,7 +429,7 @@ class Qwen3MoeForCausalLM(nn.Module):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
-        self.atom_config = config_from_vllm(vllm_config)
+        self.atom_config = convert_config_to_atom(vllm_config)
         self.config = self.atom_config.model_config.hf_config
         self.quant_config = self.atom_config.atom_quant_config
 

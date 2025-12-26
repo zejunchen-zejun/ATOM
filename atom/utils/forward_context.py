@@ -173,7 +173,7 @@ class DPMetadata:
 #     Here we can inject common logic for every model forward pass.
 #     """
 #     dp_metadata: Optional[DPMetadata] = None
-#     atom_config = config_from_vllm(vllm_config)
+#     atom_config = convert_config_to_atom(vllm_config)
 #     if atom_config.parallel_config.data_parallel_size > 1 and num_tokens is not None:
 #         dp_metadata = DPMetadata.make(atom_config.parallel_config,
 #                                       # attn_metadata,
@@ -216,7 +216,7 @@ class DPMetadata:
 #     ubatch_slices: UBatchSlices | None = None,
 # ):
 #     print('[zejun] ATOM, create_forward_context', flush=True)
-#     atom_config = config_from_vllm(vllm_config)
+#     atom_config = convert_config_to_atom(vllm_config)
 #     return ForwardContext(
 #         no_compile_layers=atom_config.compilation_config.static_forward_context,
 #         virtual_engine=virtual_engine,

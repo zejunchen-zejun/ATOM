@@ -45,7 +45,7 @@ from atom.model_ops.linear import (
 # from atom.model_ops.rotary_embedding import get_rope
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
-from atom.config import config_from_vllm
+from atom.config import convert_config_to_atom
 from atom.model_loader.loader import load_model
 
 # TODO: refine the decorator to support vllm+sglang
@@ -315,7 +315,7 @@ class Qwen3ForCausalLM(nn.Module):
 
     def __init__(self, *, config: Any, prefix: str = "") -> None:
         super().__init__()
-        self.atom_config = config_from_vllm(config)
+        self.atom_config = convert_config_to_atom(config)
         self.config = self.atom_config.model_config.hf_config
         self.model = Qwen3Model(
             atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model")
