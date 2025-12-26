@@ -19,5 +19,4 @@ python3 -m sglang.launch_server \
     --mem-fraction-static 0.1 \
     --model-impl atom \
     --disable-cuda-graph \
-    --no-enable-torch-compile \
     2>&1 | tee log.serve.log &
