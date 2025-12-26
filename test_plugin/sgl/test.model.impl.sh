@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "run sgl"
 export CUDA_VISIBLE_DEVICES=7
 # export AMD_SERIALIZE_KERNEL=3
 
@@ -14,7 +15,7 @@ python3 -m sglang.launch_server \
     --port 9090 \
     --trust-remote-code \
     --tensor-parallel-size 1 \
-    --kv-cache-dtype fp8 \
+    --kv-cache-dtype auto \
     --mem-fraction-static 0.1 \
     --model-impl atom \
     2>&1 | tee log.serve.log &
