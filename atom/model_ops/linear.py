@@ -6,7 +6,7 @@ from typing import Callable, Optional
 
 import torch
 import torch.nn.functional as F
-from atom.config import ATOMQuantizationConfig
+from atom.config import QuantizationConfig
 from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_max_scale
 from torch import nn
 
@@ -34,7 +34,7 @@ from aiter.tuned_gemm import tgemm
 from aiter.utility import fp4_utils
 from torch import nn
 
-from atom.config import ATOMQuantizationConfig, get_current_atom_config
+from atom.config import QuantizationConfig, get_current_atom_config
 from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_max_scale
 
 def divide(numerator, denominator):
@@ -93,13 +93,13 @@ class LinearBase(nn.Module):
         output_size: int | list[int],
         tp_dim: int | None = None,
         bias: bool = False,
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         reduce_results: bool = False,
         prefix: str = "",
     ):
         super().__init__()
         if quant_config is None:
-            quant_config = ATOMQuantizationConfig()
+            quant_config = QuantizationConfig()
         quant_type = quant_config["quant_type"]
         params_dtype = quant_config["quant_dtype"]
         self.reduce_results = reduce_results

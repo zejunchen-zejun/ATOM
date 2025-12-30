@@ -2,7 +2,7 @@ from typing import Any, Iterable, Optional
 import torch
 from torch import nn
 
-from atom.config import ATOMQuantizationConfig, Config
+from atom.config import QuantizationConfig, Config
 from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
@@ -40,7 +40,7 @@ class Qwen3MoeMLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
-        quant_config: ATOMQuantizationConfig | None = None,
+        quant_config: QuantizationConfig | None = None,
         reduce_results: bool = True,
         prefix: str = "",
     ) -> None:
@@ -77,7 +77,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
     def __init__(
         self,
         config: Any,
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
     ):
         super().__init__()

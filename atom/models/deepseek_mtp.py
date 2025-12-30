@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
 from transformers import DeepseekV2Config, DeepseekV3Config
-from atom.config import ATOMQuantizationConfig, Config
+from atom.config import QuantizationConfig, Config
 
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.embed_head import (
@@ -29,7 +29,7 @@ class SharedHead(nn.Module):
         self,
         config: PretrainedConfig,
         prefix: str,
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
     ) -> None:
         super().__init__()
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)

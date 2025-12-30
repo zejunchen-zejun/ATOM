@@ -1,0 +1,178 @@
+import sys
+
+from typing import Any, Optional
+from dataclasses import dataclass
+
+import torch
+
+from atom.config import Config
+from atom.config import set_current_atom_config
+
+@dataclass
+class PluginConfig:
+    # common config for both framework
+    model_config: Any = None
+    is_plugin_mode: bool = False
+    is_vllm: bool = False
+    is_sglang: bool = False
+
+    # vllm specific
+    vllm_scheduler_config: Any = None
+    vllm_cache_config: Any = None
+    vllm_quant_config: Any = None
+
+    # sglang specific
+    sglang_model_opt_config: Any = None
+    sglang_load_config: Any = None
+    sglang_enable_torch_compile: bool = False
+    sglang_disable_cuda_graph: bool = False
+    sglang_enable_dp_attention: bool = False
+    sglang_dist_init_addr: Optional[str] = None
+    sglang_port_args: Any = None
+
+
+def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
+    vllm_model_config = config.model_config
+    vllm_scheduler_config = config.scheduler_config
+    vllm_cache_config = config.cache_config
+    vllm_parallel_config = config.parallel_config
+    vllm_compilation_config = config.compilation_config
+    vllm_quant_config = config.quant_config
+
+    plugin_config = PluginConfig(
+        # common config
+        model_config=vllm_model_config,
+        is_plugin_mode=True,
+        is_vllm=True,
+        is_sglang=False,
+        # vllm specific
+        vllm_scheduler_config=vllm_scheduler_config,
+        vllm_cache_config=vllm_cache_config,
+        vllm_quant_config=vllm_quant_config,
+    )
+
+    return Config(
+        model=None,
+        max_num_batched_tokens=vllm_scheduler_config.max_num_batched_tokens,
+        max_num_seqs=vllm_scheduler_config.max_num_seqs,
+        max_model_len=vllm_scheduler_config.max_model_len,
+        gpu_memory_utilization=vllm_cache_config.gpu_memory_utilization,
+        tensor_parallel_size=vllm_parallel_config.tensor_parallel_size,
+        enforce_eager=vllm_model_config.enforce_eager,
+        hf_config=vllm_model_config.hf_config,
+        parallel_config=vllm_parallel_config,
+        kv_cache_block_size=vllm_cache_config.block_size,
+        num_kvcache_blocks=vllm_cache_config.num_gpu_blocks,
+        kv_cache_dtype=vllm_cache_config.cache_dtype,
+        enable_prefix_caching=vllm_cache_config.enable_prefix_caching,
+        port=None,
+        torch_profiler_dir=None,
+        compilation_config=vllm_compilation_config,
+        enable_expert_parallel=vllm_parallel_config.enable_expert_parallel,
+        master_addr=None,
+        plugin_config=plugin_config,
+    )
+
+
+def _generate_atom_config_from_sglang_config(config: Any) -> Config:
+    from sglang.srt.server_args import (
+        ServerArgs,
+        prepare_server_args,
+        PortArgs,
+    )
+    from sglang.srt.configs.model_config import ModelConfig as SglangModelConfig
+    from sglang.srt.configs.modelopt_config import ModelOptConfig
+    from sglang.srt.configs.load_config import LoadConfig
+
+    print('[zejun] ATOM prepare_server_args, sys.argv = ', sys.argv, flush=True)
+    # sglang has no global config variable like vllm,
+    # so here construct the server args from sys.argv passed by users
+    # this is the only way to get full arguments
+    server_args: ServerArgs = prepare_server_args(sys.argv[1:])
+
+    sgl_model_config = SglangModelConfig.from_server_args(server_args)
+    sgl_model_opt_config = ModelOptConfig(
+        quant=server_args.modelopt_quant,
+        checkpoint_restore_path=server_args.modelopt_checkpoint_restore_path,
+        checkpoint_save_path=server_args.modelopt_checkpoint_save_path,
+        export_path=server_args.modelopt_export_path,
+    )
+
+    sgl_load_config = LoadConfig(
+        load_format=server_args.load_format,
+        download_dir=server_args.download_dir,
+        model_loader_extra_config=server_args.model_loader_extra_config,
+        remote_instance_weight_loader_seed_instance_ip=server_args.remote_instance_weight_loader_seed_instance_ip,
+        remote_instance_weight_loader_seed_instance_service_port=server_args.remote_instance_weight_loader_seed_instance_service_port,
+        remote_instance_weight_loader_send_weights_group_ports=server_args.remote_instance_weight_loader_send_weights_group_ports,
+        remote_instance_weight_loader_backend=server_args.remote_instance_weight_loader_backend,
+        modelopt_config=sgl_model_opt_config,
+        rl_quant_profile=server_args.rl_quant_profile,
+    )
+
+    # sglang doesn't passed the rank number in config, so ATOM get rank number
+    # through torch.distributed.get_rank()
+    rank = torch.distributed.get_rank()
+
+    sgl_parallel_config = ParallelConfig(
+        pipeline_parallel_size=server_args.pp_size,
+        tensor_parallel_size=server_args.tp_size,
+        data_parallel_size=server_args.dp_size,
+        world_size=int(server_args.pp_size * server_args.tp_size),
+        # data_parallel_master_ip=server_args.master_addr,
+        # data_parallel_master_port=,
+        rank=rank,
+        # data_parallel_size_local=server_args.data_parallel_size_local,
+        # data_parallel_rank=server_args.data_parallel_rank,
+        # data_parallel_rank_local=server_args.data_parallel_rank_local,
+    )
+
+    # create the compilation config static_forward_context for sglang
+    sgl_compilation_config = CompilationConfig()
+    sgl_compilation_config.static_forward_context = {}
+
+    return Config(
+        # common config
+        model_config=sgl_model_config,
+        cache_config=None,
+        parallel_config=sgl_parallel_config,
+        compilation_config=sgl_compilation_config,
+        scheduler_config=None,
+        kv_cache_dtype=server_args.kv_cache_dtype,
+        max_model_len=server_args.context_length,
+        enable_expert_parallel=bool(server_args.ep_size > 1),
+        # sglang specific
+        sgl_model_opt_config=sgl_model_opt_config,
+        sgl_load_config=sgl_load_config,
+        enable_torch_compile=server_args.enable_torch_compile,
+        disable_cuda_graph=server_args.disable_cuda_graph,
+        enable_dp_attention=server_args.enable_dp_attention,
+        dist_init_addr=server_args.dist_init_addr,
+        port_args=PortArgs.init_new(server_args),
+        # atom specific
+        is_sglang=True,
+    )
+
+
+def generate_atom_config_in_plugin_mode(config: Any = None) -> Config:
+    '''
+    Generate the atom config in plugin mode, be called when create the custom model
+    config: 
+        - for vllm: config is VllmConfig and contains all config value from vllm
+        - for sglang: config is only model specific config passed from sglang, so the
+                      server args is used
+    '''
+    atom_config = None
+    from atom.plugin import is_vllm, is_sglang
+    if is_vllm():
+        atom_config = _generate_atom_config_from_vllm_config(config)
+    elif is_sglang():
+        atom_config = _generate_atom_config_from_sglang_config(config)
+    else:
+        raise ValueError("Make sure ATOM is running in plugin mode, \
+            the function generate_atom_config_in_plugin_mode should be called in plugin mode")
+
+    # set the current atom config for the custom model
+    set_current_atom_config(atom_config)
+
+    return atom_config

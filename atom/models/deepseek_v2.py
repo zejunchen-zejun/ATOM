@@ -53,7 +53,7 @@ from aiter.ops.triton.fused_mxfp4_quant import fused_rms_mxfp4_quant
 from torch import nn
 from transformers import PretrainedConfig
 
-from atom.config import Config, ATOMQuantizationConfig, get_current_atom_config
+from atom.config import Config, QuantizationConfig, get_current_atom_config
 from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.attention_mla import MLAModules
 from atom.model_ops.base_attention import Attention
@@ -142,7 +142,7 @@ class DeepseekV2MLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         reduce_results: bool = True,
         prefix: str = "",
     ) -> None:
@@ -175,7 +175,7 @@ class DeepseekV2MoE(nn.Module):
     def __init__(
         self,
         config: PretrainedConfig,
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
     ):
         super().__init__()
@@ -423,7 +423,7 @@ class Indexer(nn.Module):
                  config: PretrainedConfig,
                  hidden_size: int,
                  q_lora_rank: int,
-                 quant_config: Optional[ATOMQuantizationConfig],
+                 quant_config: Optional[QuantizationConfig],
                  cache_config: str,
                  topk_indices_buffer: Optional[torch.Tensor],
                  prefix: str = ""):
@@ -524,7 +524,7 @@ class DeepseekV2MLAAttention(nn.Module):
         rope_scaling: Optional[Dict[str, Any]] = None,
         max_position_embeddings: int = 8192,
         cache_config: str = "bf16",
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
         layer_num: int = 0,
         topk_indices_buffer: Optional[torch.Tensor] = None,
@@ -722,7 +722,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         prefix: str,
         topk_indices_buffer: Optional[torch.Tensor] = None,
         cache_config: str = "bf16",
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         layer_num: int = 0,
     ) -> None:
         super().__init__()

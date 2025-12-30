@@ -44,7 +44,7 @@ from atom.model_ops.linear import QKVParallelLinear, RowParallelLinear, Replicat
 from atom.model_ops.moe import FusedMoE
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
-from atom.config import ATOMQuantizationConfig, Config
+from atom.config import QuantizationConfig, Config
 from vllm.compilation.decorators import support_torch_compile
 
 from atom.models.utils import (
@@ -73,7 +73,7 @@ class MixtralMoE(nn.Module):
         top_k: int,
         hidden_size: int,
         intermediate_size: int,
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         tp_size: Optional[int] = None,
         dp_size: Optional[int] = None,
         prefix: str = "",
@@ -126,7 +126,7 @@ class MixtralAttention(nn.Module):
         max_position: int = 4096 * 32,
         rope_theta: float = 10000,
         cache_config: str = "bf16",
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
         layer_num: int = 0,
     ) -> None:
@@ -209,7 +209,7 @@ class MixtralDecoderLayer(nn.Module):
         self,
         config: MixtralConfig,
         cache_config: str = "bf16",
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
         layer_num: int = 0,
     ) -> None:

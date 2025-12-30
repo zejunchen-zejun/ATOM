@@ -21,6 +21,12 @@ def is_vllm() -> bool:
     return bool(_CURRENT_FRAMEWORK.lower() in ["vllm"])
 
 
+@lru_cache(maxsize=1)
+def is_plugin_mode() -> bool:
+    global _CURRENT_FRAMEWORK
+    return bool(_CURRENT_FRAMEWORK is not None)
+
+
 def _set_framework_backbone(framework: str) -> None:
     if framework.lower() not in _SUPPORTED_FRAMEWORKS:
         raise ValueError(f"Unsupported framework {framework} for ATOM to plug in")
@@ -53,7 +59,6 @@ def prepare_model(config: Any, framework: str):
         _register_ops_to_sglang,
         _init_aiter_dist,
     )
-    from atom.config import convert_config_to_atom
 
     if model_arch not in _ATOM_SUPPORTED_MODELS:
         raise Warning(f"ATOM does not support the required model architecture: {model_arch}")
@@ -66,7 +71,8 @@ def prepare_model(config: Any, framework: str):
     elif is_sglang():
         _register_ops_to_sglang()
 
-    atom_config = convert_config_to_atom(config)
+    from atom.plugin.plugin_config import generate_atom_config_in_plugin_mode
+    atom_config = generate_atom_config_in_plugin_mode(config)
 
     # init aiter dist for using aiter custom collective ops
     _init_aiter_dist(config=atom_config)

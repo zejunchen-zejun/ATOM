@@ -14,7 +14,7 @@ from torch import nn
 import torch.nn.functional as F
 from transformers import PretrainedConfig
 
-from atom.config import Config, ATOMQuantizationConfig, get_current_atom_config
+from atom.config import Config, QuantizationConfig, get_current_atom_config
 from atom.model_loader.weight_utils import set_weight_attrs
 from atom.model_ops.base_config import QuantizeMethodBase
 from atom.model_ops.topK import (
@@ -396,7 +396,7 @@ direct_register_custom_op(
 
 
 class Mxfp4MoEMethod(FusedMoEMethodBase):
-    def __init__(self, quant_config: ATOMQuantizationConfig):
+    def __init__(self, quant_config: QuantizationConfig):
         self.quant_config = quant_config
         self.quant_type = self.quant_config["quant_type"]
         self.quant_dtype = self.quant_config["quant_dtype"]
@@ -646,7 +646,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         quant_config: The quantization config.
     """
 
-    def __init__(self, quant_config: ATOMQuantizationConfig):
+    def __init__(self, quant_config: QuantizationConfig):
         self.quant_config = quant_config
         self.quant_type = self.quant_config["quant_type"]
         self.quant_dtype = self.quant_config["quant_dtype"]
@@ -1066,7 +1066,7 @@ class FusedMoE(torch.nn.Module):
         use_grouped_topk: bool = False,
         num_expert_group: Optional[int] = None,
         topk_group: Optional[int] = None,
-        quant_config: Optional[ATOMQuantizationConfig] = None,
+        quant_config: Optional[QuantizationConfig] = None,
         tp_size: Optional[int] = None,
         ep_size: Optional[int] = None,
         dp_size: Optional[int] = None,
