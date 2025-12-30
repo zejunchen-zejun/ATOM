@@ -9,7 +9,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Optional, Union
 
-from atom.plugin.prepare import is_vllm
 import torch
 from atom.utils import envs, get_open_port
 from atom.utils.distributed.utils import stateless_init_torch_distributed_process_group
@@ -572,6 +571,7 @@ class Config:
                 self.graph_bs = cuda_graph_sizes
 
     def __post_init__(self):
+        # assert os.path.isdir(self.model)
         assert (
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
@@ -592,7 +592,6 @@ class Config:
             self.max_model_len = min(
                 self.max_model_len, hf_config_max_position_embeddings
             )
-
         # assert self.max_num_batched_tokens >= self.max_model_len
         if not is_plugin_mode():
             if self.torch_profiler_dir is not None:
