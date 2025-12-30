@@ -14,7 +14,7 @@ from atom.model_ops.linear import (
 from atom.utils.compile import support_torch_compile
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 from atom.model_ops.moe import FusedMoE
-from atom.model_loader.loader import load_model
+from atom.model_loader.loader import load_model_in_plugin_mode
 from atom.models.utils import (
     IntermediateTensors,
     PPMissingLayer,
@@ -493,9 +493,8 @@ class Qwen3MoeForCausalLM(nn.Module):
         return self.model.get_expert_mapping()
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        # load weights in atom and discard the vllm weight generator
-        # by design, the weight loader is implemented in atom model loader
-        loaded_weights_record = load_model(model=self,
-                                           atom_config=self.atom_config,
-                                           prefix="model.")
+        # load weights in plugin mode and discard passed weights generator
+        loaded_weights_record = load_model_in_plugin_mode(model=self,
+                                                          config=self.atom_config,
+                                                          prefix="model.")
         return loaded_weights_record

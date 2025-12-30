@@ -11,6 +11,7 @@ import safetensors
 import torch
 from torch import nn
 from tqdm import tqdm
+from transformers import AutoConfig
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME
 
 from atom.model_loader.weight_utils import (
@@ -19,10 +20,9 @@ from atom.model_loader.weight_utils import (
 )
 from atom.model_ops.base_config import QuantizeMethodBase
 from atom.model_ops.moe import is_rocm_aiter_fusion_shared_expert_enabled
+from aiter.dist.parallel_state import get_tp_group
 from atom.models.deepseek_mtp import get_spec_layer_idx_from_weight_name, rewrite_spec_layer_name
 from atom.config import Config
-
-from aiter.dist.parallel_state import get_tp_group
 
 
 def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):
@@ -71,28 +71,49 @@ def safetensors_weights_iterator(
                     yield name, f.get_tensor(name)
 
 
+# when plugin mode, model loader method is bind to model implementation
+# thus call this interface to load the model, which leverags the load_model
+# method
+def load_model_in_plugin_mode(
+    model: nn.Module,
+    config: Config,
+    prefix: str = "",
+) -> set[str] | None:
+    assert config.plugin_config.is_plugin_mode, "Make sure ATOM is running in plugin mode"
+    if config.plugin_config.is_vllm:
+        model_name_or_path = config.plugin_config.model_config.model
+    elif config.plugin_config.is_sglang:
+        model_name_or_path = config.plugin_config.model_config.model_path
+    return load_model(model=model,
+                      model_name_or_path=model_name_or_path,
+                      hf_config=config.hf_config,
+                      load_dummy=config.load_dummy,
+                      spec_decode=False,
+                      prefix=prefix,
+                      is_plugin_mode=True)
+
+
+# when not plugin mode, the model runner will call this method to load the model
 def load_model(
     model: nn.Module,
-    atom_config: Config,
+    model_name_or_path: str,
+    hf_config: AutoConfig,
+    load_dummy: bool = False,
     spec_decode: bool = False,
     prefix: str = "",
-):
+    is_plugin_mode: bool = False,
+) -> set[str] | None:
     # need to record the loaded weight name for vllm load check
+    # it is only used in plugin mode for vllm
     loaded_weights_record = set[str]()
 
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
     weights_mapping = getattr(model, "weights_mapping", {})
     params_dict = dict(model.named_parameters())
-    hf_config = atom_config.model_config.hf_config
-    if atom_config.is_vllm:
-        model_name_or_path = atom_config.model_config.model
-    elif atom_config.is_sglang:
-        model_name_or_path = atom_config.model_config.model_path
-
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
         for name, weight_tensor in safetensors_weights_iterator(model_name_or_path):
-            if atom_config.load_dummy:
+            if load_dummy:
                 continue
             if name.endswith("kv_scale"):
                 continue
@@ -130,8 +151,6 @@ def load_model(
                     param = model.get_parameter(param_name)
                     weight_loader = getattr(param, "weight_loader")
                     # weight_loader(param, weight_tensor, shard_id)
-                    # print('[zejun] ATOM, k(', k, ') in packed_modules_mapping, weight_loader = ', weight_loader, flush=True)
-                    # print('[zejun] ATOM param_name = ', param_name, flush=True)
                     futures.append(
                         executor.submit(weight_loader, param, weight_tensor, shard_id)
                     )
@@ -193,12 +212,11 @@ def load_model(
         for future in concurrent.futures.as_completed(futures):
             future.result()
     for _, module in model.named_modules():
-        # print('[zejun] ATOM, module prepare to load model(process_weights_after_loading) = ', module, flush=True)
         if hasattr(module, "process_weights_after_loading"):
-            module.process_weights_after_loading(act_dtype=atom_config.model_config.dtype)
+            module.process_weights_after_loading()
         quant_method = getattr(module, "quant_method", None)
         if isinstance(quant_method, QuantizeMethodBase):
             quant_method.process_weights_after_loading(module)
 
-    return loaded_weights_record
-
+    if is_plugin_mode:
+        return loaded_weights_record
