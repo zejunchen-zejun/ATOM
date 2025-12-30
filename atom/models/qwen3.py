@@ -308,7 +308,10 @@ class Qwen3ForCausalLM(nn.Module):
             atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model")
         )
 
-        self.lm_head = ParallelLMHead(self.hf_config.vocab_size, self.hf_config.hidden_size)
+        self.lm_head = ParallelLMHead(num_embeddings=self.hf_config.vocab_size,
+                                      embedding_dim=self.hf_config.hidden_size,
+                                      bias=False,
+                                      prefix=maybe_prefix(prefix, "lm_head"))
         if self.hf_config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 

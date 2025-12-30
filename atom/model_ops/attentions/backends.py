@@ -7,10 +7,11 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, Type, TypeVar
 import numpy as np
 import torch
 from atom.model_engine.scheduler import ScheduledBatch
+from atom.model_engine.sequence import Sequence
 from atom.model_ops.attention_mla import MLAModules
 from atom.utils import CpuGpuBuffer
 from atom.utils.block_convert import block_table_convert_triton
-from atom.utils.attn_metadata import ATOMAttentionMetadata
+from atom.utils.forward_context import AttentionMetaData
 from torch import nn
 
 T = TypeVar("T", bound="BroadcastableModelInput")
@@ -84,11 +85,10 @@ class AttentionMetadataBuilder(ABC, Generic[T]):
         raise NotImplementedError
 
     @abstractmethod
-    def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
+    def build_for_cudagraph_capture(self, bs: int) -> AttentionMetaData:
         raise NotImplementedError
 
 
-# TODO: remove later
 class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
     def __init__(self, model_runner):
         self.model_runner = model_runner
@@ -202,7 +202,7 @@ class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
                 self.block_ratio,
             )
             ctx["block_tables_converted"] = var["block_tables_converted"].gpu[:bs]
-        attn_metadata = ATOMAttentionMetadata(
+        attn_metadata = AttentionMetaData(
             cu_seqlens_k=cu_seqlens_k.cuda(non_blocking=True),
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
@@ -216,7 +216,6 @@ class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
         # return var["positions"].copy_to_gpu(sum_scheduled_tokens)
 
     def build(self, batch: ScheduledBatch, bs: int):
-        # print('[zejun] ATOM CommonAttentionBuilder build', flush=True)
         if batch.total_tokens_num_prefill > 0:
             return self.prepare_prefill(batch)
         else:

@@ -433,12 +433,10 @@ class Qwen3MoeForCausalLM(nn.Module):
         )
 
         if get_pp_group().is_last_rank:
-            self.lm_head = ParallelLMHead(
-                self.config.vocab_size,
-                self.config.hidden_size,
-                org_num_embeddings=self.config.vocab_size,
-                prefix=maybe_prefix(prefix, "lm_head"),
-            )
+            self.lm_head = ParallelLMHead(num_embeddings=self.config.vocab_size,
+                                          embedding_dim=self.config.hidden_size,
+                                          bias=False,
+                                          prefix=maybe_prefix(prefix, "lm_head"))
         else:
             self.lm_head = PPMissingLayer()
         if self.config.tie_word_embeddings:

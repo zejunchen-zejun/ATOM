@@ -35,6 +35,7 @@ def _set_framework_backbone(framework: str) -> None:
 
 
 # config can be from vllm or sglang
+# TODO: remove the framework argument, get this info in sys argv
 def prepare_model(config: Any, framework: str):
     '''
     Prepare the model to upper framework, including

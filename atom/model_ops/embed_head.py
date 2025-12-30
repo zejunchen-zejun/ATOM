@@ -19,11 +19,6 @@ class VocabParallelEmbedding(nn.Module):
         self,
         num_embeddings: int,
         embedding_dim: int,
-        params_dtype: torch.dtype | None = None,
-        org_num_embeddings: int | None = None,
-        padding_size: int = 0,
-        quant_config = None,
-        prefix: str = "",
     ):
         super().__init__()
         self.tp_rank = get_tp_group().rank_in_group
