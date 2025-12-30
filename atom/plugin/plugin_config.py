@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import torch
 
-from atom.config import Config
+from atom.config import Config, ParallelConfig, CompilationConfig
 from atom.config import set_current_atom_config
 
 @dataclass
@@ -68,8 +68,11 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
         port=None,
         torch_profiler_dir=None,
         compilation_config=vllm_compilation_config,
+        asyncio_mode=False,
+        load_dummy=False,
         enable_expert_parallel=vllm_parallel_config.enable_expert_parallel,
         master_addr=None,
+        enable_dp_attention=False,
         plugin_config=plugin_config,
     )
 
@@ -84,7 +87,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     from sglang.srt.configs.modelopt_config import ModelOptConfig
     from sglang.srt.configs.load_config import LoadConfig
 
-    print('[zejun] ATOM prepare_server_args, sys.argv = ', sys.argv, flush=True)
+    # print('[zejun] ATOM prepare_server_args, sys.argv = ', sys.argv, flush=True)
     # sglang has no global config variable like vllm,
     # so here construct the server args from sys.argv passed by users
     # this is the only way to get full arguments
@@ -131,26 +134,44 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     sgl_compilation_config = CompilationConfig()
     sgl_compilation_config.static_forward_context = {}
 
-    return Config(
+    plugin_config = PluginConfig(
         # common config
         model_config=sgl_model_config,
-        cache_config=None,
-        parallel_config=sgl_parallel_config,
-        compilation_config=sgl_compilation_config,
-        scheduler_config=None,
-        kv_cache_dtype=server_args.kv_cache_dtype,
-        max_model_len=server_args.context_length,
-        enable_expert_parallel=bool(server_args.ep_size > 1),
-        # sglang specific
-        sgl_model_opt_config=sgl_model_opt_config,
-        sgl_load_config=sgl_load_config,
-        enable_torch_compile=server_args.enable_torch_compile,
-        disable_cuda_graph=server_args.disable_cuda_graph,
-        enable_dp_attention=server_args.enable_dp_attention,
-        dist_init_addr=server_args.dist_init_addr,
-        port_args=PortArgs.init_new(server_args),
-        # atom specific
+        is_plugin_mode=True,
+        is_vllm=False,
         is_sglang=True,
+        # sglang specific
+        sglang_model_opt_config=sgl_model_opt_config,
+        sglang_load_config=sgl_load_config,
+        sglang_enable_torch_compile=server_args.enable_torch_compile,
+        sglang_disable_cuda_graph=server_args.disable_cuda_graph,
+        sglang_enable_dp_attention=server_args.enable_dp_attention,
+        sglang_dist_init_addr=server_args.dist_init_addr,
+        sglang_port_args=PortArgs.init_new(server_args),
+    )
+
+    # TODO: sgl doesn't have max num batched tokens force to 16k
+    return Config(
+        model=None,
+        max_num_batched_tokens=16384,
+        max_num_seqs=server_args.max_running_requests,
+        max_model_len=server_args.context_length,
+        gpu_memory_utilization=server_args.mem_fraction_static,
+        tensor_parallel_size=server_args.tp_size,
+        enforce_eager=not server_args.enable_torch_compile,
+        plugin_config=plugin_config,
+        hf_config=sgl_model_config.hf_config,
+        parallel_config=sgl_parallel_config,
+        kv_cache_dtype=server_args.kv_cache_dtype,
+        enable_prefix_caching=False,
+        port=None,
+        torch_profiler_dir=None,
+        compilation_config=sgl_compilation_config,
+        asyncio_mode=False,
+        load_dummy=False,
+        enable_expert_parallel=bool(server_args.ep_size > 1),
+        master_addr=None,
+        enable_dp_attention=server_args.enable_dp_attention,
     )
 
 
