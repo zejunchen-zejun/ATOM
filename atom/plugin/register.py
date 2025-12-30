@@ -23,31 +23,45 @@ def _register_custom_attention_to_sglang() -> None:
     pass
 
 
+def _register_ops_to_vllm() -> None:
+    '''
+    Register custom ops to vllm, including attention
+    '''
+    _register_custom_attention_to_vllm()
+
+
+# TODO: register custom attention for sglang
+def _register_ops_to_sglang() -> None:
+    '''
+    Register custom ops to sglang, including attention
+    '''
+    _register_custom_attention_to_sglang()
+
+
 def _init_aiter_dist(config: Config) -> None:
+    '''
+    Initialize aiter dist for using aiter custom collective op
+    '''
     from aiter import init_dist_env
     from aiter.dist.utils import get_distributed_init_method
 
-    rank = config.parallel_config.rank
-    tensor_parallel_size = config.parallel_config.tensor_parallel_size
+    rank = config.plugin_config.rank
+    tensor_parallel_size = config.tensor_parallel_size
 
-    if config.is_vllm:
+    assert config.plugin_config.is_plugin_mode, "Make sure ATOM is running in plugin mode"
+
+    if config.plugin_config.is_vllm:
         dp_master_ip = config.parallel_config.data_parallel_master_ip
         dp_master_port = config.parallel_config.data_parallel_master_port
-    elif config.is_sglang:
-        if config.dist_init_addr is not None:
-            dp_master_ip, dp_master_port = config.dist_init_addr.split(":")
+    elif config.plugin_config.is_sglang:
+        if config.plugin_config.sglang_dist_init_addr is not None:
+            dp_master_ip, dp_master_port = config.plugin_config.sglang_dist_init_addr.split(":")
         else:
             dp_master_ip = f"127.0.0.1"
-            dp_master_port = config.port_args.nccl_port
+            dp_master_port = config.plugin_config.sglang_port_args.nccl_port
 
     distributed_init_method = get_distributed_init_method(dp_master_ip, dp_master_port)
 
-    # print('[zejun] ATOM aiter init_dist_env, distributed_init_method = ', distributed_init_method,\
-    #                                       ', tensor_parallel_size = ', tensor_parallel_size,\
-    #                                       ', rank = ', rank,\
-    #                                       ', data_parallel_size=', config.parallel_config.data_parallel_size,\
-    #                                       ', data_parallel_rank=', config.parallel_config.data_parallel_rank,\
-    #                                       flush=True)
     init_dist_env(
         tensor_model_parallel_size=tensor_parallel_size,
         rankID=rank,
@@ -56,18 +70,3 @@ def _init_aiter_dist(config: Config) -> None:
         data_parallel_size=config.parallel_config.data_parallel_size,
         data_parallel_rank=config.parallel_config.data_parallel_rank,
     )
-
-
-def _register_ops_to_vllm() -> None:
-    '''
-    Register custom ops to vllm, including attention
-    '''
-    _register_custom_attention_to_vllm()
-
-
-# TODO: add for sglang
-def _register_ops_to_sglang() -> None:
-    '''
-    Register custom ops to sglang, including attention
-    '''
-    _register_custom_attention_to_sglang()

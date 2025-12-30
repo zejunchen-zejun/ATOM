@@ -12,6 +12,7 @@ from atom.config import set_current_atom_config
 class PluginConfig:
     # common config for both framework
     model_config: Any = None
+    rank: int = 0
     is_plugin_mode: bool = False
     is_vllm: bool = False
     is_sglang: bool = False
@@ -42,6 +43,7 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
     plugin_config = PluginConfig(
         # common config
         model_config=vllm_model_config,
+        rank=vllm_parallel_config.rank,
         is_plugin_mode=True,
         is_vllm=True,
         is_sglang=False,
@@ -88,6 +90,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     from sglang.srt.configs.load_config import LoadConfig
 
     # print('[zejun] ATOM prepare_server_args, sys.argv = ', sys.argv, flush=True)
+
     # sglang has no global config variable like vllm,
     # so here construct the server args from sys.argv passed by users
     # this is the only way to get full arguments
@@ -113,18 +116,15 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
         rl_quant_profile=server_args.rl_quant_profile,
     )
 
-    # sglang doesn't passed the rank number in config, so ATOM get rank number
-    # through torch.distributed.get_rank()
+    # sglang doesn't passed the rank number in config, so ATOM plugin 
+    # get rank number through the torch.distributed.get_rank()
     rank = torch.distributed.get_rank()
 
     sgl_parallel_config = ParallelConfig(
-        pipeline_parallel_size=server_args.pp_size,
-        tensor_parallel_size=server_args.tp_size,
         data_parallel_size=server_args.dp_size,
         world_size=int(server_args.pp_size * server_args.tp_size),
         # data_parallel_master_ip=server_args.master_addr,
         # data_parallel_master_port=,
-        rank=rank,
         # data_parallel_size_local=server_args.data_parallel_size_local,
         # data_parallel_rank=server_args.data_parallel_rank,
         # data_parallel_rank_local=server_args.data_parallel_rank_local,
@@ -137,6 +137,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     plugin_config = PluginConfig(
         # common config
         model_config=sgl_model_config,
+        rank=rank,
         is_plugin_mode=True,
         is_vllm=False,
         is_sglang=True,
