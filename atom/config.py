@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Optional, Union
 
+from atom.plugin.prepare import is_vllm
 import torch
 from atom.utils import envs, get_open_port
 from atom.utils.distributed.utils import stateless_init_torch_distributed_process_group
@@ -406,7 +407,6 @@ class ParallelConfig:
     data_parallel_base_port: int = 29400
 
     data_parallel_master_ip: str = "127.0.0.1"
-    """IP of the data parallel master."""
 
     @property
     def world_size_across_dp(self) -> int:
@@ -576,19 +576,16 @@ class Config:
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
         assert 1 <= self.tensor_parallel_size <= 8
-        assert self.is_vllm or self.is_sglang, "ATOM should be work as plugin for vllm or sglang for now"
 
         if is_plugin_mode():
             hf_config = self.plugin_config.model_config.hf_config
         else:
             hf_config = get_hf_config(self.model)
-        # TODO: here is free for ATOM to define its quant config
         self.quant_config = get_quant_config(hf_config)
 
         hf_config_max_position_embeddings = getattr(
             self.hf_config, "max_position_embeddings", 8192
         )
-
         if self.max_model_len is None:
             self.max_model_len = hf_config_max_position_embeddings
         else:
@@ -597,7 +594,14 @@ class Config:
             )
 
         # assert self.max_num_batched_tokens >= self.max_model_len
-        if self.is_vllm:
+        if not is_plugin_mode():
+            if self.torch_profiler_dir is not None:
+                os.makedirs(self.torch_profiler_dir, exist_ok=True)
+            assert self.torch_profiler_dir is None or os.path.isdir(
+                self.torch_profiler_dir
+            ), f"torch_profiler_dir {self.torch_profiler_dir} is not a valid directory"
+
+        if not is_plugin_mode() or self.plugin_config.is_vllm:
             if self.compilation_config.level == CompilationLevel.PIECEWISE:
                 self.compilation_config.set_splitting_ops_for_v1()
                 self._set_cudagraph_sizes()
