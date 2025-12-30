@@ -388,12 +388,6 @@ def get_hf_config(model: str) -> PretrainedConfig:
 
 @dataclass
 class ParallelConfig:
-    """Configuration for the distributed execution."""
-
-    pipeline_parallel_size: int = 1
-    """Number of pipeline parallel groups."""
-    tensor_parallel_size: int = 1
-    """Number of tensor parallel groups."""
     data_parallel_size: int = 1
     """Number of data parallel groups. MoE layers will be sharded according to
     the product of the tensor parallel size and data parallel size."""
@@ -413,10 +407,6 @@ class ParallelConfig:
 
     data_parallel_master_ip: str = "127.0.0.1"
     """IP of the data parallel master."""
-    world_size: int = 1
-    """world_size is TPxPP, it affects the number of workers we create."""
-    rank: int = 0
-    """Global rank in distributed setup."""
 
     @property
     def world_size_across_dp(self) -> int:
@@ -585,15 +575,18 @@ class Config:
         assert (
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
-        assert 1 <= self.parallel_config.tensor_parallel_size <= 8
+        assert 1 <= self.tensor_parallel_size <= 8
         assert self.is_vllm or self.is_sglang, "ATOM should be work as plugin for vllm or sglang for now"
 
-        hf_config = self.model_config.hf_config
+        if is_plugin_mode():
+            hf_config = self.plugin_config.model_config.hf_config
+        else:
+            hf_config = get_hf_config(self.model)
         # TODO: here is free for ATOM to define its quant config
-        self.atom_quant_config = get_quant_config(hf_config)
+        self.quant_config = get_quant_config(hf_config)
 
         hf_config_max_position_embeddings = getattr(
-            hf_config, "max_position_embeddings", 8192
+            self.hf_config, "max_position_embeddings", 8192
         )
 
         if self.max_model_len is None:
@@ -612,8 +605,8 @@ class Config:
                 self.compilation_config.init_with_cudagraph_sizes()
 
         self.torch_dtype = (
-            hf_config.torch_dtype
-            if getattr(hf_config, "torch_dtype", None) is not None
+            self.hf_config.torch_dtype
+            if getattr(self.hf_config, "torch_dtype", None) is not None
             else torch.bfloat16
         )
 
@@ -643,7 +636,8 @@ class Config:
             vllm_factors.append(self.parallel_config.compute_hash())
 
         factors.append(vllm_factors)
-        factors.append(self.parallel_config.tensor_parallel_size)
+        factors.append(self.tensor_parallel_size)
+        factors.append(self.enable_dp_attention)
 
         hash_str = hashlib.md5(
             str(factors).encode(), usedforsecurity=False
