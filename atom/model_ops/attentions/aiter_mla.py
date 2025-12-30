@@ -15,15 +15,13 @@ from atom.utils.block_convert import (
     block_table_convert_triton,
     kv_indices_convert_triton,
 )
-from atom.utils.attn_metadata import ATOMAttentionMetadata, Context
+from atom.utils.forward_context import AttentionMetaData, Context
 
 from aiter import dtypes, get_mla_metadata_info_v1, get_mla_metadata_v1
-# from vllm.distributed.parallel_state import get_tp_group
 from aiter.dist.parallel_state import get_tp_group
 
 from .backends import AttentionBackend, CommonAttentionBuilder
-# TODO: for MLA, the attn backend should use vllm
-# from vllm.attention.backends.abstract import AttentionBackend
+
 
 class AiterMLABackend(AttentionBackend):
     @staticmethod
@@ -47,7 +45,7 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
         )
         assert self.block_size == 1, "AITER MLA requires only block size 1."
         config = model_runner.config
-        hf_config = config.model_config.hf_config
+        hf_config = config.hf_config
         self.num_attention_heads = (
             hf_config.num_attention_heads // get_tp_group().world_size
         )
@@ -278,7 +276,7 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
                     self.block_ratio,
                 )
                 ctx["block_tables_converted"] = var["block_tables_converted"].gpu[:bs]
-        attn_metadata = ATOMAttentionMetadata(
+        attn_metadata = AttentionMetaData(
             dropout_p=dropout_p,
             max_q_len=max_q_len,
             **ctx,
@@ -289,11 +287,11 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
         #         print(f"{el}: {var}")
         return attn_metadata, positions
 
-    def build_for_cudagraph_capture(self, bs: int) -> ATOMAttentionMetadata:
+    def build_for_cudagraph_capture(self, bs: int) -> AttentionMetaData:
         var = self.model_runner.forward_vars
         sparse_kv_indptr = var["sparse_kv_indptr"].gpu if self.is_sparse else None
         ctx_mla_ps = self.set_mla_persistent_worker_buffers(bs)
-        attn_matadata = ATOMAttentionMetadata(
+        attn_matadata = AttentionMetaData(
             slot_mapping=var["slot_mapping"].gpu[:bs],
             context_lens=var["context_lens"].gpu[:bs],
             block_tables=var["block_tables"].gpu[:bs],
@@ -319,5 +317,4 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
         context = Context(
             positions=positions, is_prefill=False, batch_size=bs, graph_bs=bs
         )
-        attn_matadata.context = context
-        return attn_matadata
+        return attn_matadata, context
