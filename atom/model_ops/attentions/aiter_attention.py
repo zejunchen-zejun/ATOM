@@ -26,7 +26,7 @@ from vllm.config.vllm import VllmConfig
 from vllm.v1.kv_cache_interface import AttentionSpec
 from vllm.v1.attention.backends.utils import split_decodes_prefills_and_extends
 
-# TODO: use vllm father class
+# TODO: retrieve atom attention backend
 class ATOMAttentionBackend(AttentionBackend):
     accept_output_buffer: bool = True
     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]

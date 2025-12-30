@@ -18,7 +18,7 @@ class ATOMAttentionForPlugin(nn.Module):
         head_dim,
         scale,
         num_kv_heads,
-        layer_id=0,
+        layer_num=0,
         cache_config=None,
         quant_config=None,
         alibi_slopes=None,
@@ -51,7 +51,7 @@ class ATOMAttentionForPlugin(nn.Module):
                 head_dim=head_dim,
                 scaling=scale,
                 num_kv_heads=num_kv_heads,
-                layer_id=layer_id,
+                layer_id=layer_num,
                 prefix=maybe_prefix(prefix, "attn"),
             )
 
