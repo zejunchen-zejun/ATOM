@@ -7,6 +7,7 @@ from typing import Optional
 import torch
 from atom.utils.custom_register import direct_register_custom_op
 
+
 def is_rocm_aiter_fusion_shared_expert_enabled():
     return True
 

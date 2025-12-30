@@ -79,9 +79,9 @@ from atom.models.utils import (
     make_layers,
     maybe_prefix,
 )
-from vllm.forward_context import get_forward_context
+from atom.utils.forward_context import get_forward_context
 from atom.utils.custom_register import direct_register_custom_op
-from vllm.compilation.decorators import support_torch_compile
+from atom.utils.decorators import support_torch_compile
 from atom.utils import envs
 # from vllm.model_executor.layers.quantization.utils.fp8_utils import per_token_group_quant_fp8
 

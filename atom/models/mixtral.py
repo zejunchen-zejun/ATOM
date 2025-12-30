@@ -45,7 +45,7 @@ from atom.model_ops.moe import FusedMoE
 from aiter.rotary_embedding import get_rope
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 from atom.config import QuantizationConfig, Config
-from vllm.compilation.decorators import support_torch_compile
+from atom.utils.decorators import support_torch_compile
 
 from atom.models.utils import (
     PPMissingLayer,
