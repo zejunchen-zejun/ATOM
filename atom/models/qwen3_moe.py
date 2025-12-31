@@ -86,7 +86,7 @@ class Qwen3MoeMLP(nn.Module):
 class Qwen3MoeSparseMoeBlock(nn.Module):
     def __init__(
         self,
-        config: Any,
+        config: PretrainedConfig,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
     ):
@@ -352,7 +352,6 @@ class Qwen3MoeModel(nn.Module):
             prefix=f"{prefix}.layers",
             layer_num_offset=0,
         )
-
         if get_pp_group().is_last_rank:
             self.norm = RMSNorm(
                 self.config.hidden_size,
@@ -388,7 +387,7 @@ class Qwen3MoeModel(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        for layer in self.layers[self.start_layer : self.end_layer]:
+        for layer in self.layers[self.start_layer:self.end_layer]:
             hidden_states, residual = layer(positions, hidden_states, residual, **model_kwargs)
 
         if not get_pp_group().is_last_rank:
@@ -410,7 +409,9 @@ class Qwen3MoeModel(nn.Module):
         )
 
 
-class Qwen3MoeForCausalLM(nn.Module):
+class Qwen3MoeForCausalLM(
+    nn.Module
+):
     packed_modules_mapping = {
         "q_proj": ("qkv_proj", "q"),
         "k_proj": ("qkv_proj", "k"),
@@ -456,7 +457,7 @@ class Qwen3MoeForCausalLM(nn.Module):
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
         **model_kwargs: dict[str, Any] | None,
-    ) -> torch.Tensor | IntermediateTensors:
+    ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(
             input_ids=input_ids,
             positions=positions,
@@ -469,7 +470,7 @@ class Qwen3MoeForCausalLM(nn.Module):
     def compute_logits(
         self,
         hidden_states: torch.Tensor,
-    ) -> torch.Tensor | None:
+    ) -> Optional[torch.Tensor]:
         logits = self.lm_head(hidden_states)
         return logits
 
@@ -486,7 +487,7 @@ class Qwen3MoeForCausalLM(nn.Module):
                         dtype=dtype,
                         device=device),
         })
-    
+
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
         return self.model.get_expert_mapping()
 
