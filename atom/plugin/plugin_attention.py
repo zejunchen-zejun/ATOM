@@ -21,8 +21,11 @@ class AttentionForPlugin(nn.Module):
         layer_num=0,
         prefix: Optional[str] = None,
         atom_config: Config = None,
+        **kwargs,
     ):
         super().__init__()
+        atom_config = kwargs.get("atom_config", None)
+        assert atom_config is not None, "atom_config is required for AttentionForPlugin"
 
         if is_vllm():
             # use vllm base attention as the custom attention has been 
@@ -30,6 +33,8 @@ class AttentionForPlugin(nn.Module):
             from vllm.attention.layer import Attention, AttentionType
             print('[zejun] AttentionForPlugin: using vllm base attention', flush=True)
             assert atom_config is not None, "atom_config is required for plugin mode to vllm"
+
+            # use vllm cache config and quant config to follow the convention of vllm
             cache_config = atom_config.plugin_config.vllm_cache_config
             quant_config = atom_config.plugin_config.vllm_quant_config
             self.attn = Attention(

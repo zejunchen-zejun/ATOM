@@ -21,6 +21,8 @@ from aiter.ops.triton.unified_attention import unified_attention
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 
 
+# this class is impl related
+# TODO: check if it is almost same as the plugin version
 class Attention(nn.Module):
 
     def __init__(

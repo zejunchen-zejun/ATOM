@@ -85,7 +85,7 @@ class Attention(nn.Module):
                 num_kv_heads=num_kv_heads,
                 layer_id=layer_num,
                 prefix=f"{prefix}.attn",
-                atom_config=kwargs.get("atom_config", None),
+                **kwargs,
             )
             return
 

@@ -24,7 +24,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from symbol import atom
 import torch
 from torch import nn
 
@@ -33,9 +32,8 @@ from aiter.dist.parallel_state import get_tp_group
 from typing import Optional, Any, Iterable
 from transformers import Qwen3Config
 
-from atom.config import Config
+from atom.config import QuantizationConfig, Config
 from atom.model_ops.activation import SiluAndMul
-# from atom.model_ops.attention import Attention
 from atom.model_ops.base_attention import Attention
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
@@ -43,9 +41,7 @@ from atom.model_ops.linear import (
     MergedColumnParallelLinear,
     RowParallelLinear,
 )
-# TODO: refine the decorator to support vllm+sglang+no plugin mode
-# from atom.utils.compile import support_torch_compile
-from atom.plugin.compile_decorator import support_torch_compile
+from atom.utils.decorators import support_torch_compile
 
 # from atom.model_ops.rotary_embedding import get_rope
 from aiter.rotary_embedding import get_rope
@@ -72,7 +68,6 @@ class Qwen3Attention(nn.Module):
         layer_num: int = 0,
         atom_config: Config = None,
         prefix: str = "",
-        attn_type = None,
     ) -> None:
         super().__init__()
         tp_size = get_tp_group().world_size
@@ -193,12 +188,7 @@ class Qwen3DecoderLayer(nn.Module):
     ) -> None:
         super().__init__()
         kv_cache_dtype = atom_config.kv_cache_dtype
-        # cache_config = None
-        # # cache config and quant config are needed by vllm to pass to attention part
-        # if atom_config.plugin_config.is_plugin_mode and atom_config.plugin_config.is_vllm:
-        #     cache_config = atom_config.plugin_config.vllm_cache_config
         self.layer_num = layer_num
-
         self.self_attn = Qwen3Attention(
             hidden_size=config.hidden_size,
             num_heads=config.num_attention_heads,
