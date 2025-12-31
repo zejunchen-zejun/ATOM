@@ -23,7 +23,7 @@ from atom.models.utils import (
     maybe_prefix,
 )
 from atom.utils import envs
-from atom.model_ops.plugin_attention import ATOMAttentionForPlugin
+from atom.model_ops.base_attention import Attention
 
 from aiter.dist.parallel_state import (
     get_pp_group,
@@ -192,19 +192,16 @@ class Qwen3MoeAttention(nn.Module):
             base=rope_theta,
             rope_scaling=rope_scaling,
         )
-
-        # TODO: align with atom
-        self.attn = ATOMAttentionForPlugin(
+        self.attn = Attention(
             num_heads=self.num_heads,
             head_dim=self.head_dim,
             scale=self.scaling,
             num_kv_heads=self.num_kv_heads,
-            cache_config=cache_config,
-            quant_config=vllm_quant_config,
-            alibi_slopes=None,
-            prefix=f"{prefix}.attn",
+            kv_cache_dtype=kv_cache_dtype,
+            layer_num=layer_num,
+            use_mla=False,
+            config=atom_config,
         )
-
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
 

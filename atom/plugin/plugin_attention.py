@@ -1,7 +1,5 @@
 # # SPDX-License-Identifier: MIT
 # # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
-
-# TODO: merge with atom attention
 from typing import Optional, Any
 
 import torch
@@ -9,9 +7,11 @@ from torch import nn
 
 from atom.models.utils import maybe_prefix
 from atom.utils.prepare import is_vllm, is_sglang
+from atom.config import Config
 
 # Attention class for plugin mode
-class ATOMAttentionForPlugin(nn.Module):
+# It is only a wrapper for constructing and calling the attention
+class AttentionForPlugin(nn.Module):
     def __init__(
         self,
         num_heads,
@@ -19,10 +19,8 @@ class ATOMAttentionForPlugin(nn.Module):
         scale,
         num_kv_heads,
         layer_num=0,
-        cache_config=None,
-        quant_config=None,
-        alibi_slopes=None,
         prefix: Optional[str] = None,
+        atom_config: Config = None,
     ):
         super().__init__()
 
@@ -30,7 +28,10 @@ class ATOMAttentionForPlugin(nn.Module):
             # use vllm base attention as the custom attention has been 
             # registered to vllm in atom
             from vllm.attention.layer import Attention, AttentionType
-            # print('[zejun] ATOMAttentionForPlugin: using vllm base attention', flush=True)
+            print('[zejun] AttentionForPlugin: using vllm base attention', flush=True)
+            assert atom_config is not None, "atom_config is required for plugin mode to vllm"
+            cache_config = atom_config.plugin_config.vllm_cache_config
+            quant_config = atom_config.plugin_config.vllm_quant_config
             self.attn = Attention(
                 num_heads=num_heads,
                 head_size=head_dim,
@@ -38,14 +39,14 @@ class ATOMAttentionForPlugin(nn.Module):
                 num_kv_heads=num_kv_heads,
                 cache_config=cache_config,
                 quant_config=quant_config,
-                alibi_slopes=alibi_slopes,
+                alibi_slopes=None,
                 prefix=f"{prefix}.attn",
                 attn_type=AttentionType.DECODER,
             )
         elif is_sglang():
             # TODO: for now using radix attention as default for sglang
             from sglang.srt.layers.radix_attention import RadixAttention
-            # print('[zejun] ATOMAttentionForPlugin: using sglang radix attention', flush=True)
+            print('[zejun] AttentionForPlugin: using sglang radix attention', flush=True)
             self.attn = RadixAttention(
                 num_heads=num_heads,
                 head_dim=head_dim,
@@ -62,6 +63,7 @@ class ATOMAttentionForPlugin(nn.Module):
                       **model_kwargs: dict[str, Any] | None,
     ) -> torch.Tensor:
         # for vllm, model_kwargs is not used because only q k v are passed
+        # vllm will dispatch to the attention impl from the backend atom registered
         return self.attn(query, key, value)
 
     def _forward_sglang(self,

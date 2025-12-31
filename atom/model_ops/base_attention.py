@@ -77,7 +77,16 @@ class Attention(nn.Module):
 
         # for plugin mode
         if is_plugin_mode():
-        
+            from atom.plugin.plugin_attention import AttentionForPlugin
+            self.plugin_attn = AttentionForPlugin(
+                num_heads=num_heads,
+                head_dim=head_dim,
+                scale=scale,
+                num_kv_heads=num_kv_heads,
+                layer_id=layer_num,
+                prefix=f"{prefix}.attn",
+                atom_config=kwargs.get("atom_config", None),
+            )
             return
 
         # for atom mode
@@ -128,31 +137,19 @@ class Attention(nn.Module):
 
     def forward(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
         positions: torch.Tensor = None,
         q_scale: Optional[torch.Tensor]=None,
         **kwargs,
     ):
-    # def forward(
-    #     self,
-    #     layer: torch.nn.Module,
-    #     query: torch.Tensor,
-    #     key: torch.Tensor,
-    #     value: torch.Tensor,
-    #     kv_cache: torch.Tensor,
-    #     attn_metadata: ATOMAttentionMetadata,
-    #     output: torch.Tensor | None = None,
-    #     output_scale: torch.Tensor | None = None,
-    #     output_block_scale: torch.Tensor | None = None,
-    # ) -> torch.Tensor:
-        # TODO: graph mode
+        # TODO: how to hanlde the graph mode
         if is_plugin_mode():
-            # TODO: forward here
+            output = self.plugin_attn(query, key, value, **kwargs)
             return output
 
         output = torch.ops.aiter.unified_attention_with_output_base(
-            q, q_scale, k, v, positions, self.layer_name, self.use_mla
+            query, q_scale, key, value, positions, self.layer_name, self.use_mla
         )
         return output

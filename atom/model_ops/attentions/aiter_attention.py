@@ -2,7 +2,7 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Optional, Type
+from typing import Optional, Type, ClassVar
 
 import numpy as np
 import torch
@@ -16,26 +16,40 @@ from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
 from .backends import AttentionBackend, CommonAttentionBuilder
 from atom.utils import CpuGpuBuffer
 
+from atom.plugin.prepare import is_plugin_mode
+
 # from .backends import AttentionBackend
 # TODO: for MLA, the attn backend should use vllm
-from vllm.attention.backends.abstract import AttentionBackend
-from vllm.attention.backends.abstract import MultipleOf
+# from vllm.attention.backends.abstract import AttentionBackend
+# from vllm.attention.backends.abstract import MultipleOf
 
-from vllm.v1.attention.backends.utils import (
-    AttentionCGSupport,
-    CommonAttentionMetadata,
-    AttentionMetadataBuilder,
-)
-from vllm.config.vllm import VllmConfig
-from vllm.v1.kv_cache_interface import AttentionSpec
-from vllm.v1.attention.backends.utils import split_decodes_prefills_and_extends
+# from vllm.v1.attention.backends.utils import (
+#     AttentionCGSupport,
+#     CommonAttentionMetadata,
+#     AttentionMetadataBuilder,
+# )
+# from vllm.config.vllm import VllmConfig
+# from vllm.v1.kv_cache_interface import AttentionSpec
+# from vllm.v1.attention.backends.utils import split_decodes_prefills_and_extends
 
 
-# TODO: use this backend and register to vllm
 class AiterBackend(AttentionBackend):
+    accept_output_buffer: bool = True
+    supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
+
+    @staticmethod
+    def get_supported_kernel_block_sizes():
+        # only for plugin mode for vllm
+        from vllm.attention.backends.abstract import MultipleOf
+        return [MultipleOf(16)]
+
+    @classmethod
+    def get_supported_head_sizes(cls) -> list[int]:
+        return [64, 128, 256]
+
     @staticmethod
     def get_name() -> str:
-        return "ROCM_AITER_ATTENTION"
+        return "ROCM_AITER_ATTENTION" if not is_plugin_mode() else "CUSTOM"
 
     @staticmethod
     def get_builder_cls() -> Type["AiterAttentionMetadataBuilder"]:
@@ -45,31 +59,7 @@ class AiterBackend(AttentionBackend):
     def get_impl_cls() -> Type["Attention"]:
         return Attention
 
-# TODO: retrieve atom attention backend
-class ATOMAttentionBackend(AttentionBackend):
-    accept_output_buffer: bool = True
-    supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
-
-    @staticmethod
-    def get_supported_kernel_block_sizes() -> list[int | MultipleOf]:
-        return [MultipleOf(16)]
-
-    @classmethod
-    def get_supported_head_sizes(cls) -> list[int]:
-        return [64, 128, 256]
-
-    @staticmethod
-    def get_name() -> str:
-        return "CUSTOM"
-
-    @staticmethod
-    def get_impl_cls() -> Type["ATOMAttentionImpl"]:
-        return ATOMAttentionImpl
-
-    @staticmethod
-    def get_builder_cls() -> Type["ATOMAttentionMetadataBuilder"]:
-        return ATOMAttentionMetadataBuilder
-
+    # only for plugin mode for vllm
     @staticmethod
     def get_kv_cache_shape(
         num_blocks: int,
@@ -83,19 +73,64 @@ class ATOMAttentionBackend(AttentionBackend):
 
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
+
+# TODO: retrieve atom attention backend
+# class ATOMAttentionBackend(AttentionBackend):
+#     accept_output_buffer: bool = True
+#     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
+
+#     @staticmethod
+#     def get_supported_kernel_block_sizes() -> list[int | MultipleOf]:
+#         return [MultipleOf(16)]
+
+#     @classmethod
+#     def get_supported_head_sizes(cls) -> list[int]:
+#         return [64, 128, 256]
+
+#     @staticmethod
+#     def get_impl_cls() -> Type["ATOMAttentionImpl"]:
+#         return ATOMAttentionImpl
+
+#     @staticmethod
+#     def get_builder_cls() -> Type["ATOMAttentionMetadataBuilder"]:
+#         return ATOMAttentionMetadataBuilder
+
+#     @staticmethod
+#     def get_kv_cache_shape(
+#         num_blocks: int,
+#         block_size: int,
+#         num_kv_heads: int,
+#         head_size: int,
+#         cache_dtype_str: str = "auto",
+#     ) -> tuple[int, ...]:
+#         if block_size % 16 != 0:
+#             raise ValueError("Block size must be a multiple of 16.")
+
+#         return (2, num_blocks, block_size, num_kv_heads, head_size)
+
 # TODO: this metadata builder is tightly build with vllm
-class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadata]):
-    _cudagraph_support = AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
+# TODO: inherit issue
+# class AiterAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadata]):
+class AiterAttentionMetadataBuilder(CommonAttentionBuilder):
+    # for atom mode
+    BLOCK_TABLE_EXTENDER: list[list[int]] = [[]]
+
+    # for plugin mode
+    # _cudagraph_support=1 means UNIFORM_SINGLE_TOKEN_DECODE, 
+    # here avoid using enum because of importing type
+    _cudagraph_support = 1
     reorder_batch_threshold: int = 1
 
     def __init__(
         self,
-        kv_cache_spec: AttentionSpec,
-        layer_names: list[str],
-        vllm_config: VllmConfig,
-        device: torch.device,
+        model_runner,
+        kv_cache_spec = None,
+        layer_names = None,
+        vllm_config = None,
+        device = None,
     ):
-        super().__init__(kv_cache_spec, layer_names, vllm_config, device)
+        super().__init__(model_runner)
+        # super().__init__(kv_cache_spec, layer_names, vllm_config, device)
 
         self.vllm_config = vllm_config
         self.model_config = vllm_config.model_config
@@ -118,9 +153,9 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
         max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
         self.positions = CpuGpuBuffer(max_num_batched_tokens, **i64_kwargs)
 
-    def build_for_cudagraph_capture(
-        self, common_attn_metadata: CommonAttentionMetadata
-    ):
+    # TODO: merge here
+    # def build_for_cudagraph_capture(self, bs: int) -> AttentionMetaData:
+    def build_for_cudagraph_capture(self, common_attn_metadata):
         self.total_tokens = (
             self.model_config.max_model_len
             * self.scheduler_config.max_num_partial_prefills
@@ -146,7 +181,7 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
 
     def build_decode(self,
         common_prefix_len: int,
-        common_attn_metadata: CommonAttentionMetadata,
+        common_attn_metadata = None,
         fast_build: bool = False
     ):
         # print('[zejun] ATOM ATOMAttentionMetadataBuilder build_decode', flush=True)
@@ -260,20 +295,20 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
     #     )
     #     return attn_matadata
 
-    def build_for_cudagraph_capture(
-        self, common_attn_metadata: CommonAttentionMetadata
-    ):
-        self.total_tokens = (
-            self.model_config.max_model_len
-            * self.vllm_config.scheduler_config.max_num_partial_prefills
-        )
-        res = self.build(common_prefix_len=0, common_attn_metadata=common_attn_metadata)
-        self.total_tokens = 0
-        return res
+    # def build_for_cudagraph_capture(
+    #     self, common_attn_metadata
+    # ):
+    #     self.total_tokens = (
+    #         self.model_config.max_model_len
+    #         * self.vllm_config.scheduler_config.max_num_partial_prefills
+    #     )
+    #     res = self.build(common_prefix_len=0, common_attn_metadata=common_attn_metadata)
+    #     self.total_tokens = 0
+    #     return res
 
     def build_prefill(self,
         common_prefix_len: int,
-        common_attn_metadata: CommonAttentionMetadata,
+        common_attn_metadata = None,
         fast_build: bool = False
     ):
         # print('[zejun] ATOM ATOMAttentionMetadataBuilder build_prefill', flush=True)
@@ -359,7 +394,7 @@ class ATOMAttentionMetadataBuilder(AttentionMetadataBuilder[ATOMAttentionMetadat
     def build(
         self,
         common_prefix_len: int,
-        common_attn_metadata: CommonAttentionMetadata,
+        common_attn_metadata = None,
         fast_build: bool = False,
     ) -> "ATOMAttentionMetadata":
 

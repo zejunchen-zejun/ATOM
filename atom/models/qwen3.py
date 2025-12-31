@@ -54,9 +54,6 @@ from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 from atom.model_loader.loader import load_model_in_plugin_mode
 from atom.models.utils import maybe_prefix
 
-from atom.plugin.plugin_attention import ATOMAttentionForPlugin
-from atom.plugin.prepare import is_plugin_mode
-
 
 class Qwen3Attention(nn.Module):
 
@@ -91,6 +88,7 @@ class Qwen3Attention(nn.Module):
         self.kv_size = self.num_kv_heads * self.head_dim
         self.scaling = self.head_dim**-0.5
 
+        # [watch out] for linear layer, use atom quant config
         self.qkv_proj = QKVParallelLinear(
             hidden_size,
             self.head_dim,
@@ -114,30 +112,6 @@ class Qwen3Attention(nn.Module):
             base=rope_theta,
             rope_scaling=rope_scaling,
         )
-
-        # TODO: align the attention, use single attention form ATOM
-        # if is_plugin_mode():
-        #     self.attn = ATOMAttentionForPlugin(
-        #         num_heads=self.num_heads,
-        #         head_dim=self.head_dim,
-        #         scale=self.scaling,
-        #         num_kv_heads=self.num_kv_heads,
-        #         layer_id=self.layer_num,
-        #         cache_config=cache_config,
-        #         quant_config=quant_config,
-        #         alibi_slopes=None,
-        #         prefix=f"{prefix}.attn",
-        #     )
-        # else:
-        #     self.attn = Attention(
-        #         num_heads=self.num_heads,
-        #         head_dim=self.head_dim,
-        #         scale=self.scaling,
-        #         num_kv_heads=self.num_kv_heads,
-        #         kv_cache_dtype=kv_cache_dtype,
-        #         layer_num=self.layer_num,
-        #         use_mla=False,
-        #     )
         self.attn = Attention(
             num_heads=self.num_heads,
             head_dim=self.head_dim,
@@ -157,7 +131,7 @@ class Qwen3Attention(nn.Module):
         hidden_states: torch.Tensor,
         **model_kwargs: dict[str, Any] | None,
     ) -> torch.Tensor:
-        # print('[zejun] ATOM Qwen3Attention forward', flush=True)
+        print('[zejun] ATOM Qwen3Attention forward', flush=True)
         qkv = self.qkv_proj(hidden_states)
         q, k, v = torch.split(qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1)
 
