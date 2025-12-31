@@ -17,6 +17,7 @@ from atom.utils import mark_spliting_op
 from .attention_mla import MLAModules
 from atom.config import get_current_atom_config
 from atom.utils.selector import get_attn_backend
+from atom.plugin.prepare import is_plugin_mode
 
 
 def fake_(
@@ -73,6 +74,13 @@ class Attention(nn.Module):
         **kwargs,
     ):
         super().__init__()
+
+        # for plugin mode
+        if is_plugin_mode():
+        
+            return
+
+        # for atom mode
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.scale = scale
@@ -125,7 +133,25 @@ class Attention(nn.Module):
         v: torch.Tensor,
         positions: torch.Tensor = None,
         q_scale: Optional[torch.Tensor]=None,
+        **kwargs,
     ):
+    # def forward(
+    #     self,
+    #     layer: torch.nn.Module,
+    #     query: torch.Tensor,
+    #     key: torch.Tensor,
+    #     value: torch.Tensor,
+    #     kv_cache: torch.Tensor,
+    #     attn_metadata: ATOMAttentionMetadata,
+    #     output: torch.Tensor | None = None,
+    #     output_scale: torch.Tensor | None = None,
+    #     output_block_scale: torch.Tensor | None = None,
+    # ) -> torch.Tensor:
+        # TODO: graph mode
+        if is_plugin_mode():
+            # TODO: forward here
+            return output
+
         output = torch.ops.aiter.unified_attention_with_output_base(
             q, q_scale, k, v, positions, self.layer_name, self.use_mla
         )

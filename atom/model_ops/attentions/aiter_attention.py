@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
-from typing import Type, ClassVar
+from dataclasses import dataclass
+from typing import Optional, Type
 
+import numpy as np
 import torch
-# from atom.model_engine.scheduler import ScheduledBatch
-# from atom.model_ops.attention_mha import Attention
+from atom.model_engine.scheduler import ScheduledBatch
+from atom.model_ops.attention_mha import Attention
 from atom.utils.block_convert import block_table_convert_triton
-# from atom.utils.forward_context import AttentionMetaData
+from atom.utils.forward_context import AttentionMetaData, Context
+
 from atom.model_ops.attention_mha import ATOMAttentionImpl
 from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
+from .backends import AttentionBackend, CommonAttentionBuilder
 from atom.utils import CpuGpuBuffer
 
 # from .backends import AttentionBackend
@@ -25,6 +29,21 @@ from vllm.v1.attention.backends.utils import (
 from vllm.config.vllm import VllmConfig
 from vllm.v1.kv_cache_interface import AttentionSpec
 from vllm.v1.attention.backends.utils import split_decodes_prefills_and_extends
+
+
+# TODO: use this backend and register to vllm
+class AiterBackend(AttentionBackend):
+    @staticmethod
+    def get_name() -> str:
+        return "ROCM_AITER_ATTENTION"
+
+    @staticmethod
+    def get_builder_cls() -> Type["AiterAttentionMetadataBuilder"]:
+        return AiterAttentionMetadataBuilder
+
+    @staticmethod
+    def get_impl_cls() -> Type["Attention"]:
+        return Attention
 
 # TODO: retrieve atom attention backend
 class ATOMAttentionBackend(AttentionBackend):

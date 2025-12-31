@@ -19,7 +19,7 @@ from aiter import QuantType
 from aiter.dist.parallel_state import get_dp_group
 from aiter.utility.dtypes import d_dtypes
 
-# for plugin mode
+# only for plugin mode
 from atom.plugin import is_plugin_mode
 from atom.plugin.plugin_config import PluginConfig
 

@@ -120,6 +120,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     # get rank number through the torch.distributed.get_rank()
     rank = torch.distributed.get_rank()
 
+    # sglang uses the atom parallel config
     sgl_parallel_config = ParallelConfig(
         data_parallel_size=server_args.dp_size,
         world_size=int(server_args.pp_size * server_args.tp_size),
@@ -152,6 +153,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     )
 
     # TODO: sgl doesn't have max num batched tokens force to 16k
+    # TODO: sgl uses max total num tokens?
     return Config(
         model=None,
         max_num_batched_tokens=16384,
@@ -160,7 +162,6 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
         gpu_memory_utilization=server_args.mem_fraction_static,
         tensor_parallel_size=server_args.tp_size,
         enforce_eager=not server_args.enable_torch_compile,
-        plugin_config=plugin_config,
         hf_config=sgl_model_config.hf_config,
         parallel_config=sgl_parallel_config,
         kv_cache_dtype=server_args.kv_cache_dtype,
@@ -173,6 +174,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
         enable_expert_parallel=bool(server_args.ep_size > 1),
         master_addr=None,
         enable_dp_attention=server_args.enable_dp_attention,
+        plugin_config=plugin_config,
     )
 
 

@@ -24,6 +24,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from symbol import atom
 import torch
 from torch import nn
 
@@ -72,8 +73,7 @@ class Qwen3Attention(nn.Module):
         rope_scaling: tuple | None = None,
         kv_cache_dtype: str = "fp16",
         layer_num: int = 0,
-        cache_config = None,
-        quant_config = None,
+        atom_config: Config = None,
         prefix: str = "",
         attn_type = None,
     ) -> None:
@@ -97,14 +97,14 @@ class Qwen3Attention(nn.Module):
             self.total_num_heads,
             self.total_num_kv_heads,
             bias=qkv_bias,
-            quant_config=quant_config,
+            quant_config=atom_config.quant_config,
             prefix=f"{prefix}.qkv_proj",
         )
         self.o_proj = RowParallelLinear(
             self.total_num_heads * self.head_dim,
             hidden_size,
             bias=False,
-            quant_config=quant_config,
+            quant_config=atom_config.quant_config,
             prefix=f"{prefix}.o_proj",
         )
         self.rotary_emb = get_rope(
@@ -138,6 +138,16 @@ class Qwen3Attention(nn.Module):
         #         layer_num=self.layer_num,
         #         use_mla=False,
         #     )
+        self.attn = Attention(
+            num_heads=self.num_heads,
+            head_dim=self.head_dim,
+            scale=self.scaling,
+            num_kv_heads=self.num_kv_heads,
+            kv_cache_dtype=kv_cache_dtype,
+            layer_num=self.layer_num,
+            use_mla=False,
+            config=atom_config,
+        )
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
 
@@ -203,13 +213,16 @@ class Qwen3DecoderLayer(nn.Module):
     def __init__(
         self,
         config: Qwen3Config,
-        kv_cache_dtype: str = "bf16",
-        cache_config = None,
-        quant_config = None,
+        atom_config: Config,
         layer_num: int = 0,
         prefix: str = "",
     ) -> None:
         super().__init__()
+        kv_cache_dtype = atom_config.kv_cache_dtype
+        # cache_config = None
+        # # cache config and quant config are needed by vllm to pass to attention part
+        # if atom_config.plugin_config.is_plugin_mode and atom_config.plugin_config.is_vllm:
+        #     cache_config = atom_config.plugin_config.vllm_cache_config
         self.layer_num = layer_num
 
         self.self_attn = Qwen3Attention(
@@ -224,15 +237,15 @@ class Qwen3DecoderLayer(nn.Module):
             rope_scaling=getattr(config, "rope_scaling", None),
             kv_cache_dtype=kv_cache_dtype,
             layer_num=layer_num,
-            cache_config=cache_config,
-            quant_config=quant_config,
+            atom_config=atom_config,
             prefix=f"{prefix}.self_attn",
         )
+        # for linear layer, use atom quant config
         self.mlp = Qwen3MLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
-            quant_config=quant_config,
+            quant_config=atom_config.quant_config,
             prefix=f"{prefix}.mlp",
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -261,7 +274,6 @@ class Qwen3DecoderLayer(nn.Module):
         return hidden_states, residual
 
 
-# TODO: align with atom support_torch_compile decorator
 @support_torch_compile(
     dynamic_arg_dims={
         "input_ids": 0,
@@ -272,27 +284,23 @@ class Qwen3Model(nn.Module):
 
     def __init__(self, *, atom_config: Config, prefix: str = "") -> None:
         super().__init__()
-        config = atom_config.hf_config
-        kv_cache_dtype = atom_config.kv_cache_dtype
-        quant_config = atom_config.quant_config
+        hf_config = atom_config.hf_config
+
         self.embed_tokens = VocabParallelEmbedding(
-            config.vocab_size, config.hidden_size
+            hf_config.vocab_size, hf_config.hidden_size
         )
         self.layers = nn.ModuleList(
             [
-                # TODO: quant_config use vllm config or atom config
                 Qwen3DecoderLayer(
-                    config,
-                    kv_cache_dtype=kv_cache_dtype,
-                    cache_config=atom_config.cache_config,
-                    quant_config=atom_config.vllm_quant_config,
+                    config=hf_config,
+                    atom_config=atom_config,
                     layer_num=layer_num,
                     prefix=f"{prefix}.layers.{layer_num}",
                 )
-                for layer_num in range(config.num_hidden_layers)
+                for layer_num in range(hf_config.num_hidden_layers)
             ]
         )
-        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = RMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps)
 
     def forward(
         self,
@@ -300,7 +308,6 @@ class Qwen3Model(nn.Module):
         positions: torch.Tensor,
         **model_kwargs: dict[str, Any],
     ) -> torch.Tensor:
-        # print('[zejun] ATOM call Qwen3Model forward, input_ids = ', input_ids.shape, flush=True)
         hidden_states = self.embed_tokens(input_ids)
         residual = None
 
@@ -323,10 +330,11 @@ class Qwen3ForCausalLM(nn.Module):
         "up_proj": ("gate_up_proj", 1),
     }
 
+    # here config could be different type, passed from ATOM/vLLM/SGLang
     def __init__(self, *, config: Any, prefix: str = "") -> None:
         super().__init__()
         self.atom_config = config
-        self.hf_config = self.atom_config.model_config.hf_config
+        self.hf_config = self.atom_config.hf_config
         self.model = Qwen3Model(
             atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model")
         )
@@ -346,9 +354,6 @@ class Qwen3ForCausalLM(nn.Module):
         inputs_embeds: torch.Tensor | None = None,
         **model_kwargs: dict[str, Any],
     ) -> torch.Tensor:
-        # print('[zejun] ATOM call Qwen3ForCausalLM forward, input_ids = ', input_ids.shape, flush=True)
-        # for key, value in model_kwargs.items():
-            # print('[zejun] ATOM call Qwen3ForCausalLM forward, model_kwargs[', key, '] = ', value, flush=True)
         hidden_states = self.model(input_ids=input_ids,
                                    positions=positions,
                                    **model_kwargs)
@@ -358,10 +363,8 @@ class Qwen3ForCausalLM(nn.Module):
         self,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
-        # TODO: for sgl, the compute_logits will not be called, it uses the logitsprocessor
-        # print('[zejun] ATOM call ATOM compute_logits', flush=True)
+        # for sgl, the compute_logits will not be called, it uses the logitsprocessor
         logits = self.lm_head(hidden_states)
-        # print('[zejun] ATOM finish call ATOM compute_logits, logits.shape = ', logits.shape, flush=True)
         return logits
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:

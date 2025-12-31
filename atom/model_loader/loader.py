@@ -79,7 +79,9 @@ def load_model_in_plugin_mode(
     config: Config,
     prefix: str = "",
 ) -> set[str] | None:
-    assert config.plugin_config.is_plugin_mode, "Make sure ATOM is running in plugin mode"
+    assert config.plugin_config is not None and \
+           config.plugin_config.is_plugin_mode, \
+            "ATOM is not running in plugin mode"
     if config.plugin_config.is_vllm:
         model_name_or_path = config.plugin_config.model_config.model
     elif config.plugin_config.is_sglang:
