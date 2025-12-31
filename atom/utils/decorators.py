@@ -204,6 +204,14 @@ def support_torch_compile(
                     f"Argument {k} not found in the forward method of {cls}")
         return _support_torch_compile(cls, inferred_dynamic_arg_dims)
 
+    # for plugin mode
+    from atom.plugin.prepare import is_plugin_mode
+    if is_plugin_mode():
+        from atom.plugin.compile_decorator import compile_decorator_for_plugin
+        print('[zejun] ATOM support_torch_compile: using plugin compile decorator', flush=True)
+        return compile_decorator_for_plugin(cls=cls,
+                                            dynamic_arg_dims=dynamic_arg_dims)
+
     if cls is not None:
         # use `support_torch_compile` as a decorator without arguments
         assert isinstance(cls, type)

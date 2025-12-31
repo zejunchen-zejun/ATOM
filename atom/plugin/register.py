@@ -15,7 +15,7 @@ def _register_custom_attention_to_vllm() -> None:
     from vllm.attention.backends.registry import register_backend, AttentionBackendEnum
     register_backend(backend=AttentionBackendEnum.CUSTOM,
                      is_mamba=False,
-                     class_path="atom.model_ops.attentions.aiter_attention.ATOMAttentionBackend")
+                     class_path="atom.model_ops.attentions.aiter_attention.AiterBackend")
 
 
 def _register_custom_attention_to_sglang() -> None:

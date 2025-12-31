@@ -2,7 +2,8 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Optional, Type, ClassVar
+from typing import Optional, Type
+from typing import ClassVar
 
 import numpy as np
 import torch
@@ -11,35 +12,20 @@ from atom.model_ops.attention_mha import Attention
 from atom.utils.block_convert import block_table_convert_triton
 from atom.utils.forward_context import AttentionMetaData, Context
 
-from atom.model_ops.attention_mha import ATOMAttentionImpl
-from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
+# from atom.utils.attn_metadata import Context, ATOMAttentionMetadata
 from .backends import AttentionBackend, CommonAttentionBuilder
 from atom.utils import CpuGpuBuffer
 
 from atom.plugin.prepare import is_plugin_mode
-
-# from .backends import AttentionBackend
-# TODO: for MLA, the attn backend should use vllm
-# from vllm.attention.backends.abstract import AttentionBackend
-# from vllm.attention.backends.abstract import MultipleOf
-
-# from vllm.v1.attention.backends.utils import (
-#     AttentionCGSupport,
-#     CommonAttentionMetadata,
-#     AttentionMetadataBuilder,
-# )
-# from vllm.config.vllm import VllmConfig
-# from vllm.v1.kv_cache_interface import AttentionSpec
-# from vllm.v1.attention.backends.utils import split_decodes_prefills_and_extends
 
 
 class AiterBackend(AttentionBackend):
     accept_output_buffer: bool = True
     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
 
+    # only for plugin mode for vllm
     @staticmethod
     def get_supported_kernel_block_sizes():
-        # only for plugin mode for vllm
         from vllm.attention.backends.abstract import MultipleOf
         return [MultipleOf(16)]
 
@@ -73,40 +59,6 @@ class AiterBackend(AttentionBackend):
 
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
-
-# TODO: retrieve atom attention backend
-# class ATOMAttentionBackend(AttentionBackend):
-#     accept_output_buffer: bool = True
-#     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
-
-#     @staticmethod
-#     def get_supported_kernel_block_sizes() -> list[int | MultipleOf]:
-#         return [MultipleOf(16)]
-
-#     @classmethod
-#     def get_supported_head_sizes(cls) -> list[int]:
-#         return [64, 128, 256]
-
-#     @staticmethod
-#     def get_impl_cls() -> Type["ATOMAttentionImpl"]:
-#         return ATOMAttentionImpl
-
-#     @staticmethod
-#     def get_builder_cls() -> Type["ATOMAttentionMetadataBuilder"]:
-#         return ATOMAttentionMetadataBuilder
-
-#     @staticmethod
-#     def get_kv_cache_shape(
-#         num_blocks: int,
-#         block_size: int,
-#         num_kv_heads: int,
-#         head_size: int,
-#         cache_dtype_str: str = "auto",
-#     ) -> tuple[int, ...]:
-#         if block_size % 16 != 0:
-#             raise ValueError("Block size must be a multiple of 16.")
-
-#         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
 # TODO: this metadata builder is tightly build with vllm
 # TODO: inherit issue
