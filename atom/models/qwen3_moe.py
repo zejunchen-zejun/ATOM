@@ -158,7 +158,6 @@ class Qwen3MoeAttention(nn.Module):
     ) -> None:
         super().__init__()
         tp_size = get_tensor_model_parallel_world_size()
-        self.layer_num = layer_num
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
         self.num_heads = self.total_num_heads // tp_size
@@ -207,7 +206,7 @@ class Qwen3MoeAttention(nn.Module):
             scale=self.scaling,
             num_kv_heads=self.num_kv_heads,
             kv_cache_dtype=kv_cache_dtype,
-            layer_num=self.layer_num,
+            layer_num=layer_num,
             use_mla=False,
             config=atom_config,
         )
@@ -258,9 +257,9 @@ class Qwen3MoeDecoderLayer(nn.Module):
             num_heads=config.num_attention_heads,
             num_kv_heads=config.num_key_value_heads,
             max_position=max_position_embeddings,
-            head_dim=getattr(config, "head_dim", None),
             rms_norm_eps=config.rms_norm_eps,
             qkv_bias=getattr(config, "attention_bias", False),
+            head_dim=getattr(config, "head_dim", None),
             rope_theta=rope_theta,
             rope_scaling=rope_scaling,
             kv_cache_dtype=kv_cache_dtype,
@@ -408,7 +407,7 @@ class Qwen3MoeModel(nn.Module):
             num_experts=self.config.num_experts,
         )
 
-
+    
 class Qwen3MoeForCausalLM(
     nn.Module
 ):
@@ -420,6 +419,8 @@ class Qwen3MoeForCausalLM(
         "up_proj": ("gate_up_proj", 1),
     }
 
+    # here config could be different type, passed from ATOM/vLLM/SGLang
+    # so it should be Any type
     def __init__(self, *, config: Any, prefix: str = ""):
         super().__init__()
         self.atom_config = config
@@ -447,6 +448,7 @@ class Qwen3MoeForCausalLM(
             self.model.make_empty_intermediate_tensors
         )
 
+
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
 
@@ -473,6 +475,7 @@ class Qwen3MoeForCausalLM(
     ) -> Optional[torch.Tensor]:
         logits = self.lm_head(hidden_states)
         return logits
+
 
     def make_empty_intermediate_tensors(
             self, batch_size: int, dtype: torch.dtype,

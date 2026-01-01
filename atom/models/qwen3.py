@@ -31,9 +31,10 @@ from torch import nn
 from aiter.dist.parallel_state import get_tp_group
 from typing import Optional, Any, Iterable
 from transformers import Qwen3Config
-
 from atom.config import QuantizationConfig, Config
+
 from atom.model_ops.activation import SiluAndMul
+# from atom.model_ops.attention import Attention
 from atom.model_ops.base_attention import Attention
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
@@ -295,6 +296,7 @@ class Qwen3ForCausalLM(nn.Module):
     }
 
     # here config could be different type, passed from ATOM/vLLM/SGLang
+    # so it should be Any type
     def __init__(self, *, config: Any, prefix: str = "") -> None:
         super().__init__()
         self.atom_config = config

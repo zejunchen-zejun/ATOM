@@ -171,7 +171,6 @@ class TorchCompileWrapperWithCustomDispatcher:
 
 
 
-# TODO: merge it with the vllm sglang support_torch_compile decorator
 def support_torch_compile(
     cls: Optional[_T] = None,
     *,
