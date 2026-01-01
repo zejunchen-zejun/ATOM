@@ -28,8 +28,6 @@ from aiter.ops.shuffle import shuffle_weight
 from aiter.tuned_gemm import tgemm
 from aiter.utility import fp4_utils
 
-# from atom.config import QuantizationConfig, get_current_atom_config
-# from atom.model_ops.utils import normalize_e4m3fn_to_e4m3fnuz, requantize_with_max_scale
 
 def divide(numerator, denominator):
     assert (
@@ -358,7 +356,7 @@ class MergedColumnParallelLinear(LinearBase):
         output_sizes: list[int],
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
-        prefix: str = "",
+        prefix: str = "", # TODO: check if the prefix can be removed
         **kwargs,
     ):
         self.output_sizes = output_sizes
@@ -402,7 +400,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         total_num_kv_heads: int | None = None,
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
-        prefix: str = "",
+        prefix: str = "", # TODO: check if the prefix can be removed
         **kwargs,
     ):
         self.head_size = head_size
@@ -520,7 +518,7 @@ class MergedReplicatedLinear(ReplicatedLinear):
         self.output_sizes = output_size
         super().__init__(
             input_size,
-            sum(output_size), # ？
+            sum(output_size),  # ？
             bias=bias,
             quant_config=quant_config,
         )
@@ -529,8 +527,8 @@ class MergedReplicatedLinear(ReplicatedLinear):
         self,
         param: nn.Parameter,
         loaded_weight: torch.Tensor,
-        loaded_shard_id: Optional[int] = None
-    ):
+        loaded_shard_id: Optional[int] = None,
+    ): # ？
         param_data = param.data
         assert loaded_shard_id is not None
         assert loaded_shard_id < len(self.output_sizes)
