@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import torch
 
-from atom.config import Config, ParallelConfig, CompilationConfig
+from atom.config import Config
 from atom.config import set_current_atom_config
 
 @dataclass
@@ -88,6 +88,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     from sglang.srt.configs.model_config import ModelConfig as SglangModelConfig
     from sglang.srt.configs.modelopt_config import ModelOptConfig
     from sglang.srt.configs.load_config import LoadConfig
+    from atom.config import ParallelConfig, CompilationConfig
 
     # print('[zejun] ATOM prepare_server_args, sys.argv = ', sys.argv, flush=True)
 
