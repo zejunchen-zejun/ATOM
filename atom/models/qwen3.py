@@ -85,6 +85,7 @@ class Qwen3Attention(nn.Module):
         self.scaling = self.head_dim**-0.5
 
         # [watch out] for linear layer, use atom quant config
+        # TODO: check if the prefix can be removed
         self.qkv_proj = QKVParallelLinear(
             hidden_size,
             self.head_dim,
@@ -336,6 +337,6 @@ class Qwen3ForCausalLM(nn.Module):
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         # load weights in plugin mode and discard passed weights generator
         loaded_weights_record = load_model_in_plugin_mode(model=self,
-                                                        config=self.atom_config,
-                                                        prefix="model.")
+                                                          config=self.atom_config,
+                                                          prefix="model.")
         return loaded_weights_record
