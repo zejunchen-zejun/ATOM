@@ -528,7 +528,7 @@ class MergedReplicatedLinear(ReplicatedLinear):
         param: nn.Parameter,
         loaded_weight: torch.Tensor,
         loaded_shard_id: Optional[int] = None,
-    ): # ？
+    ):  # ？
         param_data = param.data
         assert loaded_shard_id is not None
         assert loaded_shard_id < len(self.output_sizes)
