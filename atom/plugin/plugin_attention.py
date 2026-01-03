@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from atom.models.utils import maybe_prefix
-from atom.utils.prepare import is_vllm, is_sglang
+from atom.plugin import is_vllm, is_sglang
 from atom.config import Config
 
 # Attention class for plugin mode

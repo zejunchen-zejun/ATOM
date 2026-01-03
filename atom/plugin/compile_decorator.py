@@ -15,7 +15,7 @@ def compile_decorator_for_plugin(cls: Type[T],
     def compile_decorator(cls: Type[T]) -> Type[T]:
         """Inner decorator that wraps the class"""
         # Access the global variable directly to avoid partially initialized module issues
-        from atom.utils.prepare import is_vllm, is_sglang
+        from atom.plugin import is_vllm, is_sglang
         if is_vllm():
             # Import and use vLLM's support_torch_compile decorator
             from vllm.compilation.decorators import support_torch_compile
