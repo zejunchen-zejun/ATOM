@@ -17,7 +17,8 @@ from aiter.ops.triton.fused_add_rmsnorm_pad import fused_add_rmsnorm_pad
 from aiter.jit.utils.torch_guard import torch_compile_guard
 
 
-@torch_compile_guard()
+#@torch_compile_guard()
+# FIXME: when using the torch_compile_guard(), there could be illegal mem access
 def rmsnorm2d_fwd_(
     x: torch.Tensor, weight: torch.Tensor, eps: float, dim: int
 ) -> torch.Tensor:

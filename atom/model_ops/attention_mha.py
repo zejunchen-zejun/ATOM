@@ -21,6 +21,8 @@ from aiter.ops.triton.unified_attention import unified_attention
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 
 
+# this class is impl related
+# TODO: check if it is almost same as the plugin version
 class Attention(nn.Module):
 
     def __init__(
@@ -29,11 +31,15 @@ class Attention(nn.Module):
         head_dim,
         scale,
         num_kv_heads,
+        alibi_slopes = None,
+        sliding_window: Optional[int] = None,
         kv_cache_dtype="bf16",
+        logits_soft_cap = None,
+        attn_type = None,
+        kv_sharing_target_layer_name: int | None = None,
         layer_num=0,
         mla_modules: Optional[MLAModules] = None,
         sinks: Optional[nn.Parameter] = None,
-        sliding_window: Optional[int] = None,
         rotary_emb: Optional[torch.nn.Module] = None,
         **kwargs,
     ):
@@ -54,14 +60,23 @@ class Attention(nn.Module):
         )
         self.rotary_emb = rotary_emb
 
+    # TODO: put other args into the kwargs
+    # TODO: check the args
     def forward(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
+        kv_cache: torch.Tensor = None,
+        attn_metadata = None,
+        output: torch.Tensor | None = None,
+        output_scale: torch.Tensor | None = None,
+        output_block_scale: torch.Tensor | None = None,
         position: torch.Tensor = None,
         q_scale: torch.Tensor=None,
     ):
+        # TODO: for atom, it uses forward context
+        # TODO: for vllm, it uses attn metadata
         o: torch.Tensor
         q = q.view(-1, self.num_heads, self.head_dim)
         k = k.view(-1, self.num_kv_heads, self.head_dim)

@@ -19,6 +19,10 @@ from aiter import QuantType
 from aiter.dist.parallel_state import get_dp_group
 from aiter.utility.dtypes import d_dtypes
 
+# only for plugin mode
+from atom.plugin import is_plugin_mode
+from atom.plugin.plugin_config import PluginConfig
+
 logger = logging.getLogger("atom")
 
 
@@ -481,7 +485,8 @@ class ParallelConfig:
         if os.getenv("ATOM_DP_RANK_LOCAL") is not None:
             self.data_parallel_rank_local = envs.ATOM_DP_RANK_LOCAL
         # self.data_parallel_master_ip = envs.ATOM_DP_MASTER_IP
-        self.data_parallel_master_port = get_open_port()
+        if not is_plugin_mode():
+            self.data_parallel_master_port = get_open_port()
 
 @dataclass
 class SpeculativeConfig:
@@ -550,6 +555,9 @@ class Config:
     torch_dtype: torch.dtype = field(init=False)
     speculative_config: Optional[SpeculativeConfig] = None
 
+    # only use for plugin mode
+    plugin_config: Optional[PluginConfig] = None
+
     def _set_cudagraph_sizes(self):
         if self.compilation_config.cudagraph_capture_sizes:
             self.graph_bs = self.compilation_config.cudagraph_capture_sizes
@@ -568,8 +576,15 @@ class Config:
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
         assert 1 <= self.tensor_parallel_size <= 8
-        self.hf_config = get_hf_config(self.model)
+
+        if is_plugin_mode():
+            self.hf_config = self.plugin_config.model_config.hf_config
+            print('[zejun] ATOM Config, get config from plugin mode', flush=True)
+        else:
+            self.hf_config = get_hf_config(self.model)
+            print('[zejun] ATOM Config, get config from get_hf_config', flush=True)
         self.quant_config = get_quant_config(self.hf_config)
+
         hf_config_max_position_embeddings = getattr(
             self.hf_config, "max_position_embeddings", 8192
         )
@@ -580,16 +595,20 @@ class Config:
                 self.max_model_len, hf_config_max_position_embeddings
             )
         # assert self.max_num_batched_tokens >= self.max_model_len
-        if self.torch_profiler_dir is not None:
-            os.makedirs(self.torch_profiler_dir, exist_ok=True)
-        assert self.torch_profiler_dir is None or os.path.isdir(
-            self.torch_profiler_dir
-        ), f"torch_profiler_dir {self.torch_profiler_dir} is not a valid directory"
-        if self.compilation_config.level == CompilationLevel.PIECEWISE:
-            self.compilation_config.set_splitting_ops_for_v1()
-            self._set_cudagraph_sizes()
-            self.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
-            self.compilation_config.init_with_cudagraph_sizes()
+        if not is_plugin_mode():
+            if self.torch_profiler_dir is not None:
+                os.makedirs(self.torch_profiler_dir, exist_ok=True)
+            assert self.torch_profiler_dir is None or os.path.isdir(
+                self.torch_profiler_dir
+            ), f"torch_profiler_dir {self.torch_profiler_dir} is not a valid directory"
+
+        if not is_plugin_mode() or self.plugin_config.is_vllm:
+            if self.compilation_config.level == CompilationLevel.PIECEWISE:
+                self.compilation_config.set_splitting_ops_for_v1()
+                self._set_cudagraph_sizes()
+                self.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
+                self.compilation_config.init_with_cudagraph_sizes()
+
         self.torch_dtype = (
             self.hf_config.torch_dtype
             if getattr(self.hf_config, "torch_dtype", None) is not None

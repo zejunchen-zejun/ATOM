@@ -356,6 +356,7 @@ class MergedColumnParallelLinear(LinearBase):
         output_sizes: list[int],
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "", # TODO: check if the prefix can be removed
         **kwargs,
     ):
         self.output_sizes = output_sizes
@@ -399,6 +400,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         total_num_kv_heads: int | None = None,
         bias: bool = False,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "", # TODO: check if the prefix can be removed
         **kwargs,
     ):
         self.head_size = head_size
