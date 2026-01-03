@@ -84,7 +84,7 @@ class Attention(nn.Module):
                 scale=scale,
                 num_kv_heads=num_kv_heads,
                 layer_id=layer_num,
-                prefix=f"{prefix}.attn",
+                prefix=prefix,
                 **kwargs,
             )
             return
