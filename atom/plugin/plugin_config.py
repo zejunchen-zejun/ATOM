@@ -79,7 +79,7 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
     )
 
 
-def _generate_atom_config_from_sglang_config(config: Any) -> Config:
+def _generate_atom_config_from_sglang_config(config: Any):
     from sglang.srt.server_args import (
         ServerArgs,
         prepare_server_args,
@@ -179,7 +179,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     )
 
 
-def generate_atom_config_in_plugin_mode(config: Any = None) -> Config:
+def generate_atom_config_in_plugin_mode(config: Any = None):
     '''
     Generate the atom config in plugin mode, be called when create the custom model
     config: 
