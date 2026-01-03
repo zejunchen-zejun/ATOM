@@ -579,8 +579,10 @@ class Config:
 
         if is_plugin_mode():
             hf_config = self.plugin_config.model_config.hf_config
+            print('[zejun] ATOM Config, get config from plugin mode', flush=True)
         else:
             hf_config = get_hf_config(self.model)
+            print('[zejun] ATOM Config, get config from get_hf_config', flush=True)
         self.quant_config = get_quant_config(hf_config)
 
         hf_config_max_position_embeddings = getattr(

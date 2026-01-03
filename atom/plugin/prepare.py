@@ -1,11 +1,9 @@
 from typing import Any
-from functools import lru_cache
 
 _SUPPORTED_FRAMEWORKS = ["vllm", "sglang", "sgl"]
 _CURRENT_FRAMEWORK = None
 
 
-@lru_cache(maxsize=1)
 def is_sglang() -> bool:
     global _CURRENT_FRAMEWORK
     if _CURRENT_FRAMEWORK is None:
@@ -13,7 +11,6 @@ def is_sglang() -> bool:
     return bool(_CURRENT_FRAMEWORK.lower() in ["sglang", "sgl"])
 
 
-@lru_cache(maxsize=1)
 def is_vllm() -> bool:
     global _CURRENT_FRAMEWORK
     if _CURRENT_FRAMEWORK is None:
@@ -21,7 +18,6 @@ def is_vllm() -> bool:
     return bool(_CURRENT_FRAMEWORK.lower() in ["vllm"])
 
 
-@lru_cache(maxsize=1)
 def is_plugin_mode() -> bool:
     global _CURRENT_FRAMEWORK
     return bool(_CURRENT_FRAMEWORK is not None)
