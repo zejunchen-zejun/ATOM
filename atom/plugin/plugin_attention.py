@@ -20,11 +20,10 @@ class AttentionForPlugin(nn.Module):
         num_kv_heads,
         layer_num=0,
         prefix: Optional[str] = None,
-        atom_config: Config = None,
         **kwargs,
     ):
         super().__init__()
-        atom_config = kwargs.get("atom_config", None)
+        atom_config = kwargs.get("config", None)
         assert atom_config is not None, "atom_config is required for AttentionForPlugin"
 
         if is_vllm():
