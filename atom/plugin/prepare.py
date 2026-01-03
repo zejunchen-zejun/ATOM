@@ -43,6 +43,7 @@ def prepare_model(config: Any, framework: str):
     print('[zejun] ATOM prepare_model, type config = ', type(config), '. framework = ', framework, flush=True)
 
     _set_framework_backbone(framework)
+    print('[zejun] ATOM prepare_model, is_plugin_mode = ', is_plugin_mode(), flush=True)
     print('[zejun] ATOM prepare_model, is_sglang = ', is_sglang(), flush=True)
     print('[zejun] ATOM prepare_model, is_vllm = ', is_vllm(), flush=True)
 
