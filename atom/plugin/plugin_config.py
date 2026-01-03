@@ -5,8 +5,6 @@ from dataclasses import dataclass
 
 import torch
 
-from atom.config import Config
-from atom.config import set_current_atom_config
 
 @dataclass
 class PluginConfig:
@@ -33,6 +31,8 @@ class PluginConfig:
 
 
 def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
+    from atom.config import Config
+
     vllm_model_config = config.model_config
     vllm_scheduler_config = config.scheduler_config
     vllm_cache_config = config.cache_config
@@ -88,7 +88,7 @@ def _generate_atom_config_from_sglang_config(config: Any) -> Config:
     from sglang.srt.configs.model_config import ModelConfig as SglangModelConfig
     from sglang.srt.configs.modelopt_config import ModelOptConfig
     from sglang.srt.configs.load_config import LoadConfig
-    from atom.config import ParallelConfig, CompilationConfig
+    from atom.config import Config, ParallelConfig, CompilationConfig
 
     # print('[zejun] ATOM prepare_server_args, sys.argv = ', sys.argv, flush=True)
 
@@ -189,6 +189,7 @@ def generate_atom_config_in_plugin_mode(config: Any = None) -> Config:
     '''
     atom_config = None
     from atom.plugin import is_vllm, is_sglang
+    from atom.config import set_current_atom_config
     if is_vllm():
         atom_config = _generate_atom_config_from_vllm_config(config)
     elif is_sglang():
