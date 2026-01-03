@@ -23,13 +23,16 @@ class AiterBackend(AttentionBackend):
     accept_output_buffer: bool = True
     supported_dtypes: ClassVar[list[torch.dtype]] = [torch.float16, torch.bfloat16]
 
-    # only for plugin mode for vllm
     @staticmethod
     def get_supported_kernel_block_sizes():
         from vllm.attention.backends.abstract import MultipleOf
         return [MultipleOf(16)]
 
-    @classmethod
+    @staticmethod
+    def get_required_kv_cache_layout():
+        return None
+
+    @staticmethod
     def get_supported_head_sizes(cls) -> list[int]:
         return [64, 128, 256]
 
@@ -45,7 +48,6 @@ class AiterBackend(AttentionBackend):
     def get_impl_cls() -> Type["Attention"]:
         return Attention
 
-    # only for plugin mode for vllm
     @staticmethod
     def get_kv_cache_shape(
         num_blocks: int,
