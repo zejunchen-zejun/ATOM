@@ -7,32 +7,52 @@ from typing import Optional, Type
 import numpy as np
 import torch
 from atom.model_engine.scheduler import ScheduledBatch
-from atom.model_ops.attention_mha import Attention
+import atom.model_ops as ops
+from atom.model_ops.paged_attention import PagedAttention
+from atom.model_ops.attention_mha import PagedAttentionImpl
+from atom.model_ops.radix_attention import RadixAttention
 from atom.utils.block_convert import block_table_convert_triton
 from atom.utils.forward_context import AttentionMetaData, Context
 
 from .backends import AttentionBackend, CommonAttentionBuilder
+from atom.plugin.prepare import is_plugin_mode
+from atom.plugin.attention import AiterAttentionMetadataBuilderDecoratorForPluginMode
+from atom.plugin.attention import AiterBackendDecoratorForPluginMode
 
 
+@AiterBackendDecoratorForPluginMode
 class AiterBackend(AttentionBackend):
     @staticmethod
     def get_name() -> str:
-        return "ROCM_AITER_ATTENTION"
+        return "ROCM_AITER_ATTENTION" if not is_plugin_mode() else "CUSTOM"
 
     @staticmethod
     def get_builder_cls() -> Type["AiterAttentionMetadataBuilder"]:
         return AiterAttentionMetadataBuilder
 
     @staticmethod
-    def get_impl_cls() -> Type["Attention"]:
-        return Attention
+    def get_impl_cls():
+        if ops.ATTN_CLS == PagedAttention:
+            return PagedAttentionImpl
+        elif ops.ATTN_CLS == RadixAttention:
+            raise NotImplementedError("RadixAttention is not supported for now")
 
 
-class AiterAttentionMetadataBuilder(CommonAttentionBuilder):
+@AiterAttentionMetadataBuilderDecoratorForPluginMode(default_base_class=CommonAttentionBuilder)
+class AiterAttentionMetadataBuilder:
     BLOCK_TABLE_EXTENDER: list[list[int]] = [[]]
 
-    def __init__(self, model_runner):
-        super().__init__(model_runner)
+    def __init__(
+        self,
+        kv_cache_spec = None,
+        layer_names = None,
+        config = None,
+        device = None,
+        model_runner = None,
+    ):
+        # Note: Cannot use super() here because the class is dynamically created by decorator
+        # Use explicit parent class call instead
+        CommonAttentionBuilder.__init__(self, model_runner)
 
     def prepare_decode(self, batch: ScheduledBatch, bs: int):
         scheduled_bs = batch.total_seqs_num_decode

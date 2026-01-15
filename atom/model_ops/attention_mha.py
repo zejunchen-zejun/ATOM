@@ -15,31 +15,41 @@ from typing import Optional
 from atom.utils.forward_context import (
     ForwardContext,
     get_forward_context,
+    AttentionMetaData,
 )
 from .attention_mla import MLAModules
 from aiter.ops.triton.unified_attention import unified_attention
 from aiter.ops.triton.gluon.pa_decode_gluon import pa_decode_gluon
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
-from aiter import fused_qk_norm_rope_cache_quant_shuffle
+from aiter import dtypes, fused_qk_norm_rope_cache_quant_shuffle
 from aiter.ops.triton.gluon.pa_decode_gluon import get_recommended_splits
+from atom.plugin.prepare import is_plugin_mode, is_vllm
+from atom.plugin.attention_mha import PagedAttentionImplDecoratorForPluginMode
 
 from atom.utils import envs
 ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = envs.ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION
 ATOM_ENABLE_QK_NORM_ROPE_FUSION = envs.ATOM_ENABLE_QK_NORM_ROPE_FUSION
 
-class Attention(nn.Module):
-
+@PagedAttentionImplDecoratorForPluginMode
+class PagedAttentionImpl(nn.Module):
+    """
+    Attention paged implementation
+    """
     def __init__(
         self,
         num_heads,
         head_dim,
         scale,
         num_kv_heads,
+        alibi_slopes: list[float] | None,
+        sliding_window: Optional[int] = None,
         kv_cache_dtype="bf16",
+        logits_soft_cap: float | None = None,
+        attn_type = None,
+        kv_sharing_target_layer_name: int | None = None,
         layer_num=0,
         mla_modules: Optional[MLAModules] = None,
         sinks: Optional[nn.Parameter] = None,
-        sliding_window: Optional[int] = None,
         rotary_emb: Optional[torch.nn.Module] = None,
         q_norm: Optional[torch.nn.Module] = None,
         k_norm: Optional[torch.nn.Module] = None,
@@ -48,12 +58,16 @@ class Attention(nn.Module):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim
+        # for upper framework, it uses head_size in built-in methods
+        self.head_size = head_dim
         self.scale = scale
         self.num_kv_heads = num_kv_heads
+        self.alibi_slopes = alibi_slopes
         self.k_cache = self.v_cache = torch.tensor([])
         self.kv_cache_dtype = kv_cache_dtype
         self.max_model_len = 0
         self.k_scale = self.v_scale = None
+        self.device = 'cuda:' + str(torch.cuda.current_device())
         self.layer_num = layer_num
         self.kv_scale_float = (
             torch.finfo(torch.float8_e4m3fn).max / torch.finfo(aiter.dtypes.fp8).max
@@ -68,12 +82,20 @@ class Attention(nn.Module):
         self.flash_layout = False
         self.q_norm = q_norm
         self.k_norm = k_norm
+
+        # for plugin mode(vllm), the query quant is disabled for now
+        if is_vllm():
+            self.supports_quant_query_input = False
+
         if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
             assert self.rotary_emb is not None, "rotary_emb must be provided when enabling QK_NORM_ROPE_CACHE_QUANT_FUSION for Qwen models."
             assert self.q_norm is not None, "q_norm must be provided when enabling QK_NORM_ROPE_CACHE_QUANT_FUSION for Qwen models."
             assert self.k_norm is not None, "k_norm must be provided when enabling QK_NORM_ROPE_CACHE_QUANT_FUSION for Qwen models."
 
-    def forward(
+    def process_weights_after_loading(self, act_dtype: torch.dtype = torch.bfloat16):
+        pass
+
+    def forward_impl_server_mode(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -403,3 +425,40 @@ class Attention(nn.Module):
             else:
                 # Qwen only uses gluon pa decode when bs=64
                 return self.paged_attention_triton if ctx.batch_size == 64 else self.paged_attention_asm
+
+    def forward(
+        self,
+        layer: torch.nn.Module,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        kv_cache: torch.Tensor = None,
+        attn_metadata = None,
+        position: torch.Tensor = None,
+        q_scale: Optional[torch.Tensor]=None,
+        qkv: torch.Tensor = None,
+        output: torch.Tensor = None,
+        **kwargs,
+    ):
+        if is_plugin_mode():
+            # forward impl method are added by the decorator
+            # PagedAttentionImplDecoratorForPluginMode
+            return self.forward_impl_plugin_mode(layer=layer,
+                                                query=query,
+                                                key=key,
+                                                value=value,
+                                                kv_cache=kv_cache,
+                                                attn_metadata=attn_metadata,
+                                                position=position,
+                                                q_scale=q_scale,
+                                                qkv=qkv)
+        else:
+            # only for server mode, keep the original method
+            o = self.forward_impl_server_mode(q=query,
+                                              k=key,
+                                              v=value,
+                                              position=position,
+                                              q_scale=q_scale,
+                                              qkv=qkv)
+
+            return o
