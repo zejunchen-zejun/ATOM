@@ -20,34 +20,17 @@ ATOM is designed to bridge the gap between cutting-edge hardware capability and 
 By unifying the execution layer, ATOM helps customers move faster from POC to production with stable performance. It brings new hardware features to users immediately, making AMD Instinct GPUs a reliable choice for high-concurrency and MoE workloads
 
 
+## Performance Momentum: 
 
-
-## Industry Context and Motivation
-
-Generative AI inference is shifting rapidly:
-
-- Models increasingly rely on **Mixture‑of‑Experts (MoE)**, long context, and speculative decoding.
-- Agentic workflows demand **high concurrency**, **low tail latency**, and **predictable throughput**.
-- Performance leadership now depends on **full‑stack optimization**, not isolated kernel improvements.
-
-While open‑source inference engines such as vLLM and SGLang continue to evolve, they must support a wide range of hardware backends, limiting their ability to deeply optimize for any single architecture. This creates fragmentation, longer integration cycles, and inconsistent performance on non‑NVIDIA platforms.
-
-ATOM addresses this gap by serving as a unified, AMD‑native inference execution layer that complements existing frameworks while unlocking the full capabilities of AMD Instinct GPUs.
-
----
-
-## What Is ATOM?
-
-ATOM is a lightweight, high‑performance inference engine designed specifically for AMD GPUs. It orchestrates execution across kernels, memory, and communication layers to deliver predictable, scalable performance.
-
-At a high level, ATOM:
-
-- Provides a **single, AMD‑optimized execution pathway** across inference frameworks
-- Enables **full‑graph execution** and model‑aware scheduling
-- Accelerates adoption of **FP8 today and FP4 in future architectures**
-- Scales efficiently from **single‑node to multi‑node distributed inference**
-
-ATOM is designed to work alongside existing open‑source frameworks rather than replace them, acting as a high‑performance backend that reduces duplication and accelerates optimization cycles.
+ATOM’s embrace the same minimalist mindset of nano-vllm "minimalist" architecture allows it to evolve at the speed of AMD silicon.   By stripping away layers of abstraction found in generic frameworks, ATOM connects the model directly to the metal via the AITER kernel library.
+1. Rapid Iteration & Optimization (MI355X Data) 
+Recent internal benchmarking on the MI355X GPU (Dec 2025 – Jan 2026) demonstrates how this direct optimization translates to speed. Specifically, at a fixed high concurrency (Conc=128), we observe consistent double-digit gains:
+•	GPT-OSS (FP4): Throughput surged by 40.8% in 1K/1K tasks, reflecting the rapid tuning of AITER kernels for the MI355X’s FP4 tensor cores.
+•	DeepSeek R1 (FP8): Achieved a 39.4% throughput increase on long-context (8k/1k) tasks, proving ATOM’s capability to handle complex MoE routing efficiently.
+2. Competitive Context: Closing the Gap with NVIDIA B200
+ATOM is the vehicle enabling AMD to challenge the NVIDIA B200.
+•	FP4 Leadership: By unlocking native FP4 support on the MI355X GPU, ATOM is bringing AMD within striking distance of B200 generation speeds on models like DeepSeek R1.
+•	MoE Efficiency: ATOM’s specialized schedulers mitigate expert routing overhead, keeping GPU occupancy high even in sparse MoE models.
 
 ---
 
