@@ -14,6 +14,7 @@ from aiter.ops.triton.gluon.pa_decode_gluon import get_recommended_splits
 from typing import TYPE_CHECKING
 
 import logging
+
 logger = logging.getLogger("atom")
 
 if TYPE_CHECKING:
@@ -21,7 +22,9 @@ if TYPE_CHECKING:
 
 from atom.utils import envs
 
-ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = envs.ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION
+ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
+    envs.ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION
+)
 
 _PARTITION_SIZE_ROCM = 256
 _CP_TOKENS_PER_ITER_ROCM = 32 * 1024
@@ -40,18 +43,20 @@ class PagedAttentionImplPluginModeMethods:
             "It is only used as a method container for the decorator."
         )
 
-    def rope_cache_plugin_mode(self,
-                               q: torch.Tensor,
-                               k: torch.Tensor,
-                               v: torch.Tensor,
-                               qkv: torch.Tensor,
-                               position: torch.Tensor,
-                               attention_metadata: "AttentionMetaData",
-                               k_cache: torch.Tensor,
-                               v_cache: torch.Tensor,
-                               k_scale: torch.Tensor,
-                               v_scale: torch.Tensor,
-                               flash_layout: bool = False):
+    def rope_cache_plugin_mode(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        qkv: torch.Tensor,
+        position: torch.Tensor,
+        attention_metadata: "AttentionMetaData",
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
+        k_scale: torch.Tensor,
+        v_scale: torch.Tensor,
+        flash_layout: bool = False,
+    ):
 
         num_blocks, block_size, num_kv_heads, head_size = k_cache.shape
 
@@ -84,7 +89,7 @@ class PagedAttentionImplPluginModeMethods:
         #
         # key_cache:   [num_blocks, num_kv_heads, head_size // x, block_size, x]
         # value_cache: [num_blocks, num_kv_heads, head_size, block_size]
-        # 
+        #
         # and the origin kv cache layout in fwd_args is not flash
 
         attn_metadata = attention_metadata
@@ -121,7 +126,8 @@ class PagedAttentionImplPluginModeMethods:
 
             qkv = qkv.view(qkv.shape[0], -1, self.head_dim)
             q, k, v = qkv.split(
-                [self.num_heads, self.num_kv_heads, self.num_kv_heads], dim=1)
+                [self.num_heads, self.num_kv_heads, self.num_kv_heads], dim=1
+            )
         elif use_triton_attn and self.rotary_emb is not None:
             k_scale = v_scale = self.kv_scale
 
@@ -195,14 +201,16 @@ class PagedAttentionImplPluginModeMethods:
             return key_cache, value_cache, page_size
         return key_cache, value_cache, key_cache.shape[1]
 
-    def paged_attention_triton_plugin_mode(self,
-                                           q: torch.Tensor,
-                                           k_cache: torch.Tensor,
-                                           v_cache: torch.Tensor,
-                                           k_scale: torch.Tensor,
-                                           v_scale: torch.Tensor,
-                                           out: torch.Tensor,
-                                           attn_metadata: "AttentionMetaData"):
+    def paged_attention_triton_plugin_mode(
+        self,
+        q: torch.Tensor,
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
+        k_scale: torch.Tensor,
+        v_scale: torch.Tensor,
+        out: torch.Tensor,
+        attn_metadata: "AttentionMetaData",
+    ):
 
         o = out
         num_seqs, num_q_heads_total, head_size = q.shape
@@ -224,9 +232,7 @@ class PagedAttentionImplPluginModeMethods:
             max_context_partition_num,
             query_group_size,
         )
-        exp_sums = torch.empty(
-            intermediate_shape, dtype=torch.float32, device=q.device
-        )
+        exp_sums = torch.empty(intermediate_shape, dtype=torch.float32, device=q.device)
         max_logits = torch.empty(
             intermediate_shape, dtype=torch.float32, device=q.device
         )
@@ -243,7 +249,11 @@ class PagedAttentionImplPluginModeMethods:
             if not per_tensor:
                 k_scale = k_scale.unsqueeze(-1)
                 v_scale = v_scale.unsqueeze(-1)
-        compute_type = torch.bfloat16 if self.kv_cache_dtype == "bf16" or per_tensor else aiter.dtypes.fp8
+        compute_type = (
+            torch.bfloat16
+            if self.kv_cache_dtype == "bf16" or per_tensor
+            else aiter.dtypes.fp8
+        )
 
         torch.ops.aiter.pa_decode_gluon(
             o,
@@ -253,8 +263,8 @@ class PagedAttentionImplPluginModeMethods:
             attn_metadata.plugin_metadata.seq_lens,
             attn_metadata.block_tables,
             self.scale,
-            1, # query_lenth
-            max_context_partition_num, 
+            1,  # query_lenth
+            max_context_partition_num,
             context_partition_size,
             compute_type,
             None,
@@ -271,16 +281,18 @@ class PagedAttentionImplPluginModeMethods:
 
         return o
 
-    def paged_attention_asm_plugin_mode(self,
-                                        q: torch.Tensor,
-                                        k_cache: torch.Tensor,
-                                        v_cache: torch.Tensor,
-                                        k_scale: torch.Tensor,
-                                        v_scale: torch.Tensor,
-                                        num_decodes: int,
-                                        num_decode_tokens: int,
-                                        attn_metadata: "AttentionMetaData",
-                                        out: torch.Tensor):
+    def paged_attention_asm_plugin_mode(
+        self,
+        q: torch.Tensor,
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
+        k_scale: torch.Tensor,
+        v_scale: torch.Tensor,
+        num_decodes: int,
+        num_decode_tokens: int,
+        attn_metadata: "AttentionMetaData",
+        out: torch.Tensor,
+    ):
         aiter.pa_fwd_asm(
             Q=q,
             K=k_cache,
@@ -312,8 +324,13 @@ class PagedAttentionImplPluginModeMethods:
         v_scale: float,
     ):
         assert attn_metadata.plugin_metadata.extend_metadata is not None
-        assert attn_metadata.plugin_metadata.extend_metadata.chunk_context_metadata is not None
-        chunked_metadata = attn_metadata.plugin_metadata.extend_metadata.chunk_context_metadata
+        assert (
+            attn_metadata.plugin_metadata.extend_metadata.chunk_context_metadata
+            is not None
+        )
+        chunked_metadata = (
+            attn_metadata.plugin_metadata.extend_metadata.chunk_context_metadata
+        )
         swa_metadata = chunked_metadata.swa_metadata
         assert swa_metadata is not None
         swa_cu_seqlens = swa_metadata.swa_cu_seqlens
@@ -327,6 +344,7 @@ class PagedAttentionImplPluginModeMethods:
         )
 
         from vllm.v1.attention.backends.rocm_aiter_fa import cp_mha_gather_cache
+
         # key_cache_for_gather, value_cache_for_gather, _ = (
         #     self._get_cp_mha_gather_cache_views(key_cache, value_cache)
         # )
@@ -346,7 +364,11 @@ class PagedAttentionImplPluginModeMethods:
             total_tokens=swa_total_tokens,
         )
 
-        sliding_window = (self.sliding_window, 0, 0) if self.sliding_window is not None else (-1, -1, 0)
+        sliding_window = (
+            (self.sliding_window, 0, 0)
+            if self.sliding_window is not None
+            else (-1, -1, 0)
+        )
         aiter.flash_attn_varlen_func(
             q=query,
             k=key_fetched,
@@ -416,7 +438,9 @@ class PagedAttentionImplPluginModeMethods:
             return_lse=True,
         )
         assert attn_metadata.plugin_metadata.extend_metadata is not None
-        chunk_context_metadata = attn_metadata.plugin_metadata.extend_metadata.chunk_context_metadata
+        chunk_context_metadata = (
+            attn_metadata.plugin_metadata.extend_metadata.chunk_context_metadata
+        )
         num_chunks = chunk_context_metadata.num_chunks
         workspace = chunk_context_metadata.workspace
         cu_seqlens_kv = chunk_context_metadata.cu_seq_lens_chunk
@@ -502,19 +526,19 @@ class PagedAttentionImplPluginModeMethods:
         # create the output here, it use query shape
         num_tokens = query.shape[0]
         output_dtype = query.dtype
-        output_shape = torch.Size(
-            (num_tokens, self.num_heads * self.head_size)
-        )
+        output_shape = torch.Size((num_tokens, self.num_heads * self.head_size))
         output = torch.empty(output_shape, dtype=output_dtype, device=query.device)
 
         # dummy run will skip attention in cuda graph capture phase
         if attn_metadata is None:
             return output.fill_(0)
 
-        # when using this optimization, the qkv tensor and 
+        # when using this optimization, the qkv tensor and
         # position tensor are passed through q,k,v
         if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
-            assert position is None, "position should be None because it is passed through k"
+            assert (
+                position is None
+            ), "position should be None because it is passed through k"
 
             position = key
             qkv = value
@@ -561,18 +585,20 @@ class PagedAttentionImplPluginModeMethods:
             layer.v_scale = self.v_scale
 
         # rope and cache flush fusion. ATOM always use shuffle layout for kv cache
-        result = self.rope_cache_plugin_mode(q=query,
-                                             k=key,
-                                             v=value,
-                                             qkv=qkv,
-                                             position=position,
-                                             attention_metadata=attn_metadata,
-                                             k_cache=k_cache,
-                                             v_cache=v_cache,
-                                             k_scale=self.k_scale,
-                                             v_scale=self.v_scale,
-                                             flash_layout=False)
-        (query, key, value, k_cache, v_cache, k_scale, v_scale) = result
+        result = self.rope_cache_plugin_mode(
+            q=query,
+            k=key,
+            v=value,
+            qkv=qkv,
+            position=position,
+            attention_metadata=attn_metadata,
+            k_cache=k_cache,
+            v_cache=v_cache,
+            k_scale=self.k_scale,
+            v_scale=self.v_scale,
+            flash_layout=False,
+        )
+        query, key, value, k_cache, v_cache, k_scale, v_scale = result
 
         # The tokens are storaged as [decode:extend:prefill] order
         # which is decided by the vllm
@@ -600,7 +626,11 @@ class PagedAttentionImplPluginModeMethods:
             prefill_key = key[num_decode_tokens + num_extend_tokens :]
             prefill_value = value[num_decode_tokens + num_extend_tokens :]
 
-            sliding_window = (self.sliding_window, 0, 0) if self.sliding_window is not None else (-1, -1, 0)
+            sliding_window = (
+                (self.sliding_window, 0, 0)
+                if self.sliding_window is not None
+                else (-1, -1, 0)
+            )
 
             aiter.flash_attn_varlen_func(
                 q=prefill_query,
@@ -680,7 +710,7 @@ class PagedAttentionImplPluginModeMethods:
                     v_scale=v_scale,
                     out=output_actual_tokens[:num_decode_tokens],
                     attn_metadata=attn_metadata,
-                )   
+                )
             else:
                 # Qwen only uses gluon pa decode when bs=64
                 if num_decodes == 64:
@@ -714,16 +744,18 @@ class PagedAttentionImplPluginModeMethods:
 def PagedAttentionImplDecoratorForPluginMode(cls):
 
     method_names = [
-        'rope_cache_plugin_mode',
-        '_get_cp_mha_gather_cache_views',
-        'paged_attention_triton_plugin_mode',
-        'paged_attention_asm_plugin_mode',
-        'extend_for_sliding_window',
-        'extend_forward',
-        'forward_impl_plugin_mode',
+        "rope_cache_plugin_mode",
+        "_get_cp_mha_gather_cache_views",
+        "paged_attention_triton_plugin_mode",
+        "paged_attention_asm_plugin_mode",
+        "extend_for_sliding_window",
+        "extend_forward",
+        "forward_impl_plugin_mode",
     ]
 
-    logger.info('Use PagedAttentionImplDecoratorForPluginMode to decorate PagedAttentionImpl')
+    logger.info(
+        "Use PagedAttentionImplDecoratorForPluginMode to decorate PagedAttentionImpl"
+    )
 
     # Add all methods to the target class
     for method_name in method_names:

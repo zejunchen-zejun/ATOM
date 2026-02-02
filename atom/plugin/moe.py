@@ -7,7 +7,7 @@ from atom.plugin.prepare import is_vllm
 
 logger = logging.getLogger("atom")
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def _apply_moe_decoration(original_cls: Type[T]) -> Type[T]:
@@ -17,7 +17,7 @@ def _apply_moe_decoration(original_cls: Type[T]) -> Type[T]:
     """
     is_vllm_mode = is_vllm()
     if is_vllm_mode:
-        # Rename this class because vLLM will call the modular 
+        # Rename this class because vLLM will call the modular
         # kernel init method for all modules of the model, whose name is FusedMoE,
         # to init the inside kernel, while for plugin mode, the atom maintains
         # the kernel lifecycle by itself, so there is no need to call init on
@@ -33,14 +33,14 @@ def FusedMoEDecoratorForPluginMode(cls: Type[T]) -> Type[T]:
     Lazy decorator that defers class modification until first instantiation
     """
     original_cls = cls
-    decorated_cls_cache = {'value': None}
+    decorated_cls_cache = {"value": None}
 
     def get_decorated_class():
-        if decorated_cls_cache['value'] is not None:
-            return decorated_cls_cache['value']
+        if decorated_cls_cache["value"] is not None:
+            return decorated_cls_cache["value"]
 
         decorated = _apply_moe_decoration(original_cls)
-        decorated_cls_cache['value'] = decorated
+        decorated_cls_cache["value"] = decorated
         return decorated
 
     class LazyMoEWrapper(original_cls):
@@ -53,5 +53,5 @@ def FusedMoEDecoratorForPluginMode(cls: Type[T]) -> Type[T]:
     LazyMoEWrapper.__qualname__ = original_cls.__qualname__
     LazyMoEWrapper.__module__ = original_cls.__module__
 
-    logger.info(f'Create lazy wrapper for FusedMoE to change the naming')
+    logger.info(f"Create lazy wrapper for FusedMoE to change the naming")
     return LazyMoEWrapper

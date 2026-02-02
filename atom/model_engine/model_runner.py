@@ -608,7 +608,9 @@ class ModelRunner:
             self.drafter.load_model(self.model)
         torch.set_default_device(self.device)
         self.allocate_forward_vars()
-        self.attn_metadata_builder = self.attn_backend.get_builder_cls()(model_runner=self)
+        self.attn_metadata_builder = self.attn_backend.get_builder_cls()(
+            model_runner=self
+        )
         self.physical_block_size = self.attn_metadata_builder.block_size
         self.forward_done_event = torch.cuda.Event()
         self.warmup_model()

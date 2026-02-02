@@ -41,17 +41,19 @@ class AiterBackend(AttentionBackend):
             raise NotImplementedError("RadixAttention is not supported for now")
 
 
-@AiterAttentionMetadataBuilderDecoratorForPluginMode(default_base_class=CommonAttentionBuilder)
+@AiterAttentionMetadataBuilderDecoratorForPluginMode(
+    default_base_class=CommonAttentionBuilder
+)
 class AiterAttentionMetadataBuilder:
     BLOCK_TABLE_EXTENDER: list[list[int]] = [[]]
 
     def __init__(
         self,
-        kv_cache_spec = None,
-        layer_names = None,
-        config = None,
-        device = None,
-        model_runner = None,
+        kv_cache_spec=None,
+        layer_names=None,
+        config=None,
+        device=None,
+        model_runner=None,
     ):
         self.block_size = 1024 if model_runner.block_size == 1024 else 16
         # Note: Cannot use super() here because the class is dynamically created by decorator

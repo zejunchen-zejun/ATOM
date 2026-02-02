@@ -610,7 +610,10 @@ class Config:
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
         assert 1 <= self.tensor_parallel_size <= 8
         if is_plugin_mode():
-            assert self.plugin_config is not None, "plugin_config is required in plugin mode"
+            # plugin mode
+            assert (
+                self.plugin_config is not None
+            ), "plugin_config is required in plugin mode"
             self.hf_config = self.plugin_config.model_config.hf_config
         else:
             self.hf_config = get_hf_config(self.model)
