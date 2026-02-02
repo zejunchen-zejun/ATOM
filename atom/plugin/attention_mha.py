@@ -27,6 +27,7 @@ ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
 
 _PARTITION_SIZE_ROCM = 256
 _CP_TOKENS_PER_ITER_ROCM = 32 * 1024
+_QWEN_GLUON_PA_DECODE_BS = 64
 
 
 class PagedAttentionImplPluginModeMethods:
@@ -343,10 +344,6 @@ class PagedAttentionImplPluginModeMethods:
         )
 
         from vllm.v1.attention.backends.rocm_aiter_fa import cp_mha_gather_cache
-
-        # key_cache_for_gather, value_cache_for_gather, _ = (
-        #     self._get_cp_mha_gather_cache_views(key_cache, value_cache)
-        # )
         cp_mha_gather_cache(
             key_cache=key_cache,
             value_cache=value_cache,
@@ -712,8 +709,7 @@ class PagedAttentionImplPluginModeMethods:
                 )
             else:
                 # Qwen only uses gluon pa decode when bs=64
-                QWEN_GLUON_PA_DECODE_BS = 64
-                if num_decodes == QWEN_GLUON_PA_DECODE_BS:
+                if num_decodes == _QWEN_GLUON_PA_DECODE_BS:
                     self.paged_attention_triton_plugin_mode(
                         q=query[:num_decode_tokens],
                         k_cache=new_key_cache,

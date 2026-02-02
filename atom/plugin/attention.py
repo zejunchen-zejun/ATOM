@@ -546,6 +546,12 @@ def AiterAttentionMetadataBuilderDecoratorForPluginMode(default_base_class):
         is_vllm_mode = is_vllm()
         is_sglang_mode = is_sglang()
 
+        # Outside of plugin integrations (vLLM / SGLang), we should keep the
+        # original class intact. In ATOM server mode, the metadata builder
+        # defines its own __init__ method.
+        if not is_vllm_mode and not is_sglang_mode:
+            return cls
+
         base_class = default_base_class
         class_dict = {}
 
@@ -563,7 +569,7 @@ def AiterAttentionMetadataBuilderDecoratorForPluginMode(default_base_class):
                 setup_attn_metadata_builder_base_class_and_attributes(class_dict)
             )
 
-            # replace the __init__ method to the decorated class
+            # replace the __init__ method in the decorated class
             class_dict["__init__"] = create_attn_metadata_builder_init_method(
                 base_class
             )
