@@ -29,9 +29,9 @@ from torch import nn
 
 # import torch.distributed as dist
 from aiter.dist.parallel_state import get_tp_group
-from typing import Optional, Any, Iterable
+from typing import Any, Iterable
 from transformers import Qwen3Config
-from atom.config import QuantizationConfig, Config
+from atom.config import Config
 
 from atom.model_ops.activation import SiluAndMul
 import atom.model_ops as ops

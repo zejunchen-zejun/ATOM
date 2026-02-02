@@ -4,7 +4,6 @@ import torch
 from torch import nn
 
 # import torch.distributed as dist
-from transformers import Qwen3Config
 from transformers import PretrainedConfig
 from atom.config import QuantizationConfig, Config
 

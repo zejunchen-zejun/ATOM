@@ -12,7 +12,6 @@ from torch import nn
 from atom.utils import mark_spliting_op
 from .attention_mla import MLAModules
 from atom.config import get_current_atom_config
-from atom.utils.selector import get_attn_backend
 
 
 def fake_(

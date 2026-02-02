@@ -6,3 +6,9 @@ from .radix_attention import RadixAttention
 # By default, PagedAttention is used.
 # For sglang, RadixAttention will be assigned to ATTN_CLS
 ATTN_CLS = PagedAttention
+
+__all__ = [
+    "ATTN_CLS",
+    "PagedAttention",
+    "RadixAttention",
+]

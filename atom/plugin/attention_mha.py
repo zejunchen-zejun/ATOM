@@ -12,6 +12,7 @@ from aiter import dtypes, fused_qk_norm_rope_cache_quant_shuffle
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 from aiter.ops.triton.gluon.pa_decode_gluon import get_recommended_splits
 from typing import TYPE_CHECKING
+from atom.utils import envs
 
 import logging
 
@@ -19,8 +20,6 @@ logger = logging.getLogger("atom")
 
 if TYPE_CHECKING:
     from atom.utils.forward_context import AttentionMetaData
-
-from atom.utils import envs
 
 ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
     envs.ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION

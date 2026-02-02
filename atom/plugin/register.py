@@ -105,7 +105,7 @@ def init_aiter_dist(config: Config) -> None:
                 config.plugin_config.sglang_dist_init_addr.split(":")
             )
         else:
-            dp_master_ip = f"127.0.0.1"
+            dp_master_ip = "127.0.0.1"
             dp_master_port = config.plugin_config.sglang_port_args.nccl_port
 
     distributed_init_method = get_distributed_init_method(dp_master_ip, dp_master_port)
