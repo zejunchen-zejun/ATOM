@@ -98,6 +98,13 @@ class Scheduler:
         self.block_manager = BlockManager(config)
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
+        # Time at previous scheduling step
+        self.prev_time = 0.0
+        # Did we schedule a prompt at previous step?
+        self.prev_prompt = False
+        # Latency of the last prompt step
+        self.last_prompt_latency = 0.0
+        self.delay_factor = config.scheduler_delay_factor
 
         self.use_spec = config.speculative_config is not None
         self.mtp_k: int = (
@@ -128,7 +135,11 @@ class Scheduler:
             # self.block_manager.reset()
             return None
 
-        while self.waiting and num_seqs_prefill < self.max_num_seqs:
+        while (
+            (self.delay_factor <= 0 or self._passed_delay(time.time()))
+            and self.waiting
+            and num_seqs_prefill < self.max_num_seqs
+        ):
             seq = self.waiting[0]
             num_new_tokens = seq.num_tokens - seq.num_cached_tokens
             if (
@@ -153,6 +164,7 @@ class Scheduler:
             logger.info(
                 f"scheduled prefill batch: {num_seqs_prefill} reqs, {total_tokens_num_prefill} tokens, keys: {scheduled_seqs.keys()}"
             )
+            self.prev_prompt = True
             # lip: TODO for prefill/decode mixed batch
             return (
                 ScheduledBatch(
@@ -390,3 +402,21 @@ class Scheduler:
         else:
             # No requests
             return (False, 0)
+
+    def _passed_delay(self, now: float) -> bool:
+        # borrowed from https://github.com/vllm-project/vllm/pull/3279
+        # if the earliest arrived request has waited long enough,
+        # i.e., > delay_factor * last_prompt_latency (the latency of last prefill in unit of seconds),
+        # new prefill should be scheduled immediately
+        if self.prev_prompt:
+            self.last_prompt_latency = now - self.prev_time
+        self.prev_time, self.prev_prompt = now, False
+        # Delay scheduling prompts to let waiting queue fill up
+        if self.delay_factor > 0 and self.waiting:
+            earliest_arrival_time = min([seq.arrive_time for seq in self.waiting])
+            passed_delay = (now - earliest_arrival_time) > (
+                self.delay_factor * self.last_prompt_latency
+            ) or not self.running
+        else:
+            passed_delay = True
+        return passed_delay
