@@ -74,7 +74,7 @@ class PagedAttention(BaseAttention):
             cache_config = atom_config.plugin_config.vllm_cache_config
             quant_config = atom_config.plugin_config.vllm_quant_config
 
-            # add exter impl args, which are needed to be passed to the impl class
+            # add extra impl args, which are needed to be passed to the impl class
             # while it only works for custom attention backend for vllm
             extra_impl_args = {}
             if atom_config.plugin_config.vllm_use_custom_attention:
