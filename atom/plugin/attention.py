@@ -202,7 +202,7 @@ def create_attn_metadata_builder_init_method(base_class):
         model_runner=None,
     ):
         base_class.__init__(self, kv_cache_spec, layer_names, config, device)
-        logger.info(f"init AiterAttentionMetadataBuilder for plugin mode")
+        logger.info("init AiterAttentionMetadataBuilder for plugin mode")
         from vllm.config import VllmConfig, get_layers_from_vllm_config
         from vllm.attention.layer import Attention
 
