@@ -40,7 +40,7 @@ def prepare_model(config: Any, engine: str):
     Prepare the model to upper framework, including
     register custom ops and init aiter dist
     """
-    logging.info(f"Prepare model for plugin mode, the upper engine is {engine}")
+    logger.info(f"Prepare model for plugin mode, the upper engine is {engine}")
 
     _set_framework_backbone(engine)
 
