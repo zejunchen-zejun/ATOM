@@ -145,7 +145,7 @@ class Qwen3MLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
-        quant_config = None,
+        quant_config=None,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -224,9 +224,9 @@ class Qwen3DecoderLayer(nn.Module):
             hidden_states = self.input_layernorm(hidden_states)
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
-        hidden_states = self.self_attn(positions=positions,
-                                       hidden_states=hidden_states,
-                                       **model_kwargs)
+        hidden_states = self.self_attn(
+            positions=positions, hidden_states=hidden_states, **model_kwargs
+        )
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
@@ -269,10 +269,12 @@ class Qwen3Model(nn.Module):
         hidden_states = self.embed_tokens(input_ids)
         residual = None
         for layer in self.layers:
-            hidden_states, residual = layer(positions=positions,
-                                            hidden_states=hidden_states,
-                                            residual=residual,
-                                            **model_kwargs)
+            hidden_states, residual = layer(
+                positions=positions,
+                hidden_states=hidden_states,
+                residual=residual,
+                **model_kwargs,
+            )
 
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
@@ -295,10 +297,12 @@ class Qwen3ForCausalLM(nn.Module):
             atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model")
         )
 
-        self.lm_head = ParallelLMHead(num_embeddings=self.hf_config.vocab_size,
-                                      embedding_dim=self.hf_config.hidden_size,
-                                      bias=False,
-                                      prefix=maybe_prefix(prefix, "lm_head"))
+        self.lm_head = ParallelLMHead(
+            num_embeddings=self.hf_config.vocab_size,
+            embedding_dim=self.hf_config.hidden_size,
+            bias=False,
+            prefix=maybe_prefix(prefix, "lm_head"),
+        )
         if self.hf_config.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
@@ -306,13 +310,13 @@ class Qwen3ForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        intermediate_tensors = None,
+        intermediate_tensors=None,
         inputs_embeds: torch.Tensor | None = None,
         **model_kwargs: dict[str, Any],
     ) -> torch.Tensor:
-        hidden_states = self.model(input_ids=input_ids,
-                                   positions=positions,
-                                   **model_kwargs)
+        hidden_states = self.model(
+            input_ids=input_ids, positions=positions, **model_kwargs
+        )
         return hidden_states
 
     def compute_logits(
@@ -324,7 +328,7 @@ class Qwen3ForCausalLM(nn.Module):
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         # load weights in plugin mode and discard passed weights generator
-        loaded_weights_record = load_model_in_plugin_mode(model=self,
-                                                          config=self.atom_config,
-                                                          prefix="model.")
+        loaded_weights_record = load_model_in_plugin_mode(
+            model=self, config=self.atom_config, prefix="model."
+        )
         return loaded_weights_record

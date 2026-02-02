@@ -15,6 +15,7 @@ logger = logging.getLogger("atom")
 _PARTITION_SIZE_ROCM = 256
 _CP_TOKENS_PER_ITER_ROCM = 32 * 1024
 
+
 @dataclass
 class AiterFlashAttentionDecodeMetadata:
     max_query_len: int
@@ -108,6 +109,7 @@ class MetadataForPluginMode:
     # k_scale: dict[str, torch.Tensor] | None
     # v_scale: dict[str, torch.Tensor] | None
 
+
 class vllmAiterBackendMethods:
     # here attention in ATOM doesn't accept the output buffer because
     # ATOM works as a model impl backend, it needs the maximum freedom
@@ -126,6 +128,7 @@ class vllmAiterBackendMethods:
     @staticmethod
     def get_supported_kernel_block_sizes():
         from vllm.v1.attention.backend import MultipleOf
+
         return [MultipleOf(16)]
 
     @staticmethod
@@ -162,9 +165,9 @@ class vllmAiterBackendMethods:
 
 
 def AiterBackendDecoratorForPluginMode(cls):
-    '''
+    """
     Decorator for AiterBackend to add specific methods and attributes for plugin mode
-    '''
+    """
     is_vllm_mode = is_vllm()
 
     if is_vllm_mode:
@@ -172,32 +175,35 @@ def AiterBackendDecoratorForPluginMode(cls):
         cls.full_cls_name = vllmAiterBackendMethods.full_cls_name
         cls.accept_output_buffer = vllmAiterBackendMethods.accept_output_buffer
         cls.supported_dtypes = vllmAiterBackendMethods.supported_dtypes
-        cls.get_supported_kernel_block_sizes = vllmAiterBackendMethods.get_supported_kernel_block_sizes
+        cls.get_supported_kernel_block_sizes = (
+            vllmAiterBackendMethods.get_supported_kernel_block_sizes
+        )
         cls.get_kv_cache_shape = vllmAiterBackendMethods.get_kv_cache_shape
         cls.is_mla = vllmAiterBackendMethods.is_mla
-        cls.get_required_kv_cache_layout = vllmAiterBackendMethods.get_required_kv_cache_layout
+        cls.get_required_kv_cache_layout = (
+            vllmAiterBackendMethods.get_required_kv_cache_layout
+        )
         cls.get_supported_head_sizes = vllmAiterBackendMethods.get_supported_head_sizes
         cls.supports_alibi_sqrt = vllmAiterBackendMethods.supports_alibi_sqrt
     return cls
 
 
 def create_attn_metadata_builder_init_method(base_class):
-    '''
+    """
     Create the init method for metadata builder
-    '''
-    def init_method_under_plugin_mode(self,
-                                      kv_cache_spec=None,
-                                      layer_names=None,
-                                      config=None,
-                                      device=None,
-                                      model_runner=None):
-        base_class.__init__(self,
-                            kv_cache_spec,
-                            layer_names,
-                            config,
-                            device)
+    """
+
+    def init_method_under_plugin_mode(
+        self,
+        kv_cache_spec=None,
+        layer_names=None,
+        config=None,
+        device=None,
+        model_runner=None,
+    ):
+        base_class.__init__(self, kv_cache_spec, layer_names, config, device)
         logger.info(f"init AiterAttentionMetadataBuilder for plugin mode")
-        from vllm.config import VllmConfig,get_layers_from_vllm_config
+        from vllm.config import VllmConfig, get_layers_from_vllm_config
         from vllm.attention.layer import Attention
 
         assert isinstance(config, VllmConfig)
@@ -226,9 +232,9 @@ def create_attn_metadata_builder_init_method(base_class):
         while len(sliding_window_sizes) > 0:
             sliding_window_config = sliding_window_sizes.pop()
             if sliding_window_config is not None and sliding_window_config[0] != -1:
-                assert self.aot_sliding_window is None, (
-                    "Aiter Backend only support one valid sliding window"
-                )
+                assert (
+                    self.aot_sliding_window is None
+                ), "Aiter Backend only support one valid sliding window"
                 self.aot_sliding_window = sliding_window_config
 
         # for extend path to store the fetched key and value
@@ -250,9 +256,9 @@ def create_attn_metadata_builder_init_method(base_class):
 
 
 def setup_attn_metadata_builder_base_class_and_attributes(class_dict: dict):
-    '''
+    """
     Setup the base class and attributes for attention metadata builder
-    '''
+    """
     from vllm.v1.attention.backend import (
         AttentionCGSupport,
         AttentionMetadataBuilder,
@@ -263,8 +269,8 @@ def setup_attn_metadata_builder_base_class_and_attributes(class_dict: dict):
     needs_generic = True
 
     # align with vllm rocm aiter fa
-    class_dict['_cudagraph_support'] = AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
-    class_dict['reorder_batch_threshold'] = 1
+    class_dict["_cudagraph_support"] = AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
+    class_dict["reorder_batch_threshold"] = 1
 
     return base_class, generic_base, needs_generic, class_dict
 
@@ -279,7 +285,7 @@ class vllmAttentionMetadataBuilderMethods:
     def build(
         self,
         common_prefix_len: int = 0,
-        common_attn_metadata = None,
+        common_attn_metadata=None,
         fast_build: bool = False,
     ):
         if common_prefix_len > 0:
@@ -289,8 +295,7 @@ class vllmAttentionMetadataBuilderMethods:
 
         # here assume the decode num token is 1 per request
         split_ret = split_decodes_prefills_and_extends(
-            common_attn_metadata=common_attn_metadata,
-            decode_threshold=1
+            common_attn_metadata=common_attn_metadata, decode_threshold=1
         )
 
         (
@@ -380,6 +385,7 @@ class vllmAttentionMetadataBuilderMethods:
             # each chunk prefill request
             max_context_chunk = _CP_TOKENS_PER_ITER_ROCM // num_extends
             from vllm.utils.math_utils import cdiv
+
             num_chunks = cdiv(computed_kv_lens.max().item(), max_context_chunk)
 
             chunk_starts = (
@@ -448,7 +454,9 @@ class vllmAttentionMetadataBuilderMethods:
             )
 
             for idx in range(num_extends):
-                extend_start_seq_len = seq_lens_for_extend[idx] - query_lens_for_extend[idx]
+                extend_start_seq_len = (
+                    seq_lens_for_extend[idx] - query_lens_for_extend[idx]
+                )
                 extend_end_seq_len = seq_lens_for_extend[idx]
                 for pos in range(extend_start_seq_len, extend_end_seq_len):
                     positions.append(pos)
@@ -483,7 +491,7 @@ class vllmAttentionMetadataBuilderMethods:
 
         num_actual_tokens = common_attn_metadata.num_actual_tokens
         self.positions.np[:num_actual_tokens] = positions
-        context=Context(
+        context = Context(
             positions=self.positions.copy_to_gpu(num_actual_tokens),
             is_prefill=has_prefill,
             batch_size=context_batch_size,
@@ -526,13 +534,15 @@ class vllmAttentionMetadataBuilderMethods:
     # this method will be called by vllm, so it follows the vllm's interface convention
     def build_for_cudagraph_capture(
         self,
-        common_attn_metadata = None,
+        common_attn_metadata=None,
     ):
         self.total_tokens = (
             self.model_config.max_model_len
             * self.vllm_config.scheduler_config.max_num_partial_prefills
         )
-        attn_metadata = self.build(common_prefix_len=0, common_attn_metadata=common_attn_metadata)
+        attn_metadata = self.build(
+            common_prefix_len=0, common_attn_metadata=common_attn_metadata
+        )
         self.total_tokens = 0
         return attn_metadata
 
@@ -546,7 +556,7 @@ def AiterAttentionMetadataBuilderDecoratorForPluginMode(default_base_class):
         class_dict = {}
 
         for key, value in cls.__dict__.items():
-            if not key.startswith('__') or key in ('__annotations__',):
+            if not key.startswith("__") or key in ("__annotations__",):
                 class_dict[key] = value
 
         # handle the generic base class
@@ -555,20 +565,25 @@ def AiterAttentionMetadataBuilderDecoratorForPluginMode(default_base_class):
 
         if is_vllm_mode:
             # get the base class and generic base class
-            base_class, generic_base, needs_generic, class_dict = \
+            base_class, generic_base, needs_generic, class_dict = (
                 setup_attn_metadata_builder_base_class_and_attributes(class_dict)
+            )
 
             # replace the __init__ method to the decorated class
-            class_dict['__init__'] = create_attn_metadata_builder_init_method(base_class)
+            class_dict["__init__"] = create_attn_metadata_builder_init_method(
+                base_class
+            )
 
             # add the methods to the decorated class
             for method_name in dir(vllmAttentionMetadataBuilderMethods):
-                if not method_name.startswith('_'):
+                if not method_name.startswith("_"):
                     method = getattr(vllmAttentionMetadataBuilderMethods, method_name)
                     if callable(method):
                         class_dict[method_name] = method
         elif is_sglang_mode:
-            raise NotImplementedError("AttentionMetadataBuilder for sglang is not implemented yet")
+            raise NotImplementedError(
+                "AttentionMetadataBuilder for sglang is not implemented yet"
+            )
 
         # create the new class
         new_class = type(cls.__name__, (base_class,), class_dict)
@@ -598,6 +613,7 @@ def unified_attention_with_output_base_for_plugin_mode(
 ) -> torch.Tensor:
     from atom.config import get_current_atom_config
     from atom.utils import envs
+
     atom_config = get_current_atom_config()
     if use_mla:
         raise NotImplementedError("MLA is not supported for plugin mode for now")

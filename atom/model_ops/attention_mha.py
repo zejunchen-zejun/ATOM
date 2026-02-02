@@ -24,6 +24,7 @@ class PagedAttentionImpl(nn.Module):
     """
     Attention paged implementation
     """
+
     def __init__(
         self,
         num_heads,
@@ -34,7 +35,7 @@ class PagedAttentionImpl(nn.Module):
         sliding_window: Optional[int] = None,
         kv_cache_dtype="bf16",
         logits_soft_cap: float | None = None,
-        attn_type = None,
+        attn_type=None,
         kv_sharing_target_layer_name: int | None = None,
         layer_num=0,
         mla_modules: Optional[MLAModules] = None,
@@ -56,7 +57,7 @@ class PagedAttentionImpl(nn.Module):
         self.kv_cache_dtype = kv_cache_dtype
         self.max_model_len = 0
         self.k_scale = self.v_scale = None
-        self.device = 'cuda:' + str(torch.cuda.current_device())
+        self.device = "cuda:" + str(torch.cuda.current_device())
         self.layer_num = layer_num
         self.kv_scale_float = (
             torch.finfo(torch.float8_e4m3fn).max / torch.finfo(aiter.dtypes.fp8).max
@@ -445,9 +446,9 @@ class PagedAttentionImpl(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         kv_cache: torch.Tensor = None,
-        attn_metadata = None,
+        attn_metadata=None,
         position: torch.Tensor = None,
-        q_scale: Optional[torch.Tensor]=None,
+        q_scale: Optional[torch.Tensor] = None,
         qkv: torch.Tensor = None,
         output: torch.Tensor = None,
         **kwargs,
@@ -455,22 +456,21 @@ class PagedAttentionImpl(nn.Module):
         if is_plugin_mode():
             # forward impl method are added by the decorator
             # PagedAttentionImplDecoratorForPluginMode
-            return self.forward_impl_plugin_mode(layer=layer,
-                                                query=query,
-                                                key=key,
-                                                value=value,
-                                                kv_cache=kv_cache,
-                                                attn_metadata=attn_metadata,
-                                                position=position,
-                                                q_scale=q_scale,
-                                                qkv=qkv)
+            return self.forward_impl_plugin_mode(
+                layer=layer,
+                query=query,
+                key=key,
+                value=value,
+                kv_cache=kv_cache,
+                attn_metadata=attn_metadata,
+                position=position,
+                q_scale=q_scale,
+                qkv=qkv,
+            )
         else:
             # only for server mode, keep the original method
-            o = self.forward_impl_server_mode(q=query,
-                                              k=key,
-                                              v=value,
-                                              position=position,
-                                              q_scale=q_scale,
-                                              qkv=qkv)
+            o = self.forward_impl_server_mode(
+                q=query, k=key, v=value, position=position, q_scale=q_scale, qkv=qkv
+            )
 
             return o

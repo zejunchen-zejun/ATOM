@@ -36,11 +36,11 @@ def _set_framework_backbone(framework: str) -> None:
 
 
 def prepare_model(config: Any, engine: str):
-    '''
+    """
     Prepare the model to upper framework, including
     register custom ops and init aiter dist
-    '''
-    logging.info(f'Prepare model for plugin mode, the upper engine is {engine}')
+    """
+    logging.info(f"Prepare model for plugin mode, the upper engine is {engine}")
 
     _set_framework_backbone(engine)
 
@@ -67,10 +67,11 @@ def prepare_model(config: Any, engine: str):
         )
 
     from atom.plugin.config import generate_atom_config_for_plugin_mode
+
     atom_config = generate_atom_config_for_plugin_mode(config)
 
     model_cls = _ATOM_SUPPORTED_MODELS[model_arch]
-    logger.info(f'ATOM model class for {model_arch} is {model_cls}')
+    logger.info(f"ATOM model class for {model_arch} is {model_cls}")
 
     if is_vllm():
         register_ops_to_vllm(atom_config=atom_config)

@@ -594,7 +594,9 @@ class Config:
         assert 1 <= self.tensor_parallel_size <= 8
         if is_plugin_mode():
             # plugin mode
-            assert self.plugin_config is not None, "plugin_config is required in plugin mode"
+            assert (
+                self.plugin_config is not None
+            ), "plugin_config is required in plugin mode"
             self.hf_config = self.plugin_config.model_config.hf_config
         else:
             # server mode
@@ -604,7 +606,9 @@ class Config:
                 if (
                     eos_ids := getattr(self.generation_config, "eos_token_id", None)
                 ) is not None:
-                    self.stop_token_ids = [eos_ids] if isinstance(eos_ids, int) else eos_ids
+                    self.stop_token_ids = (
+                        [eos_ids] if isinstance(eos_ids, int) else eos_ids
+                    )
         self.quant_config = get_quant_config(self.hf_config)
         hf_config_max_position_embeddings = getattr(
             self.hf_config, "max_position_embeddings", 8192

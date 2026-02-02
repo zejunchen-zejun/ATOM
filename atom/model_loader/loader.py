@@ -91,26 +91,29 @@ def load_model_in_plugin_mode(
     # call empty cache to free the extra reserved but not used memory
     def _empty_cache():
         import gc
+
         gc.collect()
         torch.cuda.empty_cache()
 
-    assert config.plugin_config is not None and \
-           config.plugin_config.is_plugin_mode, \
-            "ATOM is not running in plugin mode"
+    assert (
+        config.plugin_config is not None and config.plugin_config.is_plugin_mode
+    ), "ATOM is not running in plugin mode"
     if config.plugin_config.is_vllm:
         model_name_or_path = config.plugin_config.model_config.model
     elif config.plugin_config.is_sglang:
         model_name_or_path = config.plugin_config.model_config.model_path
 
     _empty_cache()
-    loaded_weights_record = load_model(model=model,
-                      model_name_or_path=model_name_or_path,
-                      hf_config=config.hf_config,
-                      load_dummy=config.load_dummy,
-                      spec_decode=False,
-                      prefix=prefix,
-                      is_plugin_mode=True,
-                      act_dtype=config.plugin_config.model_config.dtype)
+    loaded_weights_record = load_model(
+        model=model,
+        model_name_or_path=model_name_or_path,
+        hf_config=config.hf_config,
+        load_dummy=config.load_dummy,
+        spec_decode=False,
+        prefix=prefix,
+        is_plugin_mode=True,
+        act_dtype=config.plugin_config.model_config.dtype,
+    )
     _empty_cache()
     return loaded_weights_record
 
@@ -245,6 +248,7 @@ def load_model(
         if hasattr(module, "process_weights_after_loading"):
             if is_vllm():
                 from vllm.attention.layer import Attention
+
                 # call vLLM attn weights post processing with act_dtype if using vLLM attention module
                 if isinstance(module, Attention):
                     module.process_weights_after_loading(act_dtype=act_dtype)
