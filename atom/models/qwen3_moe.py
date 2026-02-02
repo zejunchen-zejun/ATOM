@@ -338,7 +338,9 @@ class Qwen3MoeAttention(nn.Module):
             q, k, v = torch.split(
                 qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1
             )
-            attn_output = self.attn(query=q, key=k, value=v, positions=positions, q_scale=None, qkv=qkv)
+            attn_output = self.attn(
+                query=q, key=k, value=v, positions=positions, q_scale=None, qkv=qkv
+            )
         else:
             q, k, v = torch.split(
                 qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1
@@ -353,12 +355,7 @@ class Qwen3MoeAttention(nn.Module):
 
 
 class Qwen3MoeDecoderLayer(nn.Module):
-    def __init__(
-        self,
-        atom_config = None,
-        layer_num: int = 0,
-        prefix: str = ""
-    ) -> None:
+    def __init__(self, atom_config=None, layer_num: int = 0, prefix: str = "") -> None:
         super().__init__()
 
         self.atom_config = atom_config
@@ -397,7 +394,9 @@ class Qwen3MoeDecoderLayer(nn.Module):
             and (self.layer_idx + 1) % config.decoder_sparse_step == 0
         ):
             self.mlp = Qwen3MoeSparseMoeBlock(
-                config, quant_config=self.atom_config.quant_config, prefix=f"{prefix}.mlp"
+                config,
+                quant_config=self.atom_config.quant_config,
+                prefix=f"{prefix}.mlp",
             )
         else:
             self.mlp = Qwen3MoeMLP(
@@ -478,7 +477,7 @@ class Qwen3MoeModel(nn.Module):
             self.norm = RMSNorm(
                 self.config.hidden_size,
                 eps=self.config.rms_norm_eps,
-                fused_allreduce=ENABLE_ALLREDUCE_RMSNORM_FUSION
+                fused_allreduce=ENABLE_ALLREDUCE_RMSNORM_FUSION,
             )
         else:
             self.norm = PPMissingLayer()
@@ -510,7 +509,9 @@ class Qwen3MoeModel(nn.Module):
             residual = intermediate_tensors["residual"]
 
         for layer in self.layers[self.start_layer : self.end_layer]:
-            hidden_states, residual = layer(positions, hidden_states, residual, **model_kwargs)
+            hidden_states, residual = layer(
+                positions, hidden_states, residual, **model_kwargs
+            )
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors(
@@ -559,10 +560,12 @@ class Qwen3MoeForCausalLM(nn.Module):
         )
 
         if get_pp_group().is_last_rank:
-            self.lm_head = ParallelLMHead(num_embeddings=self.config.vocab_size,
-                                          embedding_dim=self.config.hidden_size,
-                                          bias=False,
-                                          prefix=maybe_prefix(prefix, "lm_head"))
+            self.lm_head = ParallelLMHead(
+                num_embeddings=self.config.vocab_size,
+                embedding_dim=self.config.hidden_size,
+                bias=False,
+                prefix=maybe_prefix(prefix, "lm_head"),
+            )
         else:
             self.lm_head = PPMissingLayer()
         if self.config.tie_word_embeddings:
@@ -618,7 +621,7 @@ class Qwen3MoeForCausalLM(nn.Module):
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         # load weights in plugin mode and discard passed weights generator
-        loaded_weights_record = load_model_in_plugin_mode(model=self,
-                                                          config=self.atom_config,
-                                                          prefix="model.")
+        loaded_weights_record = load_model_in_plugin_mode(
+            model=self, config=self.atom_config, prefix="model."
+        )
         return loaded_weights_record

@@ -10,6 +10,7 @@ import logging
 logger = logging.getLogger("atom")
 _KNOWN_ISSUE_MAX_NUM_BATCHED_TOKENS_THRESHOLD = 18 * 1024
 
+
 @dataclass
 class PluginConfig:
     # common config for both framework
@@ -42,12 +43,14 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
     vllm_scheduler_config = config.scheduler_config
     vllm_cache_config = config.cache_config
     vllm_parallel_config = config.parallel_config
-    vllm_use_custom_attention = bool(os.getenv("VLLM_ATTENTION_BACKEND", "None").lower() == "custom")
+    vllm_use_custom_attention = bool(
+        os.getenv("VLLM_ATTENTION_BACKEND", "None").lower() == "custom"
+    )
 
-    # here use the ATOM compilation config, as the ATOM compile policy is used 
+    # here use the ATOM compilation config, as the ATOM compile policy is used
     # instead of vLLM one for torch compile, while for cuda graph capture,
     # still use the vLLM
-    # when you don't want to use atom torch compile, you can also use 
+    # when you don't want to use atom torch compile, you can also use
     # --enforce-eager to disable the atom torch compile when launch vllm server
     compilation_config = config.compilation_config
     vllm_compilation_config = CompilationConfig(
@@ -75,17 +78,19 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
 
     # specific
     max_model_len = vllm_model_config.max_model_len
-    if hasattr(vllm_scheduler_config, 'max_model_len'):
-        max_model_len = vllm_scheduler_config.max_model_len        
+    if hasattr(vllm_scheduler_config, "max_model_len"):
+        max_model_len = vllm_scheduler_config.max_model_len
 
     max_num_batched_tokens = vllm_scheduler_config.max_num_batched_tokens
     # FIXME: known issue for illegal mem access in fused_moe kernel
     if max_num_batched_tokens >= _KNOWN_ISSUE_MAX_NUM_BATCHED_TOKENS_THRESHOLD:
-        logger.warning("For plugin mode, when setting max_num_batched_tokens >= " +
-        f"{_KNOWN_ISSUE_MAX_NUM_BATCHED_TOKENS_THRESHOLD}, there is a known issue " +
-        "for illegal mem access in asm fused_moe kernel, if you met the issue, " +
-        "please set max_num_batched_tokens smaller or choose the ck fused_moe " +
-        "kernel instead of asm ones")
+        logger.warning(
+            "For plugin mode, when setting max_num_batched_tokens >= "
+            + f"{_KNOWN_ISSUE_MAX_NUM_BATCHED_TOKENS_THRESHOLD}, there is a known issue "
+            + "for illegal mem access in asm fused_moe kernel, if you met the issue, "
+            + "please set max_num_batched_tokens smaller or choose the ck fused_moe "
+            + "kernel instead of asm ones"
+        )
 
     return Config(
         model=None,
@@ -148,7 +153,7 @@ def _generate_atom_config_from_sglang_config(config: Any):
         rl_quant_profile=server_args.rl_quant_profile,
     )
 
-    # sglang doesn't passed the rank number in config, so ATOM plugin 
+    # sglang doesn't passed the rank number in config, so ATOM plugin
     # get rank number through the torch.distributed.get_rank()
     rank = torch.distributed.get_rank()
 
@@ -206,19 +211,20 @@ def _generate_atom_config_from_sglang_config(config: Any):
 
 
 def generate_atom_config_for_plugin_mode(config: Any = None):
-    '''
+    """
     Generate the atom config in plugin mode, be called when create the custom model
-    config: 
+    config:
         - for vllm: config is VllmConfig and contains all config value from vllm
         - for sglang: config is only model specific config passed from sglang, so the
                       server args is used
-    '''
+    """
 
-    logger.info('Generate atom config for plugin mode from passed config')
+    logger.info("Generate atom config for plugin mode from passed config")
 
     atom_config = None
     from atom.plugin import is_vllm, is_sglang
     from atom.config import set_current_atom_config
+
     if is_vllm():
         atom_config = _generate_atom_config_from_vllm_config(config)
     elif is_sglang():

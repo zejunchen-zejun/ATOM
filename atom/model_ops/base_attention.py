@@ -55,13 +55,16 @@ def unified_attention_with_output_base(
     if use_mla:
         return self.impl.forward(q, k, v, positions, q_scale, qkv)
     else:
-        return self.impl.forward(layer=self,
-                                 query=q,
-                                 key=k,
-                                 value=v,
-                                 position=positions,
-                                 q_scale=q_scale,
-                                 qkv=qkv)
+        return self.impl.forward(
+            layer=self,
+            query=q,
+            key=k,
+            value=v,
+            position=positions,
+            q_scale=q_scale,
+            qkv=qkv,
+        )
+
 
 class BaseAttention(nn.Module, ABC):
     """
@@ -101,4 +104,3 @@ class BaseAttention(nn.Module, ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement the forward() method"
         )
-

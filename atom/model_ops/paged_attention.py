@@ -14,10 +14,12 @@ from atom.utils.selector import get_attn_backend
 from atom.plugin.prepare import is_sglang, is_vllm
 from atom.plugin.attention import unified_attention_with_output_base_for_plugin_mode
 
+
 class PagedAttention(BaseAttention):
     """
     Attention paged implementation
     """
+
     def __init__(
         self,
         num_heads,
@@ -39,20 +41,24 @@ class PagedAttention(BaseAttention):
     ):
         # plugin mode(sglang) is not support paged attention
         # for now, only support plugin mode(vllm) and atom server mode
-        assert not is_sglang(), "PagedAttention is not supported for plugin mode(sglang) for now"
-        super().__init__(num_heads=num_heads,
-                         head_dim=head_dim,
-                         scale=scale,
-                         num_kv_heads=num_kv_heads,
-                         kv_cache_dtype=kv_cache_dtype,
-                         layer_num=layer_num,
-                         use_mla=use_mla,
-                         mla_modules=mla_modules,
-                         sinks=sinks,
-                         per_layer_sliding_window=per_layer_sliding_window,
-                         rotary_emb=rotary_emb,
-                         prefix=prefix,
-                         **kwargs)
+        assert (
+            not is_sglang()
+        ), "PagedAttention is not supported for plugin mode(sglang) for now"
+        super().__init__(
+            num_heads=num_heads,
+            head_dim=head_dim,
+            scale=scale,
+            num_kv_heads=num_kv_heads,
+            kv_cache_dtype=kv_cache_dtype,
+            layer_num=layer_num,
+            use_mla=use_mla,
+            mla_modules=mla_modules,
+            sinks=sinks,
+            per_layer_sliding_window=per_layer_sliding_window,
+            rotary_emb=rotary_emb,
+            prefix=prefix,
+            **kwargs,
+        )
 
         # for plugin mode
         if is_vllm():
@@ -60,7 +66,9 @@ class PagedAttention(BaseAttention):
             from vllm.attention.layer import Attention, AttentionType
 
             atom_config = get_current_atom_config()
-            assert atom_config is not None, "atom_config is required for plugin mode to vllm"
+            assert (
+                atom_config is not None
+            ), "atom_config is required for plugin mode to vllm"
 
             # use vllm cache config and quant config to follow the convention of vllm
             cache_config = atom_config.plugin_config.vllm_cache_config
@@ -70,10 +78,10 @@ class PagedAttention(BaseAttention):
             # while it only works for custom attention backend for vllm
             extra_impl_args = {}
             if atom_config.plugin_config.vllm_use_custom_attention:
-                extra_impl_args['sinks'] = sinks
-                extra_impl_args['rotary_emb'] = rotary_emb
-                extra_impl_args['q_norm'] = q_norm
-                extra_impl_args['k_norm'] = k_norm
+                extra_impl_args["sinks"] = sinks
+                extra_impl_args["rotary_emb"] = rotary_emb
+                extra_impl_args["q_norm"] = q_norm
+                extra_impl_args["k_norm"] = k_norm
 
             self.attn = Attention(
                 num_heads=num_heads,
@@ -153,7 +161,7 @@ class PagedAttention(BaseAttention):
         key: torch.Tensor,
         value: torch.Tensor,
         positions: torch.Tensor = None,
-        q_scale: Optional[torch.Tensor]=None,
+        q_scale: Optional[torch.Tensor] = None,
         qkv: torch.Tensor = None,
         **kwargs,
     ):
