@@ -11,6 +11,8 @@ import aiter
 from aiter import dtypes, fused_qk_norm_rope_cache_quant_shuffle
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_reshape_and_cache
 from aiter.ops.triton.gluon.pa_decode_gluon import get_recommended_splits
+import triton
+import triton.language as tl
 from typing import TYPE_CHECKING
 from atom.utils import envs
 
@@ -28,6 +30,157 @@ ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
 _PARTITION_SIZE_ROCM = 256
 _CP_TOKENS_PER_ITER_ROCM = 32 * 1024
 _QWEN_GLUON_PA_DECODE_BS = 64
+
+
+@triton.jit
+def cp_mha_gather_cache_kernel(
+    key_cache_ptr,  # [num_blocks, page_size, num_head, head_size]
+    value_cache_ptr,  # [num_blocks, page_size, num_head, head_size]
+    key_ptr,  # [num_tokens, num_heads, head_size]
+    value_ptr,  # [num_tokens, num_heads, head_size]
+    block_table_ptr,  # [num_batches, max_block_num]
+    cu_seqlens_kv_ptr,  # [num_batches + 1]
+    token_to_batch_ptr,  # [max_cum_tokens]
+    seq_start_ptr,  # [num_batches]
+    k_scale_ptr,  # [1] / [num_blocks, num_kv_heads, page_size]
+    v_scale_ptr,
+    num_heads,
+    head_size,
+    x,
+    max_block_num,
+    DEQUANT: tl.constexpr,
+    PAGE_SIZE: tl.constexpr,
+    CACHE_FORMAT: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    token_id = tl.program_id(0)
+    head_id = tl.program_id(1)
+    col_offsets = tl.arange(0, BLOCK_SIZE)
+
+    key_ptr_offset = key_ptr + token_id * head_size * num_heads + head_id * head_size
+    value_ptr_offset = (
+        value_ptr + token_id * head_size * num_heads + head_id * head_size
+    )
+    batch_idx = tl.load(token_to_batch_ptr + token_id)
+    batch_start = tl.load(seq_start_ptr + batch_idx)
+    token_start = tl.load(cu_seqlens_kv_ptr + batch_idx)
+    batch_offset = token_id - token_start + batch_start
+    block_offset = batch_offset // PAGE_SIZE
+    block_id = tl.load(block_table_ptr + max_block_num * batch_idx + block_offset).to(
+        tl.int64
+    )
+    slot_id = batch_offset % PAGE_SIZE
+
+    if CACHE_FORMAT == "NHD":
+        # for kv cache layout as
+        # K: [num_blocks, page_size, num_head, head_dim]
+        # V: [num_blocks, page_size, num_head, head_dim]
+        key_cache_ptr_offset = (
+            key_cache_ptr
+            + block_id * num_heads * head_size * PAGE_SIZE
+            + slot_id * num_heads * head_size
+            + head_id * head_size
+        )
+        value_cache_ptr_offset = (
+            value_cache_ptr
+            + block_id * num_heads * head_size * PAGE_SIZE
+            + slot_id * num_heads * head_size
+            + head_id * head_size
+        )
+        k_reg = tl.load(key_cache_ptr_offset + col_offsets)
+        v_reg = tl.load(value_cache_ptr_offset + col_offsets)
+        if DEQUANT:
+            k_scale = tl.load(k_scale_ptr)
+            v_scale = tl.load(v_scale_ptr)
+            k_dtype = k_reg.dtype
+            v_dtype = v_reg.dtype
+            k_reg = (k_reg.to(tl.float32) * k_scale).to(k_dtype)
+            v_reg = (v_reg.to(tl.float32) * v_scale).to(v_dtype)
+        tl.store(key_ptr_offset + col_offsets, k_reg)
+        tl.store(value_ptr_offset + col_offsets, v_reg)
+
+    elif CACHE_FORMAT == "SHUFFLE":
+        # for kv cache layout as
+        # K: [num_blocks, num_head, head_dim // x, page_size, x]
+        # V: [num_blocks, num_head, page_size // x, head_dim, x]
+        key_cache_ptr_offset = (
+            key_cache_ptr
+            + block_id * num_heads * head_size * PAGE_SIZE
+            + head_id * head_size * PAGE_SIZE
+            + slot_id * x
+        )
+        value_cache_ptr_offset = (
+            value_cache_ptr
+            + block_id * num_heads * head_size * PAGE_SIZE
+            + head_id * head_size * PAGE_SIZE
+            + (slot_id // x) * head_size * x
+            + slot_id % x
+        )
+        k_reg_offset = col_offsets // x * PAGE_SIZE * x + col_offsets % x
+        v_reg_offset = col_offsets * x
+        k_reg = tl.load(key_cache_ptr_offset + k_reg_offset)
+        v_reg = tl.load(value_cache_ptr_offset + v_reg_offset)
+        if DEQUANT:
+            k_scale = 1.0
+            v_scale = 1.0
+            k_reg = k_reg.to(tl.float32) * k_scale
+            v_reg = v_reg.to(tl.float32) * v_scale
+        tl.store(key_ptr_offset + col_offsets, k_reg)
+        tl.store(value_ptr_offset + col_offsets, v_reg)
+
+
+def cp_mha_gather_cache(
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    block_tables: torch.Tensor,
+    k_scales: torch.Tensor,
+    v_scales: torch.Tensor,
+    cu_seqlens_kv: torch.Tensor,
+    token_to_batch: torch.Tensor,
+    seq_starts: torch.Tensor,
+    dequant: bool,
+    kv_cache_layout: str,
+    total_tokens: int,
+):
+    assert kv_cache_layout in [
+        "NHD",
+        "SHUFFLE",
+    ], "kv_cache_layout only support NHD, SHUFFLE"
+    head_dim = key.shape[2]
+    x = 16 // key_cache.element_size()
+    # assert dequant is True, "Currently, we only support "\
+    # "gather cache with dequant"
+    # For k cache layout: [num_blocks, num_heads, page_size, head_dim]
+    assert head_dim == key_cache.shape[3], (
+        "We assume your kv cache layout is [num_blocks, "
+        "page_size, num_heads, head_dim], but got otherwise"
+    )
+    page_size = key_cache.shape[1]
+    num_heads = key_cache.shape[2]
+
+    grid = lambda meta: (total_tokens, num_heads)
+    cp_mha_gather_cache_kernel[grid](
+        key_cache,
+        value_cache,
+        key,
+        value,
+        block_tables,
+        cu_seqlens_kv,
+        token_to_batch,
+        seq_starts,
+        k_scales,
+        v_scales,
+        num_heads,
+        head_dim,
+        x,
+        block_tables.size(1),
+        DEQUANT=dequant,
+        PAGE_SIZE=page_size,
+        CACHE_FORMAT=kv_cache_layout,
+        BLOCK_SIZE=head_dim,
+    )
 
 
 class PagedAttentionImplPluginModeMethods:
@@ -185,22 +338,6 @@ class PagedAttentionImplPluginModeMethods:
 
         return q, k, v, k_cache, v_cache, k_scale, v_scale
 
-    def _get_cp_mha_gather_cache_views(
-        self, key_cache: torch.Tensor, value_cache: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, int]:
-        # For SHUFFLE layout, the wrapper derives PAGE_SIZE/num_heads from
-        # tensor shapes; provide a reshape-only view to keep storage unchanged.
-        if key_cache.ndim == 5:
-            num_blocks = key_cache.shape[0]
-            num_heads = key_cache.shape[1]
-            page_size = key_cache.shape[3]
-            x = key_cache.shape[4]
-            head_size = key_cache.shape[2] * x
-            key_cache = key_cache.view(num_blocks, page_size, num_heads, head_size)
-            value_cache = value_cache.view(num_blocks, page_size, num_heads, head_size)
-            return key_cache, value_cache, page_size
-        return key_cache, value_cache, key_cache.shape[1]
-
     def paged_attention_triton_plugin_mode(
         self,
         q: torch.Tensor,
@@ -343,8 +480,6 @@ class PagedAttentionImplPluginModeMethods:
             swa_metadata.swa_workspace[1],
         )
 
-        from vllm.v1.attention.backends.rocm_aiter_fa import cp_mha_gather_cache
-
         cp_mha_gather_cache(
             key_cache=key_cache,
             value_cache=value_cache,
@@ -403,7 +538,6 @@ class PagedAttentionImplPluginModeMethods:
         v_scale: torch.Tensor,
     ):
         from vllm.v1.attention.ops.merge_attn_states import merge_attn_states
-        from vllm.v1.attention.backends.rocm_aiter_fa import cp_mha_gather_cache
 
         if self.sliding_window != -1:
             self.extend_for_sliding_window(
@@ -742,7 +876,6 @@ def PagedAttentionImplDecoratorForPluginMode(cls):
 
     method_names = [
         "rope_cache_plugin_mode",
-        "_get_cp_mha_gather_cache_views",
         "paged_attention_triton_plugin_mode",
         "paged_attention_asm_plugin_mode",
         "extend_for_sliding_window",
