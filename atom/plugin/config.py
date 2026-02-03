@@ -49,7 +49,7 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
 
     # here use the ATOM compilation config, as the ATOM compile policy is used
     # instead of vLLM one for torch compile, while for cuda graph capture,
-    # still use the vLLM
+    # still use the vLLM because it has FULL_AND_PIECEWISE feature
     # when you don't want to use atom torch compile, you can also use
     # --enforce-eager to disable the atom torch compile when launch vllm server
     compilation_config = config.compilation_config
@@ -99,7 +99,7 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
         max_model_len=max_model_len,
         gpu_memory_utilization=vllm_cache_config.gpu_memory_utilization,
         tensor_parallel_size=vllm_parallel_config.tensor_parallel_size,
-        enforce_eager=vllm_model_config.enforce_eager,
+        enforce_eager=True, # disable using atom cuda graph
         parallel_config=vllm_parallel_config,
         kv_cache_block_size=vllm_cache_config.block_size,
         num_kvcache_blocks=vllm_cache_config.num_gpu_blocks,
@@ -162,12 +162,14 @@ def _generate_atom_config_from_sglang_config(config: Any):
         data_parallel_size=server_args.dp_size,
     )
 
-    # create the compilation config static_forward_context for sglang
-    sgl_compilation_config = CompilationConfig()
-    # for now disable using atom torch compile as sglang uses its own torch compile
-    sgl_compilation_config.level = 0
-    sgl_compilation_config.use_cudagraph = False
-    sgl_compilation_config.static_forward_context = {}
+    # use sglang torch compile policy and cuda graph policy
+    # because sglang doesn't use the compile decorator for model,
+    # we have no method to define self policy
+    sgl_compilation_config = CompilationConfig(
+        level=0,
+        use_cudagraph=False,
+        cudagraph_mode=None,
+    )
 
     plugin_config = PluginConfig(
         # common config
@@ -186,7 +188,8 @@ def _generate_atom_config_from_sglang_config(config: Any):
         sglang_port_args=PortArgs.init_new(server_args),
     )
 
-    # TODO: sgl doesn't have max num batched tokens, so force to 16k
+    # force max num batched tokens to 16K because sgl doesn't have 
+    # concept for max num batched tokens
     return Config(
         model=None,
         max_num_batched_tokens=16384,
@@ -194,7 +197,7 @@ def _generate_atom_config_from_sglang_config(config: Any):
         max_model_len=server_args.context_length,
         gpu_memory_utilization=server_args.mem_fraction_static,
         tensor_parallel_size=server_args.tp_size,
-        enforce_eager=not server_args.enable_torch_compile,
+        enforce_eager=True, # disable using atom cuda graph
         parallel_config=sgl_parallel_config,
         kv_cache_dtype=server_args.kv_cache_dtype,
         enable_prefix_caching=False,
