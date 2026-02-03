@@ -160,7 +160,7 @@ def cp_mha_gather_cache(
     page_size = key_cache.shape[1]
     num_heads = key_cache.shape[2]
 
-    grid = lambda meta: (total_tokens, num_heads)
+    grid = lambda meta: (total_tokens, num_heads)  # noqa: E731
     cp_mha_gather_cache_kernel[grid](
         key_cache,
         value_cache,
@@ -210,7 +210,6 @@ class PagedAttentionImplPluginModeMethods:
         v_scale: torch.Tensor,
         flash_layout: bool = False,
     ):
-
         num_blocks, block_size, num_kv_heads, head_size = k_cache.shape
 
         if not flash_layout:
@@ -348,7 +347,6 @@ class PagedAttentionImplPluginModeMethods:
         out: torch.Tensor,
         attn_metadata: "AttentionMetaData",
     ):
-
         o = out
         num_seqs, num_q_heads_total, head_size = q.shape
         num_blocks, num_kv_heads, _, block_size, _ = k_cache.shape
@@ -667,9 +665,9 @@ class PagedAttentionImplPluginModeMethods:
         # when using this optimization, the qkv tensor and
         # position tensor are passed through q,k,v
         if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
-            assert (
-                position is None
-            ), "position should be None because it is passed through k"
+            assert position is None, (
+                "position should be None because it is passed through k"
+            )
 
             position = key
             qkv = value
@@ -873,7 +871,6 @@ class PagedAttentionImplPluginModeMethods:
 
 
 def PagedAttentionImplDecoratorForPluginMode(cls):
-
     method_names = [
         "rope_cache_plugin_mode",
         "paged_attention_triton_plugin_mode",
