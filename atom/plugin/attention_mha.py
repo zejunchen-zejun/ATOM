@@ -665,9 +665,9 @@ class PagedAttentionImplPluginModeMethods:
         # when using this optimization, the qkv tensor and
         # position tensor are passed through q,k,v
         if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
-            assert position is None, (
-                "position should be None because it is passed through k"
-            )
+            assert (
+                position is None
+            ), "position should be None because it is passed through k"
 
             position = key
             qkv = value
