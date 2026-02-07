@@ -13,20 +13,6 @@ _ATOM_SUPPORTED_MODELS = {
 }
 
 
-def _register_custom_attention_to_vllm() -> None:
-    from vllm.v1.attention.backends.registry import (
-        register_backend,
-        AttentionBackendEnum,
-    )
-
-    logger.info("Register custom attention backend AiterBackend to vLLM")
-    register_backend(
-        backend=AttentionBackendEnum.CUSTOM,
-        is_mamba=False,
-        class_path="atom.model_ops.attentions.aiter_attention.AiterBackend",
-    )
-
-
 def _register_custom_attention_to_sglang() -> None:
 
     from sglang.srt.layers.attention.attention_registry import (
@@ -43,18 +29,6 @@ def _register_custom_attention_to_sglang() -> None:
         from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
 
         return AiterAttnBackend(runner)
-
-
-def register_ops_to_vllm(atom_config: Config) -> None:
-    """
-    Register custom ops to vllm, including attention
-    """
-    if atom_config.plugin_config.vllm_use_custom_attention:
-        _register_custom_attention_to_vllm()
-    else:
-        logger.warning(
-            "Please export VLLM_ATTENTION_BACKEND=CUSTOM to use atom attention"
-        )
 
 
 def register_ops_to_sglang(atom_config: Config) -> None:

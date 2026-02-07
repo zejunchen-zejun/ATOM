@@ -46,14 +46,16 @@ def prepare_model(config: Any, engine: str):
 
     # different engine passed different config
     if is_vllm():
-        model_arch = config.model_config.architectures[0]
+        # FIXME: remove the legacy code here
+        # model_arch = config.model_config.architectures[0]
+        raise NotImplementedError("VLLM will not be supported for now")
     elif is_sglang():
         model_arch = config.architectures[0]
 
     # import here to avoid partial initialization
     from .register import (
         _ATOM_SUPPORTED_MODELS,
-        register_ops_to_vllm,
+        # register_ops_to_vllm,
         register_ops_to_sglang,
         init_aiter_dist,
         set_attn_cls,
@@ -74,7 +76,8 @@ def prepare_model(config: Any, engine: str):
     logger.info(f"ATOM model class for {model_arch} is {model_cls}")
 
     if is_vllm():
-        register_ops_to_vllm(atom_config=atom_config)
+        # register_ops_to_vllm(atom_config=atom_config)
+        raise NotImplementedError("VLLM will not be supported for now")
     elif is_sglang():
         register_ops_to_sglang(atom_config=atom_config)
 
