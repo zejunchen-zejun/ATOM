@@ -77,7 +77,7 @@ class PagedAttention(BaseAttention):
             # add extra impl args, which are needed to be passed to the impl class
             # while it only works for custom attention backend for vllm
             extra_impl_args = {}
-            if atom_config.plugin_config.vllm_use_custom_attention:
+            if atom_config.plugin_config.vllm_use_atom_attention:
                 extra_impl_args["sinks"] = sinks
                 extra_impl_args["rotary_emb"] = rotary_emb
                 extra_impl_args["q_norm"] = q_norm
