@@ -37,7 +37,6 @@ from atom.models.utils import (
 from atom.utils import envs
 from atom.model_loader.loader import load_model_in_plugin_mode
 
-from aiter import fused_rope_rms
 
 ENABLE_ALLREDUCE_RMSNORM_FUSION = envs.ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION
 ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
@@ -112,21 +111,7 @@ class RotaryEmbeddingQKNormFused(nn.Module):
         num_kv_heads: int,
         eps: float,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        num_tokens = positions.shape[-1]
-        fused_rope_rms(
-            qkv,
-            q_weight,
-            k_weight,
-            self.cos_sin_cache,
-            positions,
-            num_tokens=num_tokens,
-            num_heads_q=num_heads,
-            num_heads_k=num_kv_heads,
-            num_heads_v=num_kv_heads,
-            head_size=self.head_size,
-            is_neox_style=self.is_neox_style,
-            eps=eps,
-        )
+        pass
 
 
 class Qwen3MoeMLP(nn.Module):
