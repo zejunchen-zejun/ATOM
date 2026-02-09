@@ -1,5 +1,5 @@
 """vLLM plugin integration for ATOM."""
 
-from .register import patch_model_registry, register_platform
+from .register import register_model, register_platform
 
-__all__ = ["register_platform", "patch_model_registry"]
+__all__ = ["register_platform", "register_model"]

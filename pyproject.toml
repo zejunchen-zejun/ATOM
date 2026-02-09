@@ -36,4 +36,4 @@ atom = "atom.plugin.vllm.register:register_platform"
 # by default the entry-points will be installed anyway
 # but the plugin mode for models can be disabled by 
 # ATOM_DISABLE_VLLM_PLUGIN_ATTENTION=1
-atom_model_registry = "atom.plugin.vllm.register:patch_model_registry"
+atom_model_registry = "atom.plugin.vllm.register:register_model"
