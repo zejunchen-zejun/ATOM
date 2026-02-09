@@ -70,4 +70,3 @@ lm_eval --model local-completions \
 There are some known limitations for now:
 - Only Qwen-Dense and Qwen-MoE family models are supported
 - Only TP and EP are supported
-- For SGLang, there is still accuracy issue for now, but we will fix it soon
