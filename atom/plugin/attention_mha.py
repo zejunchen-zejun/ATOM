@@ -713,13 +713,6 @@ class PagedAttentionImplPluginModeMethods:
             layer.k_scale = self.k_scale
             layer.v_scale = self.v_scale
 
-        query = query[:num_actual_tokens]
-        if key is not None:
-            key = key[:num_actual_tokens]
-        if value is not None:
-            value = value[:num_actual_tokens]
-        output_actual_tokens = output[:num_actual_tokens]
-
         # rope and cache flush fusion. ATOM always use shuffle layout for kv cache
         result = self.rope_cache_plugin_mode(
             q=query,
@@ -735,6 +728,15 @@ class PagedAttentionImplPluginModeMethods:
             flash_layout=False,
         )
         query, key, value, k_cache, v_cache, k_scale, v_scale = result
+
+        # as vLLM cuda graph capture padding mechanism, here split the qkvo with
+        # the actual tokens
+        query = query[:num_actual_tokens]
+        if key is not None:
+            key = key[:num_actual_tokens]
+        if value is not None:
+            value = value[:num_actual_tokens]
+        output_actual_tokens = output[:num_actual_tokens]
 
         num_decodes = attn_metadata.plugin_metadata.num_decodes
         num_prefills = attn_metadata.plugin_metadata.num_prefills
