@@ -280,7 +280,9 @@ class PagedAttentionImplPluginModeMethods:
             q, k, v = qkv.split(
                 [self.num_heads, self.num_kv_heads, self.num_kv_heads], dim=1
             )
-        elif use_triton_attn and self.rotary_emb is not None:
+        # elif use_triton_attn and self.rotary_emb is not None:
+        elif 0:
+            # FIXME: this should be fixed by moving rope outside of attention
             k_scale = v_scale = self.kv_scale
 
             q, k, k_cache, v_cache = fused_qk_rope_reshape_and_cache(
@@ -304,9 +306,6 @@ class PagedAttentionImplPluginModeMethods:
                 output_zeros=False,
             )
         else:
-            if self.rotary_emb is not None:
-                assert position is not None
-                q, k = self.rotary_emb(position, q, k)
             if self.q_norm is not None:
                 q = self.q_norm(q)
             if self.k_norm is not None:

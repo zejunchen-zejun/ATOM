@@ -305,10 +305,6 @@ class vllmAttentionMetadataBuilderMethods:
         seq_lens = common_attn_metadata.seq_lens.cpu()
         query_lens_cpu = query_start_loc_cpu[1:] - query_start_loc_cpu[:-1]
 
-        # used to store the positions of each tokens of each request
-        # for computing ROPE
-        positions = []
-
         decode_metadata = None
         if num_decodes > 0:
             decode_metadata = AiterFlashAttentionDecodeMetadata(
@@ -317,8 +313,6 @@ class vllmAttentionMetadataBuilderMethods:
                 max_seq_len=seq_lens[:num_decodes].max().item(),
                 query_start_loc=common_attn_metadata.query_start_loc[: num_decodes + 1],
             )
-            for seq_len in seq_lens[:num_decodes]:
-                positions.append(seq_len - 1)
 
         extend_metadata = None
         if num_extends > 0:
@@ -447,14 +441,6 @@ class vllmAttentionMetadataBuilderMethods:
                 chunk_context_metadata=chunk_context_metadata,
             )
 
-            for idx in range(num_extends):
-                extend_start_seq_len = (
-                    seq_lens_for_extend[idx] - query_lens_for_extend[idx]
-                )
-                extend_end_seq_len = seq_lens_for_extend[idx]
-                for pos in range(extend_start_seq_len, extend_end_seq_len):
-                    positions.append(pos)
-
         prefill_metadata = None
         if num_prefills > 0:
             query_lens_for_prefill = query_lens_cpu[num_decodes + num_extends :]
@@ -467,9 +453,6 @@ class vllmAttentionMetadataBuilderMethods:
                 max_seq_len=seq_lens[num_decodes + num_extends :].max().item(),
                 query_start_loc=query_start_loc_device - query_start_loc_device[0],
             )
-            for prefill_seq_len in seq_lens[num_decodes + num_extends :]:
-                for pos in range(prefill_seq_len):
-                    positions.append(pos)
 
         num_actual_kv_tokens = torch.sum(seq_lens).item()
 
@@ -484,9 +467,8 @@ class vllmAttentionMetadataBuilderMethods:
         context_graph_bs = context_batch_size
 
         num_actual_tokens = common_attn_metadata.num_actual_tokens
-        self.positions.np[:num_actual_tokens] = positions
         context = Context(
-            positions=self.positions.copy_to_gpu(num_actual_tokens),
+            positions=None,
             is_prefill=has_prefill,
             batch_size=context_batch_size,
             graph_bs=context_graph_bs,
@@ -628,5 +610,8 @@ def unified_attention_with_output_base_for_plugin_mode(
         if envs.ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
             output = self.attn(q, positions, qkv)
         else:
+            # calculate the q and k with rotary embedding
+            if self.rotary_emb is not None:
+                q, k = self.rotary_emb(positions, q, k)
             output = self.attn(q, k, v)
         return output

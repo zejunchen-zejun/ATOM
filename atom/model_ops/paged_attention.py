@@ -63,6 +63,7 @@ class PagedAttention(BaseAttention):
         # for plugin mode
         if is_vllm():
             self.use_mla = use_mla
+            self.rotary_emb = rotary_emb
             from vllm.attention.layer import Attention, AttentionType
 
             atom_config = get_current_atom_config()
