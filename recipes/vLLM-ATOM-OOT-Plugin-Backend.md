@@ -54,11 +54,11 @@ vllm serve $model_path \
     2>&1 | tee log.serve.log &
 ```
 
-If you want to disable the ATOM OOT plugin platform, you can use below env flags. The default value is 0
+If you want to disable the ATOM OOT plugin platform and model register, you can use below env flags. The default value is 0
 ```bash
 export ATOM_DISABLE_VLLM_PLUGIN=1
 ```
-If you want to disable the ATOM Attention Backend, you can use below env flags.  The default value is 0
+If you only want to disable the ATOM Attention Backend, you can use below env flags.  The default value is 0
 ```bash
 export ATOM_DISABLE_VLLM_PLUGIN_ATTENTION=1
 ```
