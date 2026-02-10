@@ -36,6 +36,7 @@ from atom.models.utils import (
 )
 from atom.utils import envs
 from atom.model_loader.loader import load_model_in_plugin_mode
+from atom.plugin.prepare import is_plugin_mode, is_sglang
 
 
 ENABLE_ALLREDUCE_RMSNORM_FUSION = envs.ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION
@@ -307,6 +308,8 @@ class Qwen3MoeAttention(nn.Module):
                 use_mla=False,
                 rotary_emb=self.rotary_emb,
                 prefix=f"{prefix}.attn",
+                q_norm=self.q_norm,
+                k_norm=self.k_norm,
             )
         self.kv_cache_dtype = kv_cache_dtype
         self.layer_num = layer_num
@@ -319,6 +322,7 @@ class Qwen3MoeAttention(nn.Module):
     ) -> torch.Tensor:
         qkv = self.qkv_proj(hidden_states)
         if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
+            assert not is_sglang(), "QK-Norm-RoPE-Cache-Quant fusion is not supported in SGLang pluign mode yet."
             q, k, v = torch.split(
                 qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1
             )
@@ -326,16 +330,22 @@ class Qwen3MoeAttention(nn.Module):
                 query=q, key=k, value=v, positions=positions, q_scale=None, qkv=qkv
             )
         else:
-            q, k, v = torch.split(
-                qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1
-            )
-            # Add qk-norm
-            q = self.q_norm(q)
-            k = self.k_norm(k)
+            if is_sglang():
+                attn_output = self.attn(
+                    None, None, None, positions=positions, qkv=qkv, **model_kwargs
+                )
+            else:
+                q, k, v = torch.split(
+                    qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1
+                )
+                # Add qk-norm
+                q = self.q_norm(q)
+                k = self.k_norm(k)
 
-            attn_output = self.attn(
-                query=q, key=k, value=v, positions=positions, **model_kwargs
-            )
+                attn_output = self.attn(
+                    query=q, key=k, value=v, positions=positions, **model_kwargs
+                )
+
         output = self.o_proj(attn_output)
         return output
 

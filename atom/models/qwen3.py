@@ -289,9 +289,9 @@ class Qwen3ForCausalLM(nn.Module):
         "up_proj": ("gate_up_proj", 1),
     }
 
-    def __init__(self, config: Any, prefix: str = "") -> None:
+    def __init__(self, atom_config: Any, prefix: str = "") -> None:
         super().__init__()
-        self.atom_config = config
+        self.atom_config = atom_config
         self.hf_config = self.atom_config.hf_config
         self.model = Qwen3Model(
             atom_config=self.atom_config, prefix=maybe_prefix(prefix, "model")

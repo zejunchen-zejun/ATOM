@@ -917,6 +917,7 @@ class ModelRunner:
         self.num_physical_kvcache_blocks = (
             num_kvcache_blocks * self.attn_metadata_builder.block_ratio
         )
+        print(f"num_kvcache_blocks: {num_kvcache_blocks}, num_physical_kvcache_blocks: {self.num_physical_kvcache_blocks}, block_size: {self.block_size}, phisical_block_size: {self.physical_block_size}, block_ratio: {self.attn_metadata_builder.block_ratio}", flush=True)
         if hf_config.num_key_value_heads >= self.world_size:
             assert hf_config.num_key_value_heads % self.world_size == 0
             num_kv_heads = hf_config.num_key_value_heads // self.world_size

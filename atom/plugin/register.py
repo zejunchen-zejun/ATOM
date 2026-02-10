@@ -40,12 +40,16 @@ def _register_custom_attention_to_sglang() -> None:
 
     @register_attention_backend("aiter")
     def create_atom_backend(runner):
-        from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
+        # from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
 
-        return AiterAttnBackend(runner)
+        # return AiterAttnBackend(runner)
         # from atom.plugin.attention_backend import AiterAttnBackendSglplugin
 
         # return AiterAttnBackendSglplugin(runner)
+    
+        from atom.plugin.sgl_attn_backend import ATOMAttnBackendForSgl
+
+        return ATOMAttnBackendForSgl(runner)
 
 
 def register_ops_to_vllm(atom_config: Config) -> None:
