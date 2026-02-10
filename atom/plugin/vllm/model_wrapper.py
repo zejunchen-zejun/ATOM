@@ -33,10 +33,10 @@ _ATOM_MODEL_CLASSES: dict[str, str] = {
 
 
 def _get_atom_model_cls(model_arch: str) -> type:
-    try:
+    if model_arch is not None and model_arch in _ATOM_MODEL_CLASSES:
         model_ref = _ATOM_MODEL_CLASSES[model_arch]
-    except KeyError as e:
-        raise ValueError(f"Unsupported ATOM model architecture: {model_arch}") from e
+    else:
+        raise ValueError(f"The {model_arch} is not supported by ATOM OOT backend")
 
     module_path, class_name = model_ref.split(":", 1)
     return getattr(importlib.import_module(module_path), class_name)
