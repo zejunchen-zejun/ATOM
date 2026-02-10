@@ -2,9 +2,9 @@
 ATOM can work as the OOT plugin backend of vLLM. The OOT register mechanism is quite mature and most of accelerators have leveraged this design to register their devices into vLLM without any code changes in upper framework. ATOM follows this design and provide the layer/op and model implementations to vLLM. The frontend users can launch vLLM server like before and there is no need to specify any arguments. Meanwhile the ATOM platform can leverage most of the vLLM features and focus more on model- and kernel-level optimizations. For the overall design, here is a RFC to enable ATOM work as the OOT plugin platform of vLLM: https://github.com/ROCm/ATOM/issues/201
 
 ## Preparing environment for vLLM with ATOM model backend
-Pull the latest docker from vLLM official nightly docker for ROCm
+Pull the vLLM official docker for ROCm. If you are using the vLLM nightly docker, there could be incompatible error because vLLM is changing its code and may break the class/module import in ATOM
 ```bash
-docker pull rocm/vllm-dev:nightly
+docker pull rocm/vllm-dev:nightly_main_20260118
 ```
 
 Then the ATOM should be installed. When the following PR merged, you can use ATOM main branch
