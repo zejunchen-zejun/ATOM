@@ -18,11 +18,9 @@ from vllm.model_executor.models.interfaces_base import (
 )
 from vllm.sequence import IntermediateTensors
 
-import atom
 from atom.plugin.config import generate_atom_config_for_plugin_mode
 
 import logging
-
 
 logger = logging.getLogger("atom")
 
@@ -45,6 +43,7 @@ def _get_atom_model_cls(model_arch: str) -> type:
 
 def _prepare_env(atom_config) -> None:
     from atom.plugin.register import set_attn_cls, init_aiter_dist
+
     # set global attention class
     logger.info("Set global attention class")
     set_attn_cls()
@@ -77,7 +76,7 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
 
         self.atom_config = generate_atom_config_for_plugin_mode(vllm_config)
 
-        _prepare_env(atom_config = self.atom_config)
+        _prepare_env(atom_config=self.atom_config)
 
         model_arch = vllm_config.model_config.architectures[0]
         model_cls = _get_atom_model_cls(model_arch)

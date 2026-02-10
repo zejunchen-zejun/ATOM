@@ -24,14 +24,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Any, Iterable
+from typing import Any, Iterable
 
 import torch
 
 # import torch.distributed as dist
 from aiter.dist.parallel_state import get_tp_group
 from aiter.rotary_embedding import get_rope
-from atom.config import Config, QuantizationConfig
+from atom.config import Config
 from atom.model_ops.activation import SiluAndMul
 
 # from atom.model_ops.attention import Attention

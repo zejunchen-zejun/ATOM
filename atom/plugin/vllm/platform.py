@@ -36,4 +36,3 @@ class ATOMPlatform(RocmPlatform):
         # Return ATOM attention backend.
         logger.info("Use atom attention backend")
         return "atom.model_ops.attentions.aiter_attention.AiterBackend"
-

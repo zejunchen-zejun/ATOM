@@ -2,7 +2,6 @@ import os
 from typing import Optional
 import logging
 
-import atom
 from atom.plugin.prepare import _set_framework_backbone
 
 logger = logging.getLogger("atom")
@@ -23,6 +22,7 @@ _VLLM_MODEL_REGISTRY_OVERRIDES: dict[str, str] = {
     "Qwen3ForCausalLM": ATOM_CAUSAL_LM_MODEL_WRAPPER,
     "Qwen3MoeForCausalLM": ATOM_MOE_CAUSAL_LM_MODEL_WRAPPER,
 }
+
 
 def _set_plugin_mode() -> None:
     _set_framework_backbone("vllm")

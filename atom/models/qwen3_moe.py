@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union, Any, Iterable
+from typing import Optional, Union, Any, Iterable
 
 import torch
 from aiter.dist.communication_op import tensor_model_parallel_all_reduce
@@ -32,7 +32,7 @@ from torch import nn
 from atom.model_loader.loader import load_model_in_plugin_mode
 
 # import torch.distributed as dist
-from transformers import PretrainedConfig, Qwen3Config
+from transformers import PretrainedConfig
 
 ENABLE_ALLREDUCE_RMSNORM_FUSION = envs.ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION
 ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
