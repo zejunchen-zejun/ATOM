@@ -38,6 +38,7 @@ class PluginConfig:
 
 def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
     from atom.config import Config, CompilationConfig
+    print('[zejun] ATOM vllm plugin config = ', config, flush=True)
 
     vllm_model_config = config.model_config
     vllm_scheduler_config = config.scheduler_config
