@@ -609,13 +609,6 @@ class Config:
             self.kv_cache_block_size % 16 == 0 or self.kv_cache_block_size == 1
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
         assert 1 <= self.tensor_parallel_size <= 8
-        # if is_plugin_mode():
-        #     # plugin mode
-        #     assert (
-        #         self.plugin_config is not None
-        #     ), "plugin_config is required in plugin mode"
-        #     self.hf_config = self.plugin_config.model_config.hf_config
-        # else:
         self.hf_config = get_hf_config(self.model)
         if not hasattr(self.hf_config, "rope_parameters"):
             # Compatible with both transformers < 5

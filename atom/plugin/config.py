@@ -93,7 +93,7 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
         )
 
     return Config(
-        model=config.model,
+        model=vllm_model_config.model,
         max_num_batched_tokens=max_num_batched_tokens,
         max_num_seqs=vllm_scheduler_config.max_num_seqs,
         max_model_len=max_model_len,
