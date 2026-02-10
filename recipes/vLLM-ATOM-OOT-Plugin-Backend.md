@@ -15,10 +15,11 @@ git checkout origin/zejun/plugin_for_atom_1223
 pip install -e . 2>&1 | tee build.log
 ```
 For AITER, there is no specific requirements, however, if you find any latest fusion kernels are missing, you may need to upgrade the AITER
-Additionally, you may need to upgrade your triton and transformers by:
+Additionally, you may need to install some dependencies by:
 ```bash
 pip install --upgrade triton
 pip install transformers==5.0.0
+pip install git+https://github.com/foundation-model-stack/fastsafetensors.git
 ```
 
 ### Launching server of vLLM with ATOM OOT Plugin Platform
