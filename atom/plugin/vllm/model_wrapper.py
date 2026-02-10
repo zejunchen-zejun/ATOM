@@ -18,6 +18,7 @@ from vllm.model_executor.models.interfaces_base import (
 )
 from vllm.sequence import IntermediateTensors
 
+import atom  # noqa: F401
 from atom.plugin.config import generate_atom_config_for_plugin_mode
 
 import logging
