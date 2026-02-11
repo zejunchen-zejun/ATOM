@@ -20,12 +20,13 @@ from atom.utils.decorators import support_torch_compile
 from aiter.dist.communication_op import tensor_model_parallel_all_reduce
 
 # from atom.model_ops.rotary_embedding import get_rope
-from aiter.rotary_embedding import get_rope
+from aiter.rotary_embedding import get_rope, AiterFusedSetKVBufferArg, RotaryEmbedding, RotaryEmbeddingFusedQKNorm
 from atom.model_ops.embed_head import VocabParallelEmbedding, ParallelLMHead
 from atom.model_ops.moe import FusedMoE
 from aiter.dist.parallel_state import (
     get_pp_group,
     get_tensor_model_parallel_world_size,
+    get_tp_group,
 )
 from atom.models.utils import (
     IntermediateTensors,
@@ -43,7 +44,7 @@ ENABLE_ALLREDUCE_RMSNORM_FUSION = envs.ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION
 ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
     envs.ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION
 )
-
+ENABLE_AITER_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE = envs.AITER_ROPE_FUSED_QKNORM
 
 class RotaryEmbeddingQKNormFused(nn.Module):
     def __init__(
@@ -313,6 +314,66 @@ class Qwen3MoeAttention(nn.Module):
             )
         self.kv_cache_dtype = kv_cache_dtype
         self.layer_num = layer_num
+        self.k_scale = torch.tensor([1.0], dtype=torch.float32)
+        self.v_scale = torch.tensor([1.0], dtype=torch.float32)
+
+
+    def forward_sgl_plugin_mode(
+        self,
+        positions: torch.Tensor,
+        qkv: torch.Tensor,
+        **model_kwargs: dict[str, Any] | None,
+    ):
+        if ENABLE_AITER_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE:
+            forward_batch = model_kwargs.get("forward_batch", None)
+            assert forward_batch is not None, "forward_batch is required for sglang"
+            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(self.layer_num)
+            block_size = 1024  # Default fallback
+            if hasattr(forward_batch, 'attn_backend') and hasattr(forward_batch.attn_backend, 'page_size'):
+                block_size = forward_batch.attn_backend.page_size
+            elif hasattr(forward_batch.token_to_kv_pool, 'allocator') and hasattr(forward_batch.token_to_kv_pool.allocator, 'page_size'):
+                block_size = forward_batch.token_to_kv_pool.allocator.page_size
+            elif hasattr(forward_batch.token_to_kv_pool, 'page_size'):
+                block_size = forward_batch.token_to_kv_pool.page_size
+            x = 16 // k_buffer.element_size()
+            aiter_fused_set_kv_buffer_arg = AiterFusedSetKVBufferArg(
+                kv_cache = (k_buffer, v_buffer),
+                cache_loc = forward_batch.out_cache_loc,
+                k_scale = self.k_scale,
+                v_scale = self.v_scale,
+                return_kv = True,
+                use_shuffle_layout = True,
+                block_size = block_size,
+                x = x,
+            )
+            q, k, v = self.rotary_emb(
+                qkv,
+                self.q_norm.weight,
+                self.k_norm.weight,
+                positions,
+                self.attn.attn.tp_q_head_num,
+                self.attn.attn.tp_k_head_num,
+                self.q_norm.eps,
+                fused_set_kv_buffer_arg=aiter_fused_set_kv_buffer_arg,
+            )
+
+            attn_output = self.attn(
+                q, k, v, positions=positions, qkv=qkv, **model_kwargs
+            )
+        else:
+            q, k, v = torch.split(
+                qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1
+            )
+            # Add qk-norm
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+
+            q, k = self.rotary_emb(positions, q, k)
+
+            attn_output = self.attn(
+                q, k, v, positions=positions, qkv=qkv, **model_kwargs
+            )
+        return attn_output
 
     def forward(
         self,
@@ -331,9 +392,7 @@ class Qwen3MoeAttention(nn.Module):
             )
         else:
             if is_sglang():
-                attn_output = self.attn(
-                    None, None, None, positions=positions, qkv=qkv, **model_kwargs
-                )
+                attn_output = self.forward_sgl_plugin_mode(positions, qkv, **model_kwargs)
             else:
                 q, k, v = torch.split(
                     qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1

@@ -39,15 +39,8 @@ def _register_custom_attention_to_sglang() -> None:
     logger.info("Register custom attention backend AiterBackend to SGLang")
 
     @register_attention_backend("aiter")
-    def create_atom_backend(runner):
-        # from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
-
-        # return AiterAttnBackend(runner)
-        # from atom.plugin.attention_backend import AiterAttnBackendSglplugin
-
-        # return AiterAttnBackendSglplugin(runner)
-    
-        from atom.plugin.sgl_attn_backend import ATOMAttnBackendForSgl
+    def create_atom_backend(runner):    
+        from atom.plugin.attention_backend.sgl_attn_backend import ATOMAttnBackendForSgl
 
         return ATOMAttnBackendForSgl(runner)
 

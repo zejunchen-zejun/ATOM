@@ -9,14 +9,8 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 
-from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
-from sglang.srt.layers.attention.aiter_backend import AiterIndicesUpdaterPrefill
 from sglang.srt.layers.attention.utils import create_flashinfer_kv_indices_triton
-from sglang.srt.layers.dp_attention import (
-    get_attention_tp_size,
-    is_dp_attention_enabled,
-)
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 
 if TYPE_CHECKING:
@@ -30,15 +24,13 @@ try:
         dtypes,
         get_pa_metadata_info_v1,
         get_pa_metadata_v1,
+        pa_fwd_asm,
         pa_persistent_fwd,
     )
 except ImportError:
     print(
         "aiter is AMD specific kernel library. Please make sure aiter is installed on your AMD device."
     )
-
-from sglang.srt.configs.model_config import AttentionArch
-
 
 import triton
 import triton.language as tl
@@ -171,33 +163,15 @@ class ForwardMetadata:
     # prefill_kv_last_page_lens: Optional[torch.Tensor] = None
 
 
-_AITER_PARTITION_SIZE_ROCM = 256
-
-
-class ATOMAttnBackendForSgl(AttentionBackend):
+class ATOMAttnBackendForSgl(AiterAttnBackend):
     def __init__(
         self,
         model_runner: ModelRunner,
         skip_prefill: bool = False,
         kv_indptr_buf: Optional[torch.Tensor] = None,
     ):
-        super().__init__()
-        # Lazy import to avoid the initialization of cuda context
-        from sglang.srt.layers.attention.triton_ops.extend_attention import (
-            extend_attention_fwd,
-        )
+        super().__init__(model_runner, skip_prefill, kv_indptr_buf)
 
-        self.extend_attention_fwd = torch.compiler.disable(extend_attention_fwd)
-
-        self.device = model_runner.device
-        self.is_multimodal = model_runner.model_config.is_multimodal
-        self.num_draft_tokens = model_runner.server_args.speculative_num_draft_tokens
-        self.speculative_num_steps = model_runner.server_args.speculative_num_steps
-        self.num_head = (
-            model_runner.model_config.num_attention_heads // get_attention_tp_size()
-        )
-        self.page_size = model_runner.page_size
-        self.head_dim = model_runner.model_config.head_dim
         mapping = getattr(
             model_runner.token_to_kv_pool, "full_attention_layer_id_mapping", None
         )
@@ -206,41 +180,14 @@ class ATOMAttnBackendForSgl(AttentionBackend):
             first_full_attn_id = next(iter(mapping.keys()))
         else:
             first_full_attn_id = 0
-        self.v_head_dim = model_runner.token_to_kv_pool.get_value_buffer(
-            first_full_attn_id
-        ).shape[-1]
-        self.num_kv_head = model_runner.model_config.get_num_kv_heads(
-            get_attention_tp_size()
-        )
-        self.kv_cache_dtype = model_runner.kv_cache_dtype
+
         self.q_dtype = model_runner.dtype  # Save q dtype for pa_metadata building
 
-        self.req_to_token = model_runner.req_to_token_pool.req_to_token
-
-        self.use_mla = model_runner.model_config.attention_arch == AttentionArch.MLA
         assert not self.use_mla, "MLA mode is not implemented yet in ATOMAttnBackendForSgl."
 
-        # Parse constants
-        self.max_context_len = model_runner.model_config.context_len
-        self.skip_prefill = skip_prefill
-
-        max_bs = model_runner.req_to_token_pool.size
-
-        if kv_indptr_buf is None:
-            self.kv_indptr = torch.zeros(
-                (max_bs + 1,), dtype=torch.int32, device=model_runner.device
-            )
-        else:
-            self.kv_indptr = kv_indptr_buf
-
-        self.kv_last_page_len = torch.ones(
-            (max_bs,), dtype=torch.int32, device=model_runner.device
-        )
-        self.qo_indptr = torch.zeros(
-            (max_bs + 1,), dtype=torch.int32, device=model_runner.device
-        )
         # Pre-initialized qo_indptr for pa_persistent_fwd decode mode: [0, 1, 2, ..., max_bs]
         # In decode mode, each sequence has 1 token, so this is always [0, 1, 2, ..., batch_size]
+        max_bs = model_runner.req_to_token_pool.size
         self.pa_decode_qo_indptr = torch.arange(
             0, max_bs + 1, dtype=torch.int32, device=model_runner.device
         )
@@ -255,29 +202,7 @@ class ATOMAttnBackendForSgl(AttentionBackend):
             0, self.max_context_len, self.page_size, device=model_runner.device
         )
 
-        # Create prefill indices updater
-        if not skip_prefill:
-            self.indices_updater_prefill = AiterIndicesUpdaterPrefill(
-                model_runner, self
-            )
-            if self.use_mla:
-                raise NotImplementedError("MLA prefill mode is not implemented yet in ATOMAttnBackendForSgl.")
-
-        # aiter kernel related initialization
-        self.max_num_partitions = (
-            self.max_context_len + _AITER_PARTITION_SIZE_ROCM - 1
-        ) // _AITER_PARTITION_SIZE_ROCM
-
-        nbyes_per_qo_elem = torch.finfo(torch.float32).bits // 8
-
         if not self.use_mla:
-            self.workspace_buffer = torch.empty(
-                (max_bs * self.num_head * self.max_num_partitions * self.head_dim)
-                * nbyes_per_qo_elem
-                + 2 * (max_bs * self.num_head * self.max_num_partitions) * 4,
-                dtype=torch.uint8,
-                device=self.device,
-            )
             # Pre-allocate buffers for pa_persistent_fwd (used in both CUDA graph and non-CUDA graph modes)
             max_num_blocks_per_seq = (self.max_context_len + self.page_size - 1) // self.page_size
             max_total_blocks = max_bs * max_num_blocks_per_seq
@@ -293,23 +218,12 @@ class ATOMAttnBackendForSgl(AttentionBackend):
                 0, max_bs, dtype=torch.int32, device=self.device
             )
 
-        self.scale = float(1.0 / (self.head_dim**0.5))
         # Pre-allocated descale tensors for FP8 attention (q, k, v all use scale=1.0)
-        self.q_scale = self.k_scale = self.v_scale = torch.tensor(
-            [1.0], dtype=torch.float32, device=self.device
-        )
-        self.fp8_scale = 1.0  # Store as scalar to avoid sync in kernel calls
+
 
         self.logits_soft_cap = 0.0
 
         self.forward_metadata: ForwardMetadata = None
-
-        if self.use_mla:
-            self.qo_indptr_ = torch.zeros(
-                (max_bs + 1,), dtype=torch.int32, device=model_runner.device
-            )
-
-            self.enable_dp_attention = is_dp_attention_enabled()
         
         self.pa_metadata_buffers = None
         
@@ -361,20 +275,23 @@ class ATOMAttnBackendForSgl(AttentionBackend):
             if self.use_mla:
                 raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
             else:
-                # Non-MLA decode mode: use same logic as CUDA Graph mode for page_table construction
-                seq_lens_cpu = forward_batch.seq_lens_cpu
-                if seq_lens_cpu is None:
-                    seq_lens_cpu = forward_batch.seq_lens.cpu()
-                
-                # Common setup consistent with CUDA Graph mode (init_forward_metadata_replay_cuda_graph)
-                page_table_persistent = self.page_table
-                seq_lens_persistent = self.seq_lens
-                seq_lens_persistent.fill_(0)
-                page_table_persistent.fill_(0)
-                seq_lens_persistent[:bs].copy_(forward_batch.seq_lens, non_blocking=True)
-                max_seq_pages = (seq_lens_cpu.max().item() + self.page_size - 1) // self.page_size + 1
-                page_table = self.req_to_token[forward_batch.req_pool_indices[:, None], self.strided_indices[:max_seq_pages][None, :],]
-                page_table_persistent[:bs, :max_seq_pages].copy_(page_table // self.page_size, non_blocking=True)
+                if self.decode_using_pa_ps:
+                    # Non-MLA decode mode: use same logic as CUDA Graph mode for page_table construction
+                    seq_lens_cpu = forward_batch.seq_lens_cpu
+                    if seq_lens_cpu is None:
+                        seq_lens_cpu = forward_batch.seq_lens.cpu()
+                    
+                    # Common setup consistent with CUDA Graph mode (init_forward_metadata_replay_cuda_graph)
+                    page_table_persistent = self.page_table
+                    seq_lens_persistent = self.seq_lens
+                    seq_lens_persistent.fill_(0)
+                    page_table_persistent.fill_(0)
+                    seq_lens_persistent[:bs].copy_(forward_batch.seq_lens, non_blocking=True)
+                    max_seq_pages = (seq_lens_cpu.max().item() + self.page_size - 1) // self.page_size + 1
+                    page_table = self.req_to_token[forward_batch.req_pool_indices[:, None], self.strided_indices[:max_seq_pages][None, :],]
+                    page_table_persistent[:bs, :max_seq_pages].copy_(page_table // self.page_size, non_blocking=True)
+                else:
+                    page_table = forward_batch.req_to_token_pool.req_to_token[forward_batch.req_pool_indices, :]
                 
                 self.forward_metadata = ForwardMetadata(
                     kv_indptr,
@@ -383,13 +300,14 @@ class ATOMAttnBackendForSgl(AttentionBackend):
                     None,  # kv_last_page_len not used in non-MLA mode
                     1,     # max_q_len = 1 for decode mode
                     None,
-                    page_table_persistent[:bs, :max_seq_pages],
-                    seq_lens_persistent[:bs],
+                    page_table_persistent[:bs, :max_seq_pages] if self.decode_using_pa_ps else page_table,
+                    seq_lens_persistent[:bs] if self.decode_using_pa_ps else forward_batch.seq_lens,
                 )
                 
                 # Build pa_metadata for pa_persistent_fwd
-                self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
-                return  # Early return for non-MLA decode mode   
+                if self.decode_using_pa_ps:
+                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
+                # return  # Early return for non-MLA decode mode   
         else:
             prefix_lens = forward_batch.extend_prefix_lens
 
@@ -413,7 +331,7 @@ class ATOMAttnBackendForSgl(AttentionBackend):
                     None,
                     self.indices_updater_prefill.max_q_len,
                     self.indices_updater_prefill.max_kv_len,
-                    page_table,
+                    None,
                     forward_batch.seq_lens,
                 )
 
@@ -428,7 +346,12 @@ class ATOMAttnBackendForSgl(AttentionBackend):
                 self.forward_metadata.page_table = (
                     self.forward_metadata.page_table[:, self.strided_indices[:max_seq_pages]] // self.page_size
                 )
-            self._build_pa_metadata_for_prefill(forward_batch.batch_size)
+            if self.decode_using_pa_ps:
+                self._build_pa_metadata_for_prefill(forward_batch.batch_size)
+        if not self.decode_using_pa_ps and self.page_size > 1 and self.forward_metadata.page_table is not None:
+            self.forward_metadata.page_table = (
+                self.forward_metadata.page_table[:, self.strided_indices] // self.page_size
+            )
 
     def _allocate_pa_metadata_buffers(
         self,
@@ -659,6 +582,7 @@ class ATOMAttnBackendForSgl(AttentionBackend):
         max_num_tokens: int,
         kv_indices_buf: Optional[torch.Tensor] = None,
     ):
+        print("Initializing CUDA graph state for ATOMAttnBackendForSgl...", flush=True)
         self.cuda_graph_kv_last_page_len = torch.ones(max_bs, dtype=torch.int)
         if kv_indices_buf is None:
             self.cuda_graph_kv_indices = torch.zeros(
@@ -681,7 +605,7 @@ class ATOMAttnBackendForSgl(AttentionBackend):
         )
         
         # Pre-allocate buffers for pa_metadata in CUDA graph mode (non-MLA decode)
-        if not self.use_mla:
+        if self.decode_using_pa_ps and not self.use_mla:
             # Pre-allocate pa_metadata buffers for CUDA graph compatibility
             # These buffers will be reused in capture and replay phases
             # Use max_bs and max_qlen=1 (decode mode) to calculate buffer sizes
@@ -725,6 +649,7 @@ class ATOMAttnBackendForSgl(AttentionBackend):
         forward_mode: ForwardMode,
         spec_info: Optional[SpecInput],
     ):
+        print(f"Initializing forward metadata for CUDA graph capture with bs={bs}, num_tokens={num_tokens}, forward_mode={forward_mode}...", flush=True)
         if forward_mode.is_decode_or_idle():
             if self.use_mla:
                 # MLA mode: kv_indptr and kv_indices are used in forward_decode
@@ -747,7 +672,8 @@ class ATOMAttnBackendForSgl(AttentionBackend):
                 )
                 
                 # Build pa_metadata using CUDA graph buffers
-                self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
+                if self.decode_using_pa_ps:
+                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
                 return  # Early return for non-MLA decode mode
         else:
             raise ValueError(f"Invalid mode: {forward_mode=}")
@@ -764,6 +690,7 @@ class ATOMAttnBackendForSgl(AttentionBackend):
         seq_lens_cpu: Optional[torch.Tensor],
         out_cache_loc: Optional[torch.Tensor] = None,
     ):
+        print(f"Replaying forward metadata for CUDA graph with bs={bs}, forward_mode={forward_mode}...", flush=True)
         if forward_mode.is_decode_or_idle():
             # Common setup for both MLA and non-MLA modes
             page_table_persistent = self.page_table
@@ -793,7 +720,8 @@ class ATOMAttnBackendForSgl(AttentionBackend):
                 )
                 
                 # Rebuild pa_metadata using CUDA graph buffers (updates content, keeps same addresses)
-                self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
+                if self.decode_using_pa_ps:
+                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
         else:
             raise ValueError("Invalid forward mode")
 
@@ -838,19 +766,21 @@ class ATOMAttnBackendForSgl(AttentionBackend):
         if k is not None:
             assert v is not None
             if save_kv_cache:
-                if self.use_mla:
-                    forward_batch.token_to_kv_pool.set_kv_buffer(layer, cache_loc, k, v)
-                else:
-                    forward_batch.token_to_kv_pool.set_kv_buffer(
-                        layer, cache_loc, k, v, layer.k_scale, layer.v_scale
-                    )
+                k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
+                    layer.layer_id
+                )
+                self.set_kv_buffer_with_layout_shuffle(cache_loc, k, v, k_buffer, v_buffer, layer.k_scale, layer.v_scale, self.page_size)
+                # forward_batch.token_to_kv_pool.set_kv_buffer(
+                #     layer, cache_loc, k, v, layer.k_scale, layer.v_scale
+                # )
 
         seqlens_in_batch = forward_batch.seq_lens
         cu_seqlens_q = torch.nn.functional.pad(
             torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0)
         )
         # use fp8 mha directly
-        q = q.to(dtypes.fp8)
+        if q.dtype != k.dtype and k.dtype == dtypes.fp8:
+            q = q.to(dtypes.fp8)
         o = flash_attn_varlen_func(
             q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
             k.contiguous().view(-1, layer.tp_k_head_num, layer.head_dim),
@@ -868,9 +798,6 @@ class ATOMAttnBackendForSgl(AttentionBackend):
         )
 
         return o.view(-1, layer.tp_q_head_num * layer.head_dim)
-    
-    def get_cuda_graph_seq_len_fill_value(self):
-        return 1
     
 
     def forward_decode_pa(
@@ -920,7 +847,7 @@ class ATOMAttnBackendForSgl(AttentionBackend):
             new_key_cache = k_buffer.view_as(k_cache_template)
             new_value_cache = v_buffer.view_as(v_cache_template)
             q = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
-            aiter.pa_fwd_asm(
+            pa_fwd_asm(
                 Q=q,
                 K=new_key_cache,
                 V=new_value_cache,

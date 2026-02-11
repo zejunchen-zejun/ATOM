@@ -42,7 +42,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
         "ATOM_LLAMA_ENABLE_AITER_TRITON_FUSED_SILU_MUL_QUANT", "1"
     )
     == "1",
-    "AITER_ROPE_FUSED_QKNORM": lambda: os.getenv("AITER_ROPE_FUSED_QKNORM", "1") == "1",
+    "AITER_ROPE_FUSED_QKNORM": lambda: os.getenv("AITER_ROPE_FUSED_QKNORM", "0") == "1",
 }
 
 
