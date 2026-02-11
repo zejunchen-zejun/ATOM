@@ -386,9 +386,20 @@ class LinearBase(nn.Module):
         if self.quant_type == QuantType.per_1x32:
             self.weight_scale.data = fp4_utils.e8m0_shuffle(self.weight_scale.data)
 
+    _diag_forward_counter = 0
+
     def forward(
         self, x: torch.Tensor, x_scale: Optional[torch.Tensor] = None, otype=dtypes.bf16
     ) -> torch.Tensor:
+        if LinearBase._diag_forward_counter < 5:
+            LinearBase._diag_forward_counter += 1
+            print(
+                f"[DIAG][LinearBase.forward] prefix={self.prefix} "
+                f"quant_type={self.quant_type} "
+                f"w_dtype={self.weight.dtype} "
+                f"w_scale_shape={tuple(self.weight_scale.shape) if self.weight_scale is not None else None} "
+                f"x shape={tuple(x.shape)}"
+            )
         if self.quant_type.value == QuantType.No.value:
             y = tgemm.mm(
                 x,

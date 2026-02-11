@@ -5,6 +5,7 @@ from .radix_attention import RadixAttention
 # it can be assigned to different attention ops.
 # By default, PagedAttention is used.
 # For sglang, RadixAttention will be assigned to Attention
+# see register.py for details.
 Attention = PagedAttention
 
 __all__ = [

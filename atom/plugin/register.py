@@ -2,6 +2,7 @@ import logging
 
 from atom.models.qwen3 import Qwen3ForCausalLM
 from atom.models.qwen3_moe import Qwen3MoeForCausalLM
+from atom.models.deepseek_v2 import DeepseekV3ForCausalLM
 from atom.config import Config
 from atom.plugin.prepare import is_vllm, is_sglang
 
@@ -10,6 +11,7 @@ logger = logging.getLogger("atom")
 _ATOM_SUPPORTED_MODELS = {
     "Qwen3ForCausalLM": Qwen3ForCausalLM,
     "Qwen3MoeForCausalLM": Qwen3MoeForCausalLM,
+    "DeepseekV3ForCausalLM": DeepseekV3ForCausalLM,
 }
 
 
@@ -26,9 +28,9 @@ def _register_custom_attention_to_sglang() -> None:
 
     @register_attention_backend("aiter")
     def create_atom_backend(runner):
-        from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
+        from atom.plugin.attention_backend.sgl_attn_backend import ATOMAttnBackendForSgl
 
-        return AiterAttnBackend(runner)
+        return ATOMAttnBackendForSgl(runner)
 
 
 def register_ops_to_sglang(atom_config: Config) -> None:
