@@ -294,18 +294,6 @@ class PagedAttentionImpl(nn.Module):
     ):
 
         attn_metadata = fwd_ctx.attn_metadata
-        print(f"[DEBUG] call paged_attention_asm", flush=True)
-        # print(f"q shape = {q.shape}, k_cache shape = {k_cache.shape}, k_cache stride = {k_cache.stride()}, v_cache shape = {v_cache.shape}, v_cache stride = {v_cache.stride()}, block_tables shape = {attn_metadata.block_tables.shape}, block_tables contiguous = {attn_metadata.block_tables.is_contiguous()}, attn_metadata.block_tables.stride(0) = {attn_metadata.block_tables.stride(0)}, context_lens shape = {attn_metadata.context_lens.shape}, k_scale shape = {k_scale.shape}, v_scale shape = {v_scale.shape}", flush=True)
-        # print(f"k cache contiguous = {k_cache.is_contiguous()}, v cache contiguous = {v_cache.is_contiguous()}", flush=True)
-        print(f"q shape = {q.shape}, k_cache shape = {k_cache.shape}, k_cache stride = {k_cache.stride()}, v_cache shape = {v_cache.shape}, v_cache stride = {v_cache.stride()}, block_tables shape = {attn_metadata.block_tables.shape}, block_tables contiguous = {attn_metadata.block_tables.is_contiguous()}, attn_metadata.block_tables.stride(0) = {attn_metadata.block_tables.stride(0)}, context_lens shape = {attn_metadata.context_lens.shape}", flush=True)
-        print(f"k cache contiguous = {k_cache.is_contiguous()}, v cache contiguous = {v_cache.is_contiguous()}", flush=True)
-        print(f"block_tables = {attn_metadata.block_tables}, context_lens = {attn_metadata.context_lens}", flush=True)
-        if k_scale is not None:
-            print(f"k_scale shape = {k_scale.shape}, k_scale contiguous = {k_scale.is_contiguous()}", flush=True)
-            print(f"v_scale shape = {v_scale.shape}, v_scale contiguous = {v_scale.is_contiguous()}", flush=True)
-        else:
-            print(f"k_scale is None, v_scale is None", flush=True)
-
         o = aiter.pa_fwd_asm(
             q,
             k_cache,
@@ -361,8 +349,6 @@ class PagedAttentionImpl(nn.Module):
             if self.sliding_window is not None
             else (-1, -1, 0)
         )
-        print(f"[DEBUG] call prefill attention", flush=True)
-        print(f"q shape = {q.shape}, k shape = {k.shape}, v shape = {v.shape}, cu_seqlens_q shape = {attn_metadata.cu_seqlens_q.shape}, cu_seqlens_k shape = {attn_metadata.cu_seqlens_k.shape}, max_seqlen_q = {attn_metadata.max_seqlen_q}, max_seqlen_k = {attn_metadata.max_seqlen_k}, min_seqlen_q = {attn_metadata.min_seqlen_q}", flush=True)
         o = aiter.flash_attn_varlen_func(
             q,
             k,

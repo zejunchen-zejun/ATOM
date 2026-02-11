@@ -225,8 +225,6 @@ class AiterAttentionMetadataBuilder:
         var["kv_indptr"].np[0] = 0
         var["kv_indptr"].np[1 : scheduled_bs + 1] = kv_indptr
         var["kv_indptr"].np[scheduled_bs + 1 : bs + 1] = sum_blocks
-        print(f"kv_indptr: {var['kv_indptr'].np[:bs+1]}", flush=True)
-        print(f"kv_indices: {var['kv_indices'].np[:sum_blocks_before_converted]}", flush=True)
 
         vars_used = [
             ("slot_mapping", bs),  # TODO: MTP support

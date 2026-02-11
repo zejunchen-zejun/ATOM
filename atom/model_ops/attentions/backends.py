@@ -133,7 +133,6 @@ class CommonAttentionBuilder(AttentionMetadataBuilder[T], Generic[T]):
         var = self.model_runner.forward_vars
         block_tables = var["block_tables"].np
         for i, block_table in enumerate(batch.block_tables):
-            print(f"i = {i}, block_table = {block_table}, block_tables[i] = {block_tables[i]}", flush=True)
             block_tables[i] = 0
             block_tables[i, : len(block_table)] = block_table
 
