@@ -9,6 +9,7 @@ from .attention_mla import MLAModules
 from .base_attention import BaseAttention
 from atom.plugin.prepare import is_plugin_mode, is_sglang
 from atom.models.utils import maybe_prefix
+from atom.utils import envs
 
 
 class RadixAttention(BaseAttention):
@@ -47,7 +48,6 @@ class RadixAttention(BaseAttention):
             prefix=prefix,
             **kwargs,
         )
-        self.rotary_emb = rotary_emb
 
         if is_sglang():
             from sglang.srt.layers.radix_attention import RadixAttention
@@ -64,6 +64,8 @@ class RadixAttention(BaseAttention):
             raise NotImplementedError(
                 "RadixAttention is only supported for plugin mode for sglang for now"
             )
+        # if True, save cache will be done in rope
+        self.use_aiter_rope_fused_qknorm = envs.ATOM_ROPE_FUSED_QKNORM
 
     def forward_impl_plugin_mode(
         self,
@@ -82,10 +84,8 @@ class RadixAttention(BaseAttention):
             # for sglang, forward_batch is required
             forward_batch = kwargs.get("forward_batch", None)
             assert forward_batch is not None, "forward_batch is required for sglang"
-            if self.rotary_emb is not None:
-                assert positions is not None, "positions is required for ROPE"
-                query, key = self.rotary_emb(positions, query, key)
-            return self.attn(q=query, k=key, v=value, forward_batch=forward_batch)
+            # forward_batch contains the filed attn_backend, which will find the backend registered in ATOM
+            return self.attn(query, key, value, forward_batch=forward_batch, save_kv_cache=not self.use_aiter_rope_fused_qknorm)
         else:
             raise NotImplementedError(
                 "RadixAttention is only supported for plugin mode for sglang for now"

@@ -75,6 +75,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
         "ATOM_DISABLE_VLLM_PLUGIN_ATTENTION", "0"
     ).lower()
     == "1",
+    "ATOM_ROPE_FUSED_QKNORM": lambda: os.getenv("AITER_ROPE_FUSED_QKNORM", "0") == "1",
 }
 
 
