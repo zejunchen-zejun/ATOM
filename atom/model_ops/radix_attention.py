@@ -85,7 +85,13 @@ class RadixAttention(BaseAttention):
             forward_batch = kwargs.get("forward_batch", None)
             assert forward_batch is not None, "forward_batch is required for sglang"
             # forward_batch contains the filed attn_backend, which will find the backend registered in ATOM
-            return self.attn(query, key, value, forward_batch=forward_batch, save_kv_cache=not self.use_aiter_rope_fused_qknorm)
+            return self.attn(
+                query,
+                key,
+                value,
+                forward_batch=forward_batch,
+                save_kv_cache=not self.use_aiter_rope_fused_qknorm,
+            )
         else:
             raise NotImplementedError(
                 "RadixAttention is only supported for plugin mode for sglang for now"

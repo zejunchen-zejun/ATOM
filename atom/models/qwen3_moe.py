@@ -41,6 +41,7 @@ ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
 )
 ENABLE_AITER_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE = envs.ATOM_ROPE_FUSED_QKNORM
 
+
 class Qwen3MoeMLP(nn.Module):
     def __init__(
         self,
@@ -237,24 +238,30 @@ class Qwen3MoeAttention(nn.Module):
         if ENABLE_AITER_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE:
             forward_batch = model_kwargs.get("forward_batch", None)
             assert forward_batch is not None, "forward_batch is required for sglang"
-            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(self.layer_num)
+            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
+                self.layer_num
+            )
             block_size = 1024  # Default fallback
-            if hasattr(forward_batch, 'attn_backend') and hasattr(forward_batch.attn_backend, 'page_size'):
+            if hasattr(forward_batch, "attn_backend") and hasattr(
+                forward_batch.attn_backend, "page_size"
+            ):
                 block_size = forward_batch.attn_backend.page_size
-            elif hasattr(forward_batch.token_to_kv_pool, 'allocator') and hasattr(forward_batch.token_to_kv_pool.allocator, 'page_size'):
+            elif hasattr(forward_batch.token_to_kv_pool, "allocator") and hasattr(
+                forward_batch.token_to_kv_pool.allocator, "page_size"
+            ):
                 block_size = forward_batch.token_to_kv_pool.allocator.page_size
-            elif hasattr(forward_batch.token_to_kv_pool, 'page_size'):
+            elif hasattr(forward_batch.token_to_kv_pool, "page_size"):
                 block_size = forward_batch.token_to_kv_pool.page_size
             x = 16 // k_buffer.element_size()
             aiter_fused_set_kv_buffer_arg = AiterFusedSetKVBufferArg(
-                kv_cache = (k_buffer, v_buffer),
-                cache_loc = forward_batch.out_cache_loc,
-                k_scale = self.k_scale,
-                v_scale = self.v_scale,
-                return_kv = True,
-                use_shuffle_layout = True,
-                block_size = block_size,
-                x = x,
+                kv_cache=(k_buffer, v_buffer),
+                cache_loc=forward_batch.out_cache_loc,
+                k_scale=self.k_scale,
+                v_scale=self.v_scale,
+                return_kv=True,
+                use_shuffle_layout=True,
+                block_size=block_size,
+                x=x,
             )
             q, k, v = self.rotary_emb(
                 qkv,
@@ -276,9 +283,7 @@ class Qwen3MoeAttention(nn.Module):
 
             q, k = self.rotary_emb(positions, q, k)
 
-        attn_output = self.attn(
-            q, k, v, positions=positions, **model_kwargs
-        )
+        attn_output = self.attn(q, k, v, positions=positions, **model_kwargs)
         return attn_output
 
     def forward(
@@ -298,7 +303,9 @@ class Qwen3MoeAttention(nn.Module):
             )
         else:
             if is_sglang():
-                attn_output = self.forward_sgl_plugin_mode(positions, qkv, **model_kwargs)
+                attn_output = self.forward_sgl_plugin_mode(
+                    positions, qkv, **model_kwargs
+                )
             else:
                 # Add qk-norm
                 q = self.q_norm(q)

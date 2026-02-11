@@ -35,6 +35,7 @@ except ImportError:
 import triton
 import triton.language as tl
 
+
 @triton.jit
 def reshape_and_cache_shuffle_kernel(
     key_ptr,  # [num_tokens, num_kv_heads, head_size]
@@ -71,10 +72,7 @@ def reshape_and_cache_shuffle_kernel(
         dst_offset + offset // x * block_size * x + block_offset * x + offset % x
     )
     dst_v_shuffle_offset = (
-        dst_offset
-        + block_offset // x * head_size * x
-        + offset * x
-        + block_offset % x
+        dst_offset + block_offset // x * head_size * x + offset * x + block_offset % x
     )
     k_val = tl.load(key_ptr + src_offset_k + offset)
     v_val = tl.load(value_ptr + src_offset_v + offset)
@@ -87,6 +85,7 @@ def reshape_and_cache_shuffle_kernel(
         v_val = (v_val.to(tl.float32) / v_scale).to(v_dtype)
     tl.store(key_cache_ptr + dst_k_shuffle_offset, k_val)
     tl.store(value_cache_ptr + dst_v_shuffle_offset, v_val)
+
 
 def reshape_and_cache_shuffle_triton(
     key: torch.Tensor,
@@ -139,6 +138,7 @@ def reshape_and_cache_shuffle_triton(
         QUANT=QUANT,
     )
 
+
 @dataclass
 class ForwardMetadata:
     # kv_indptr and kv_indices are only used in MLA mode, optional for non-MLA mode
@@ -183,7 +183,9 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         self.q_dtype = model_runner.dtype  # Save q dtype for pa_metadata building
 
-        assert not self.use_mla, "MLA mode is not implemented yet in ATOMAttnBackendForSgl."
+        assert (
+            not self.use_mla
+        ), "MLA mode is not implemented yet in ATOMAttnBackendForSgl."
 
         # Pre-initialized qo_indptr for pa_persistent_fwd decode mode: [0, 1, 2, ..., max_bs]
         # In decode mode, each sequence has 1 token, so this is always [0, 1, 2, ..., batch_size]
@@ -195,7 +197,9 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             (max_bs,), dtype=torch.int32, device=model_runner.device
         )
         self.page_table = torch.zeros(
-            (max_bs, self.max_context_len // self.page_size), dtype=torch.int32, device=model_runner.device
+            (max_bs, self.max_context_len // self.page_size),
+            dtype=torch.int32,
+            device=model_runner.device,
         )
         # Pre-compute strided indices for page_table construction (used in both CUDA Graph and non-CUDA Graph modes)
         self.strided_indices = torch.arange(
@@ -204,7 +208,9 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         if not self.use_mla:
             # Pre-allocate buffers for pa_persistent_fwd (used in both CUDA graph and non-CUDA graph modes)
-            max_num_blocks_per_seq = (self.max_context_len + self.page_size - 1) // self.page_size
+            max_num_blocks_per_seq = (
+                self.max_context_len + self.page_size - 1
+            ) // self.page_size
             max_total_blocks = max_bs * max_num_blocks_per_seq
             self.pa_kv_indices = torch.zeros(
                 max_total_blocks, dtype=torch.int32, device=self.device
@@ -220,13 +226,12 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         # Pre-allocated descale tensors for FP8 attention (q, k, v all use scale=1.0)
 
-
         self.logits_soft_cap = 0.0
 
         self.forward_metadata: ForwardMetadata = None
-        
+
         self.pa_metadata_buffers = None
-        
+
         k_buffer, _ = model_runner.token_to_kv_pool.get_kv_buffer(first_full_attn_id)
         num_slots, num_kv_heads, _ = k_buffer.shape
         block_size = self.page_size
@@ -239,7 +244,6 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             num_kv_heads, max_total_tokens, dtype=torch.float32, device=self.device
         )
         self.decode_using_pa_ps = self.page_size == 1024
-           
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         """Init auxiliary variables for triton attention backend."""
@@ -273,46 +277,69 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 bs = kv_indptr.shape[0] - 1
 
             if self.use_mla:
-                raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
+                raise NotImplementedError(
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                )
             else:
                 if self.decode_using_pa_ps:
                     # Non-MLA decode mode: use same logic as CUDA Graph mode for page_table construction
                     seq_lens_cpu = forward_batch.seq_lens_cpu
                     if seq_lens_cpu is None:
                         seq_lens_cpu = forward_batch.seq_lens.cpu()
-                    
+
                     # Common setup consistent with CUDA Graph mode (init_forward_metadata_replay_cuda_graph)
                     page_table_persistent = self.page_table
                     seq_lens_persistent = self.seq_lens
                     seq_lens_persistent.fill_(0)
                     page_table_persistent.fill_(0)
-                    seq_lens_persistent[:bs].copy_(forward_batch.seq_lens, non_blocking=True)
-                    max_seq_pages = (seq_lens_cpu.max().item() + self.page_size - 1) // self.page_size + 1
-                    page_table = self.req_to_token[forward_batch.req_pool_indices[:, None], self.strided_indices[:max_seq_pages][None, :],]
-                    page_table_persistent[:bs, :max_seq_pages].copy_(page_table // self.page_size, non_blocking=True)
+                    seq_lens_persistent[:bs].copy_(
+                        forward_batch.seq_lens, non_blocking=True
+                    )
+                    max_seq_pages = (
+                        seq_lens_cpu.max().item() + self.page_size - 1
+                    ) // self.page_size + 1
+                    page_table = self.req_to_token[
+                        forward_batch.req_pool_indices[:, None],
+                        self.strided_indices[:max_seq_pages][None, :],
+                    ]
+                    page_table_persistent[:bs, :max_seq_pages].copy_(
+                        page_table // self.page_size, non_blocking=True
+                    )
                 else:
-                    page_table = forward_batch.req_to_token_pool.req_to_token[forward_batch.req_pool_indices, :]
-                
+                    page_table = forward_batch.req_to_token_pool.req_to_token[
+                        forward_batch.req_pool_indices, :
+                    ]
+
                 self.forward_metadata = ForwardMetadata(
                     kv_indptr,
                     kv_indices,
                     None,  # qo_indptr not used in non-MLA mode
                     None,  # kv_last_page_len not used in non-MLA mode
-                    1,     # max_q_len = 1 for decode mode
+                    1,  # max_q_len = 1 for decode mode
                     None,
-                    page_table_persistent[:bs, :max_seq_pages] if self.decode_using_pa_ps else page_table,
-                    seq_lens_persistent[:bs] if self.decode_using_pa_ps else forward_batch.seq_lens,
+                    (
+                        page_table_persistent[:bs, :max_seq_pages]
+                        if self.decode_using_pa_ps
+                        else page_table
+                    ),
+                    (
+                        seq_lens_persistent[:bs]
+                        if self.decode_using_pa_ps
+                        else forward_batch.seq_lens
+                    ),
                 )
-                
+
                 # Build pa_metadata for pa_persistent_fwd
                 if self.decode_using_pa_ps:
                     self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
-                # return  # Early return for non-MLA decode mode   
+                # return  # Early return for non-MLA decode mode
         else:
             prefix_lens = forward_batch.extend_prefix_lens
 
             if self.use_mla:
-                raise NotImplementedError("MLA prefill mode is not implemented yet in ATOMAttnBackendForSgl.")
+                raise NotImplementedError(
+                    "MLA prefill mode is not implemented yet in ATOMAttnBackendForSgl."
+                )
             else:
                 self.indices_updater_prefill.update(
                     forward_batch.req_pool_indices,
@@ -323,11 +350,15 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     spec_info=None,
                 )
                 # Get page_table for mha_batch_prefill_func
-                page_table = forward_batch.req_to_token_pool.req_to_token[forward_batch.req_pool_indices, :]
+                page_table = forward_batch.req_to_token_pool.req_to_token[
+                    forward_batch.req_pool_indices, :
+                ]
                 self.forward_metadata = ForwardMetadata(
                     self.indices_updater_prefill.kv_indptr,
                     self.indices_updater_prefill.kv_indices,
-                    self.qo_indptr[: bs + 1],  # qo_indptr is set by indices_updater_prefill
+                    self.qo_indptr[
+                        : bs + 1
+                    ],  # qo_indptr is set by indices_updater_prefill
                     None,
                     self.indices_updater_prefill.max_q_len,
                     self.indices_updater_prefill.max_kv_len,
@@ -335,22 +366,34 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     forward_batch.seq_lens,
                 )
 
-        if (forward_batch.forward_mode.is_extend() and
-            not self.use_mla and
-            self.forward_metadata.page_table is not None):
+        if (
+            forward_batch.forward_mode.is_extend()
+            and not self.use_mla
+            and self.forward_metadata.page_table is not None
+        ):
             if self.page_size > 1:
                 seq_lens_cpu = forward_batch.seq_lens_cpu
                 if seq_lens_cpu is None:
                     seq_lens_cpu = forward_batch.seq_lens.cpu()
-                max_seq_pages = (seq_lens_cpu.max().item() + self.page_size - 1) // self.page_size + 1
+                max_seq_pages = (
+                    seq_lens_cpu.max().item() + self.page_size - 1
+                ) // self.page_size + 1
                 self.forward_metadata.page_table = (
-                    self.forward_metadata.page_table[:, self.strided_indices[:max_seq_pages]] // self.page_size
+                    self.forward_metadata.page_table[
+                        :, self.strided_indices[:max_seq_pages]
+                    ]
+                    // self.page_size
                 )
             if self.decode_using_pa_ps:
                 self._build_pa_metadata_for_prefill(forward_batch.batch_size)
-        if not self.decode_using_pa_ps and self.page_size > 1 and self.forward_metadata.page_table is not None:
+        if (
+            not self.decode_using_pa_ps
+            and self.page_size > 1
+            and self.forward_metadata.page_table is not None
+        ):
             self.forward_metadata.page_table = (
-                self.forward_metadata.page_table[:, self.strided_indices] // self.page_size
+                self.forward_metadata.page_table[:, self.strided_indices]
+                // self.page_size
             )
 
     def _allocate_pa_metadata_buffers(
@@ -371,90 +414,112 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         """Allocate or reuse pa_metadata buffers."""
         if self.pa_metadata_buffers is None:
             self.pa_metadata_buffers = {}
-        
+
         def _get_size_val(size):
             return size[0] if isinstance(size, tuple) else size
-        
+
         # Allocate work_metadata_ptrs
         size_val = _get_size_val(work_metadata_ptrs_size)
-        if ("work_metadata_ptrs" not in self.pa_metadata_buffers or 
-            self.pa_metadata_buffers["work_metadata_ptrs"].shape[0] < size_val):
+        if (
+            "work_metadata_ptrs" not in self.pa_metadata_buffers
+            or self.pa_metadata_buffers["work_metadata_ptrs"].shape[0] < size_val
+        ):
             self.pa_metadata_buffers["work_metadata_ptrs"] = torch.empty(
-                work_metadata_ptrs_size, dtype=work_metadata_ptrs_type, device=self.device
+                work_metadata_ptrs_size,
+                dtype=work_metadata_ptrs_type,
+                device=self.device,
             )
-        
+
         # Allocate work_indptr
         size_val = _get_size_val(work_indptr_size)
-        if ("work_indptr" not in self.pa_metadata_buffers or 
-            self.pa_metadata_buffers["work_indptr"].shape[0] < size_val):
+        if (
+            "work_indptr" not in self.pa_metadata_buffers
+            or self.pa_metadata_buffers["work_indptr"].shape[0] < size_val
+        ):
             self.pa_metadata_buffers["work_indptr"] = torch.zeros(
                 work_indptr_size, dtype=work_indptr_type, device=self.device
             )
         else:
             self.pa_metadata_buffers["work_indptr"].zero_()
-        
+
         # Allocate work_info
         size_val = _get_size_val(work_info_size)
-        if ("work_info" not in self.pa_metadata_buffers or 
-            len(self.pa_metadata_buffers["work_info"].shape) < len(work_info_size) or
-            self.pa_metadata_buffers["work_info"].shape[0] < size_val):
+        if (
+            "work_info" not in self.pa_metadata_buffers
+            or len(self.pa_metadata_buffers["work_info"].shape) < len(work_info_size)
+            or self.pa_metadata_buffers["work_info"].shape[0] < size_val
+        ):
             self.pa_metadata_buffers["work_info"] = torch.zeros(
                 work_info_size, dtype=work_info_type, device=self.device
             )
         else:
             self.pa_metadata_buffers["work_info"].zero_()
-        
+
         # Allocate reduce_indptr
         size_val = _get_size_val(reduce_indptr_size)
-        if ("reduce_indptr" not in self.pa_metadata_buffers or 
-            self.pa_metadata_buffers["reduce_indptr"].shape[0] < size_val):
+        if (
+            "reduce_indptr" not in self.pa_metadata_buffers
+            or self.pa_metadata_buffers["reduce_indptr"].shape[0] < size_val
+        ):
             self.pa_metadata_buffers["reduce_indptr"] = torch.zeros(
                 reduce_indptr_size, dtype=reduce_indptr_type, device=self.device
             )
         else:
             self.pa_metadata_buffers["reduce_indptr"].zero_()
-        
+
         # Allocate reduce_final_map
         size_val = _get_size_val(reduce_final_map_size)
-        if ("reduce_final_map" not in self.pa_metadata_buffers or 
-            len(self.pa_metadata_buffers["reduce_final_map"].shape) < len(reduce_final_map_size) or
-            self.pa_metadata_buffers["reduce_final_map"].shape[0] < size_val):
+        if (
+            "reduce_final_map" not in self.pa_metadata_buffers
+            or len(self.pa_metadata_buffers["reduce_final_map"].shape)
+            < len(reduce_final_map_size)
+            or self.pa_metadata_buffers["reduce_final_map"].shape[0] < size_val
+        ):
             self.pa_metadata_buffers["reduce_final_map"] = torch.zeros(
                 reduce_final_map_size, dtype=reduce_final_map_type, device=self.device
             )
         else:
             self.pa_metadata_buffers["reduce_final_map"].zero_()
-        
+
         # Allocate reduce_partial_map
-        reduce_partial_map_size_val = reduce_partial_map_size if isinstance(reduce_partial_map_size, int) else reduce_partial_map_size[0]
-        if ("reduce_partial_map" not in self.pa_metadata_buffers or 
-            self.pa_metadata_buffers["reduce_partial_map"].shape[0] < reduce_partial_map_size_val):
+        reduce_partial_map_size_val = (
+            reduce_partial_map_size
+            if isinstance(reduce_partial_map_size, int)
+            else reduce_partial_map_size[0]
+        )
+        if (
+            "reduce_partial_map" not in self.pa_metadata_buffers
+            or self.pa_metadata_buffers["reduce_partial_map"].shape[0]
+            < reduce_partial_map_size_val
+        ):
             self.pa_metadata_buffers["reduce_partial_map"] = torch.zeros(
-                reduce_partial_map_size, dtype=reduce_partial_map_type, device=self.device
+                reduce_partial_map_size,
+                dtype=reduce_partial_map_type,
+                device=self.device,
             )
         else:
             self.pa_metadata_buffers["reduce_partial_map"].zero_()
 
     def _build_pa_metadata_for_decode(
-        self, 
-        batch_size: int, 
+        self,
+        batch_size: int,
         tp_q_head_num: Optional[int] = None,
     ):
         """Build pa_metadata buffers for pa_persistent_fwd in decode mode.
-        
+
         This method prepares all metadata buffers needed for pa_persistent_fwd kernel.
         The metadata can be reused across multiple layers in the same forward pass.
-        
+
         Args:
             batch_size: Batch size for the current forward pass
             tp_q_head_num: Number of Q heads per TP rank. If None, uses self.num_head.
         """
         max_qlen = 1
-        
+
         # Use provided tp_q_head_num or default to self.num_head
         if tp_q_head_num is None:
             tp_q_head_num = self.num_head
-        
+
         # kv_dtype_for_metadata = dtypes.fp8
         (
             (work_metadata_ptrs_size, work_metadata_ptrs_type),
@@ -483,22 +548,22 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             reduce_partial_map_type,
         )
         qo_indptr = self.pa_decode_qo_indptr[: batch_size + 1]
-        
+
         # Get context_lens (kv_lens is always set before calling _build_pa_metadata_for_decode)
         # Note: kv_lens comes from self.seq_lens which is already int32
         context_lens = self.forward_metadata.kv_lens
-        
+
         kernel_block_size = self.page_size
         num_blocks_per_seq = (context_lens + kernel_block_size - 1) // kernel_block_size
         # Use dedicated pa_kv_indptr buffer (similar to self.kv_indptr, but for pa_persistent_fwd)
         pages_kv_indptr = self.pa_kv_indptr[: batch_size + 1]
         pages_kv_indptr[1 : batch_size + 1] = torch.cumsum(num_blocks_per_seq, dim=0)
-        
+
         # Convert page_table to kv_indices (block indices) using Triton kernel to avoid sync
         # page_table shape: [batch_size, max_num_blocks_per_seq]
         # Note: page_table comes from self.page_table which is already int32 and always set before this call
         page_table = self.forward_metadata.page_table
-        
+
         # Use Triton kernel to gather kv_indices from page_table (avoids high-level indexing sync)
         create_flashinfer_kv_indices_triton[(batch_size,)](
             page_table,
@@ -554,7 +619,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         # Page-level kv_indptr (reuse pa_kv_indptr buffer)
         pages_kv_indptr = self.pa_kv_indptr[: batch_size + 1]
         pages_kv_indptr[1 : batch_size + 1] = torch.cumsum(num_blocks_per_seq, dim=0)
-        
+
         # Build kv_indices from page_table using triton kernel
         page_table = self.forward_metadata.page_table
         create_flashinfer_kv_indices_triton[(batch_size,)](
@@ -594,15 +659,15 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         # Always use preshuffle layout for pa_fwd_asm
         self.page_table = torch.zeros(
-            (max_bs, self.max_context_len // self.page_size), dtype=torch.int32, device=self.device
+            (max_bs, self.max_context_len // self.page_size),
+            dtype=torch.int32,
+            device=self.device,
         )
-        self.seq_lens = torch.zeros(
-            (max_bs,), dtype=torch.int32, device=self.device
-        )
+        self.seq_lens = torch.zeros((max_bs,), dtype=torch.int32, device=self.device)
         self.strided_indices = torch.arange(
             0, self.max_context_len, self.page_size, device=self.device
         )
-        
+
         # Pre-allocate buffers for pa_metadata in CUDA graph mode (non-MLA decode)
         if self.decode_using_pa_ps and not self.use_mla:
             # Pre-allocate pa_metadata buffers for CUDA graph compatibility
@@ -621,7 +686,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 max_bs,
                 self.num_kv_head,
             )
-            
+
             # Pre-allocate buffers with maximum size for CUDA graph compatibility
             self._allocate_pa_metadata_buffers(
                 work_metadata_ptrs_size,
@@ -651,7 +716,9 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         if forward_mode.is_decode_or_idle():
             if self.use_mla:
                 # MLA mode: kv_indptr and kv_indices are used in forward_decode
-                raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
+                raise NotImplementedError(
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                )
             else:
                 # Non-MLA decode mode: kv_indptr and kv_indices are NOT used in forward_decode
                 # (forward_decode uses pa_metadata_pages_kv_indptr and pa_metadata_kv_indices instead)
@@ -668,7 +735,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     page_table,
                     seq_lens_persistent,
                 )
-                
+
                 # Build pa_metadata using CUDA graph buffers
                 if self.decode_using_pa_ps:
                     self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
@@ -695,27 +762,36 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             seq_lens_persistent.fill_(0)
             page_table_persistent.fill_(0)
             seq_lens_persistent[:bs].copy_(seq_lens, non_blocking=True)
-            max_seq_pages = (seq_lens_cpu.max().item() + self.page_size - 1) // self.page_size + 1
-            page_table = self.req_to_token[req_pool_indices[:, None], self.strided_indices[:max_seq_pages][None, :],]
-            page_table_persistent[:bs, :max_seq_pages].copy_(page_table // self.page_size, non_blocking=True)
-            
+            max_seq_pages = (
+                seq_lens_cpu.max().item() + self.page_size - 1
+            ) // self.page_size + 1
+            page_table = self.req_to_token[
+                req_pool_indices[:, None],
+                self.strided_indices[:max_seq_pages][None, :],
+            ]
+            page_table_persistent[:bs, :max_seq_pages].copy_(
+                page_table // self.page_size, non_blocking=True
+            )
+
             if self.use_mla:
                 # MLA mode: kv_indptr and kv_indices are used in forward_decode
-                raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
+                raise NotImplementedError(
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                )
             else:
                 # Non-MLA decode mode: kv_indptr and kv_indices are NOT used in forward_decode
                 # (forward_decode uses pa_metadata_pages_kv_indptr and pa_metadata_kv_indices instead)
                 self.forward_metadata = ForwardMetadata(
                     None,  # kv_indptr not used in non-MLA decode mode
                     None,  # kv_indices not used in non-MLA decode mode
-                    None,  
+                    None,
                     None,  # kv_last_page_len not used in non-MLA mode
                     1,  # max_q_len = 1 for decode mode, non-MTP
                     None,  # max_kv_len
                     page_table_persistent[:bs, :max_seq_pages],
                     seq_lens_persistent[:bs],
                 )
-                
+
                 # Rebuild pa_metadata using CUDA graph buffers (updates content, keeps same addresses)
                 if self.decode_using_pa_ps:
                     self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
@@ -736,8 +812,12 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         num_slots, num_kv_heads, head_dim = k_buffer.shape
         num_blocks = num_slots // block_size
         num_slots_with_block = num_blocks * block_size
-        k_buffer = k_buffer[:num_slots_with_block].view(num_blocks, block_size, num_kv_heads, head_dim)
-        v_buffer = v_buffer[:num_slots_with_block].view(num_blocks, block_size, num_kv_heads, head_dim)
+        k_buffer = k_buffer[:num_slots_with_block].view(
+            num_blocks, block_size, num_kv_heads, head_dim
+        )
+        v_buffer = v_buffer[:num_slots_with_block].view(
+            num_blocks, block_size, num_kv_heads, head_dim
+        )
         reshape_and_cache_shuffle_triton(
             k,
             v,
@@ -766,7 +846,16 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
                     layer.layer_id
                 )
-                self.set_kv_buffer_with_layout_shuffle(cache_loc, k, v, k_buffer, v_buffer, layer.k_scale, layer.v_scale, self.page_size)
+                self.set_kv_buffer_with_layout_shuffle(
+                    cache_loc,
+                    k,
+                    v,
+                    k_buffer,
+                    v_buffer,
+                    layer.k_scale,
+                    layer.v_scale,
+                    self.page_size,
+                )
                 # forward_batch.token_to_kv_pool.set_kv_buffer(
                 #     layer, cache_loc, k, v, layer.k_scale, layer.v_scale
                 # )
@@ -795,7 +884,6 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         )
 
         return o.view(-1, layer.tp_q_head_num * layer.head_dim)
-    
 
     def forward_decode_pa(
         self,
@@ -817,18 +905,35 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
                 layer.layer_id
             )
-            self.set_kv_buffer_with_layout_shuffle(forward_batch.out_cache_loc, k, v, k_buffer, v_buffer, layer.k_scale, layer.v_scale, self.page_size)
+            self.set_kv_buffer_with_layout_shuffle(
+                forward_batch.out_cache_loc,
+                k,
+                v,
+                k_buffer,
+                v_buffer,
+                layer.k_scale,
+                layer.v_scale,
+                self.page_size,
+            )
 
         if self.use_mla:
-            raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
+            raise NotImplementedError(
+                "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+            )
         else:
-            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(layer.layer_id)
+            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
+                layer.layer_id
+            )
 
             block_size = self.page_size
             num_slots, num_kv_heads, head_size = k_buffer.shape
             num_blocks = num_slots // block_size
-            k_buffer = k_buffer[:num_blocks * block_size].view(num_blocks, block_size, num_kv_heads, head_size)
-            v_buffer = v_buffer[:num_blocks * block_size].view(num_blocks, block_size, num_kv_heads, head_size)
+            k_buffer = k_buffer[: num_blocks * block_size].view(
+                num_blocks, block_size, num_kv_heads, head_size
+            )
+            v_buffer = v_buffer[: num_blocks * block_size].view(
+                num_blocks, block_size, num_kv_heads, head_size
+            )
 
             x = 16 // k_buffer.element_size()
             k_cache_template = torch.empty(
@@ -872,32 +977,54 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         # In decode mode, q.shape[0] equals batch_size (each sequence has 1 token)
         # Use q.shape[0] instead of forward_batch.batch_size to be safe
         batch_size = q.shape[0]
-        head_dim_out = layer.v_head_dim if layer.qk_head_dim != layer.v_head_dim else layer.head_dim
+        head_dim_out = (
+            layer.v_head_dim
+            if layer.qk_head_dim != layer.v_head_dim
+            else layer.head_dim
+        )
         o = q.new_empty((batch_size, layer.tp_q_head_num, head_dim_out))
 
         if save_kv_cache:
             if self.use_mla:
-                raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
+                raise NotImplementedError(
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                )
             else:
                 k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
                     layer.layer_id
                 )
-                self.set_kv_buffer_with_layout_shuffle(forward_batch.out_cache_loc, k, v, k_buffer, v_buffer, layer.k_scale, layer.v_scale, self.page_size)
+                self.set_kv_buffer_with_layout_shuffle(
+                    forward_batch.out_cache_loc,
+                    k,
+                    v,
+                    k_buffer,
+                    v_buffer,
+                    layer.k_scale,
+                    layer.v_scale,
+                    self.page_size,
+                )
                 # Shuffle operation is already fused in rotary_emb, so just save directly
                 # forward_batch.token_to_kv_pool.set_kv_buffer(
                 #     layer, forward_batch.out_cache_loc, k, v, layer.k_scale, layer.v_scale
                 # )
 
         if self.use_mla:
-            raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
+            raise NotImplementedError(
+                "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+            )
         else:
-            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(layer.layer_id)
+            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
+                layer.layer_id
+            )
             num_slots, num_kv_heads, head_size = k_buffer.shape
             block_size = self.page_size
             num_blocks = num_slots // block_size
-            k_buffer = k_buffer[:num_blocks * block_size].view(num_blocks, block_size, num_kv_heads, head_size)
-            v_buffer = v_buffer[:num_blocks * block_size].view(num_blocks, block_size, num_kv_heads, head_size)
-
+            k_buffer = k_buffer[: num_blocks * block_size].view(
+                num_blocks, block_size, num_kv_heads, head_size
+            )
+            v_buffer = v_buffer[: num_blocks * block_size].view(
+                num_blocks, block_size, num_kv_heads, head_size
+            )
 
             quant_dtype = dtypes.fp8
             x = 16 // quant_dtype.itemsize
@@ -914,27 +1041,35 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             )
             new_key_cache = k_buffer.view_as(k_cache_template)
             new_value_cache = v_buffer.view_as(v_cache_template)
-            
+
             total_tokens = num_blocks * block_size
             k_qscale = self.k_qscale[:, :total_tokens]
             v_qscale = self.v_qscale[:, :total_tokens]
-            
-            q = q.view(batch_size, layer.tp_q_head_num, layer.head_dim)
-    
 
-            assert self.forward_metadata.pa_metadata_qo_indptr is not None, "pa_metadata_qo_indptr should be set by _build_pa_metadata_for_decode"
-            assert self.forward_metadata.pa_metadata_pages_kv_indptr is not None, "pa_metadata_pages_kv_indptr should be set by _build_pa_metadata_for_decode"
-            assert self.forward_metadata.pa_metadata_kv_indices is not None, "pa_metadata_kv_indices should be set by _build_pa_metadata_for_decode"
-            assert self.forward_metadata.pa_metadata_context_lens is not None, "pa_metadata_context_lens should be set by _build_pa_metadata_for_decode"
-            assert self.forward_metadata.pa_metadata_max_qlen is not None, "pa_metadata_max_qlen should be set by _build_pa_metadata_for_decode"
-            
+            q = q.view(batch_size, layer.tp_q_head_num, layer.head_dim)
+
+            assert (
+                self.forward_metadata.pa_metadata_qo_indptr is not None
+            ), "pa_metadata_qo_indptr should be set by _build_pa_metadata_for_decode"
+            assert (
+                self.forward_metadata.pa_metadata_pages_kv_indptr is not None
+            ), "pa_metadata_pages_kv_indptr should be set by _build_pa_metadata_for_decode"
+            assert (
+                self.forward_metadata.pa_metadata_kv_indices is not None
+            ), "pa_metadata_kv_indices should be set by _build_pa_metadata_for_decode"
+            assert (
+                self.forward_metadata.pa_metadata_context_lens is not None
+            ), "pa_metadata_context_lens should be set by _build_pa_metadata_for_decode"
+            assert (
+                self.forward_metadata.pa_metadata_max_qlen is not None
+            ), "pa_metadata_max_qlen should be set by _build_pa_metadata_for_decode"
+
             qo_indptr = self.forward_metadata.pa_metadata_qo_indptr
             kv_indptr = self.forward_metadata.pa_metadata_pages_kv_indptr
             kv_indices = self.forward_metadata.pa_metadata_kv_indices
             context_lens = self.forward_metadata.pa_metadata_context_lens
             max_qlen = self.forward_metadata.pa_metadata_max_qlen
-            
-            
+
             _, _ = pa_persistent_fwd(
                 Q=q,
                 K=new_key_cache,
@@ -953,29 +1088,29 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 K_QScale=k_qscale,
                 V_QScale=v_qscale,
                 softmax_scale=layer.scaling,
-                mask=1,  
+                mask=1,
             )
         return o.view(-1, layer.tp_q_head_num * head_dim_out)
 
-
     def forward_decode(
-            self,
-            q: torch.Tensor,
-            k: torch.Tensor,
-            v: torch.Tensor,
-            layer: RadixAttention,
-            forward_batch: ForwardBatch,
-            save_kv_cache=True,
-        ):
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        layer: RadixAttention,
+        forward_batch: ForwardBatch,
+        save_kv_cache=True,
+    ):
         if self.use_mla:
-            raise NotImplementedError("MLA decode mode is not implemented yet in ATOMAttnBackendForSgl.")
+            raise NotImplementedError(
+                "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+            )
         else:
             if self.decode_using_pa_ps:
-                return self.forward_decode_pa_ps(q, k, v, layer, forward_batch, save_kv_cache)
+                return self.forward_decode_pa_ps(
+                    q, k, v, layer, forward_batch, save_kv_cache
+                )
             else:
-                return self.forward_decode_pa(q, k, v, layer, forward_batch, save_kv_cache)
-
-
-
-
-    
+                return self.forward_decode_pa(
+                    q, k, v, layer, forward_batch, save_kv_cache
+                )

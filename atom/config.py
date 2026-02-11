@@ -623,7 +623,9 @@ class Config:
                 if (
                     eos_ids := getattr(self.generation_config, "eos_token_id", None)
                 ) is not None:
-                    self.stop_token_ids = [eos_ids] if isinstance(eos_ids, int) else eos_ids
+                    self.stop_token_ids = (
+                        [eos_ids] if isinstance(eos_ids, int) else eos_ids
+                    )
         if not hasattr(self.hf_config, "rope_parameters"):
             # Compatible with both transformers < 5
             rope_params = getattr(self.hf_config, "rope_scaling", {}) or {}
