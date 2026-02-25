@@ -65,7 +65,7 @@ class RadixAttention(BaseAttention):
                 "RadixAttention is only supported for plugin mode for sglang for now"
             )
         # if True, save cache will be done in rope
-        self.use_aiter_rope_fused_qknorm = envs.ATOM_ROPE_FUSED_QKNORM
+        self.use_rope_fused_qknorm = envs.ATOM_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE
 
     def forward_impl_plugin_mode(
         self,
@@ -84,13 +84,13 @@ class RadixAttention(BaseAttention):
             # for sglang, forward_batch is required
             forward_batch = kwargs.get("forward_batch", None)
             assert forward_batch is not None, "forward_batch is required for sglang"
-            # forward_batch contains the filed attn_backend, which will find the backend registered in ATOM
+            save_kv_cache = not self.use_rope_fused_qknorm
             return self.attn(
                 query,
                 key,
                 value,
                 forward_batch=forward_batch,
-                save_kv_cache=not self.use_aiter_rope_fused_qknorm,
+                save_kv_cache=save_kv_cache,
             )
         else:
             raise NotImplementedError(

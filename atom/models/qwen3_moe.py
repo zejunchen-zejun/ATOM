@@ -39,7 +39,7 @@ ENABLE_ALLREDUCE_RMSNORM_FUSION = envs.ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION
 ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
     envs.ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION
 )
-ENABLE_AITER_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE = envs.ATOM_ROPE_FUSED_QKNORM
+ENABLE_AITER_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE = envs.ATOM_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE
 
 
 class Qwen3MoeMLP(nn.Module):
@@ -327,7 +327,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
         self.hidden_size = config.hidden_size
         rope_params = config.rope_parameters
         rope_theta = rope_params["rope_theta"]
-        rope_scaling = None if rope_params["rope_type"] == "default" else rope_params
+        rope_scaling = rope_params
         kv_cache_dtype = atom_config.kv_cache_dtype
         max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
         # DecoderLayers are created with `make_layers` which passes the prefix
