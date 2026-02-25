@@ -163,7 +163,7 @@ class ForwardMetadata:
     # prefill_kv_last_page_lens: Optional[torch.Tensor] = None
 
 
-class ATOMAttnBackendForSgl(AiterAttnBackend):
+class ATOMAttnBackendForSGLPluginMode(AiterAttnBackend):
     def __init__(
         self,
         model_runner: ModelRunner,
@@ -185,7 +185,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         assert (
             not self.use_mla
-        ), "MLA mode is not implemented yet in ATOMAttnBackendForSgl."
+        ), "MLA mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
 
         # Pre-initialized qo_indptr for pa_persistent_fwd decode mode: [0, 1, 2, ..., max_bs]
         # In decode mode, each sequence has 1 token, so this is always [0, 1, 2, ..., batch_size]
@@ -278,7 +278,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
             if self.use_mla:
                 raise NotImplementedError(
-                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
                 )
             else:
                 if self.decode_using_pa_ps:
@@ -338,7 +338,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
             if self.use_mla:
                 raise NotImplementedError(
-                    "MLA prefill mode is not implemented yet in ATOMAttnBackendForSgl."
+                    "MLA prefill mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
                 )
             else:
                 self.indices_updater_prefill.update(
@@ -717,7 +717,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             if self.use_mla:
                 # MLA mode: kv_indptr and kv_indices are used in forward_decode
                 raise NotImplementedError(
-                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
                 )
             else:
                 # Non-MLA decode mode: kv_indptr and kv_indices are NOT used in forward_decode
@@ -776,7 +776,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             if self.use_mla:
                 # MLA mode: kv_indptr and kv_indices are used in forward_decode
                 raise NotImplementedError(
-                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
                 )
             else:
                 # Non-MLA decode mode: kv_indptr and kv_indices are NOT used in forward_decode
@@ -918,7 +918,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         if self.use_mla:
             raise NotImplementedError(
-                "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                "MLA decode mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
             )
         else:
             k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
@@ -987,7 +987,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         if save_kv_cache:
             if self.use_mla:
                 raise NotImplementedError(
-                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                    "MLA decode mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
                 )
             else:
                 k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
@@ -1010,7 +1010,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         if self.use_mla:
             raise NotImplementedError(
-                "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                "MLA decode mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
             )
         else:
             k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
@@ -1103,7 +1103,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
     ):
         if self.use_mla:
             raise NotImplementedError(
-                "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+                "MLA decode mode is not implemented yet in ATOMAttnBackendForSGLPluginMode."
             )
         else:
             if self.decode_using_pa_ps:

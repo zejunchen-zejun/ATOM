@@ -615,6 +615,7 @@ class Config:
             rope_params = getattr(self.hf_config, "rope_scaling", {})
             rope_params["rope_theta"] = self.hf_config.rope_theta
             self.hf_config.rope_parameters = rope_params
+
         self.generation_config = get_generation_config(self.model)
         if self.generation_config is not None:
             if (
