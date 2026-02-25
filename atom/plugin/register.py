@@ -26,7 +26,7 @@ def _register_custom_attention_to_sglang() -> None:
     # in-tree
     @register_attention_backend("aiter")
     def create_atom_backend(runner):
-        from atom.plugin.attention_backend.sgl_attn_backend import ATOMAttnBackendForSGLPluginMode
+        from atom.plugin.sglang.sgl_attn_backend import ATOMAttnBackendForSGLPluginMode
 
         return ATOMAttnBackendForSGLPluginMode(runner)
 
