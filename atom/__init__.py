@@ -4,7 +4,7 @@
 from atom.model_engine.llm_engine import LLMEngine
 from atom.sampling_params import SamplingParams
 
-# interface for upper framework to constructe the model from ATOM
+# interface for upper framework to construct the model from ATOM
 from atom.plugin import prepare_model
 
 __all__ = [

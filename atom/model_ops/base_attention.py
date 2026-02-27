@@ -129,7 +129,6 @@ class BaseAttention(nn.Module, ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement the forward() method"
         )
-        return output
 
 
 class LinearAttention(nn.Module):
