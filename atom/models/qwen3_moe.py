@@ -234,20 +234,23 @@ class Qwen3MoeAttention(nn.Module):
         qkv = self.qkv_proj(hidden_states)
         q, k, v = torch.split(qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1)
         if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
-            q, k, v = torch.split(
-                qkv, [self.q_size, self.kv_size, self.kv_size], dim=-1
-            )
-            attn_output = self.attn(
-                query=q, key=k, value=v, positions=positions, q_scale=None, qkv=qkv
-            )
+            attn_output = self.attn(query=q,
+                                    key=k,
+                                    value=v,
+                                    positions=positions,
+                                    q_scale=None,
+                                    qkv=qkv,
+                                    **model_kwargs)
         else:
             # Add qk-norm
             q = self.q_norm(q)
             k = self.k_norm(k)
 
-            attn_output = self.attn(
-                query=q, key=k, value=v, positions=positions, **model_kwargs
-            )
+            attn_output = self.attn(query=q,
+                                    key=k,
+                                    value=v,
+                                    positions=positions,
+                                    **model_kwargs)
         output = self.o_proj(attn_output)
         return output
 
