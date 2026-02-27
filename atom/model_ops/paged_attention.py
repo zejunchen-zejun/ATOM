@@ -3,6 +3,7 @@
 
 # from flash_attn import flash_attn_with_kvcache
 from typing import Optional
+import importlib.util
 
 import torch
 from torch import nn
@@ -64,7 +65,23 @@ class PagedAttention(BaseAttention):
         if is_vllm():
             self.use_mla = use_mla
             self.rotary_emb = rotary_emb
-            from vllm.attention.layer import Attention, AttentionType
+
+            if importlib.util.find_spec("vllm.attention.layer") is not None:
+                from vllm.attention.layer import Attention, AttentionType
+            elif (
+                importlib.util.find_spec("vllm.model_executor.layers.attention")
+                is not None
+                and importlib.util.find_spec("vllm.v1.attention.backend") is not None
+            ):
+                from vllm.model_executor.layers.attention import Attention
+                from vllm.v1.attention.backend import AttentionType
+            else:
+                raise ImportError(
+                    "Unable to import vLLM Attention/AttentionType from known "
+                    "locations. Expected either 'vllm.attention.layer' (older) or "
+                    "'vllm.model_executor.layers.attention' + "
+                    "'vllm.v1.attention.backend' (v1)."
+                )
 
             atom_config = get_current_atom_config()
             assert (
