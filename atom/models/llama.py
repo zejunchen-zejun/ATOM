@@ -34,7 +34,7 @@ from atom.config import Config, QuantizationConfig
 from atom.model_ops.activation import SiluAndMul
 
 # from atom.model_ops.attention import Attention
-import atom.model_ops as ops
+from atom.model_ops.base_attention import Attention
 from atom.model_ops.embed_head import ParallelLMHead, VocabParallelEmbedding
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
@@ -190,7 +190,7 @@ class LlamaAttention(nn.Module):
             if is_sliding:
                 sliding_window = config.sliding_window
 
-        self.attn = ops.Attention(
+        self.attn = Attention(
             self.num_heads,
             self.head_dim,
             self.scaling,

@@ -35,7 +35,7 @@ from atom.config import Config
 from atom.model_ops.activation import SiluAndMul
 
 # from atom.model_ops.attention import Attention
-import atom.model_ops as ops
+from atom.model_ops.base_attention import Attention
 from atom.model_ops.embed_head import ParallelLMHead, VocabParallelEmbedding
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
@@ -105,7 +105,7 @@ class Qwen3Attention(nn.Module):
             base=rope_theta,
             rope_scaling=rope_scaling,
         )
-        self.attn = ops.Attention(
+        self.attn = Attention(
             num_heads=self.num_heads,
             head_dim=self.head_dim,
             scale=self.scaling,

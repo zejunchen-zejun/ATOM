@@ -14,6 +14,11 @@ from .attention_mla import MLAModules
 from atom.config import get_current_atom_config
 from atom.utils.selector import get_attn_backend
 
+# Attention interface class for constructing frontend model
+import atom.model_ops as ops
+
+Attention = ops.Attention
+
 
 def fake_(
     q: torch.Tensor,

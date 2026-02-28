@@ -9,7 +9,8 @@ from aiter.rotary_embedding import get_rope
 from atom.config import Config, QuantizationConfig
 from atom.model_ops.activation import SiluAndMul
 
-import atom.model_ops as ops
+# from atom.model_ops.attention import Attention
+from atom.model_ops.base_attention import Attention
 from atom.model_ops.embed_head import ParallelLMHead, VocabParallelEmbedding
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import (
@@ -211,7 +212,7 @@ class Qwen3MoeAttention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
 
-        self.attn = ops.Attention(
+        self.attn = Attention(
             self.num_heads,
             self.head_dim,
             self.scaling,

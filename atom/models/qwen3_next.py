@@ -9,11 +9,10 @@ from aiter.dist.parallel_state import get_tensor_model_parallel_rank
 from transformers.activations import ACT2FN
 from atom.config import QuantizationConfig, Config
 
-import atom.model_ops as ops
 from atom.model_ops.activation import SiluAndMul
 from atom.model_ops.topK import is_rocm_aiter_fusion_shared_expert_enabled
 
-from atom.model_ops.base_attention import LinearAttention
+from atom.model_ops.base_attention import Attention, LinearAttention
 from atom.model_ops.layernorm import RMSNormGated, GemmaRMSNorm
 from atom.model_ops.layernorm import GemmaRMSNorm as Qwen3NextRMSNorm
 from atom.model_ops.linear import (
@@ -327,7 +326,7 @@ class Qwen3NextAttention(nn.Module):
         )
 
         # TODO: maybe dual attention
-        self.attn = ops.Attention(
+        self.attn = Attention(
             self.num_heads,
             self.head_dim,
             self.scaling,

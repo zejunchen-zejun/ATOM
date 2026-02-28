@@ -32,7 +32,7 @@ from aiter.rotary_embedding import get_rope
 from atom.config import Config, QuantizationConfig
 
 # from atom.model_ops.attention import Attention
-import atom.model_ops as ops
+from atom.model_ops.base_attention import Attention
 from atom.model_ops.embed_head import ParallelLMHead, VocabParallelEmbedding
 from atom.model_ops.layernorm import RMSNorm
 from atom.model_ops.linear import QKVParallelLinear, ReplicatedLinear, RowParallelLinear
@@ -170,7 +170,7 @@ class MixtralAttention(nn.Module):
             base=int(self.rope_theta),
             is_neox_style=True,
         )
-        self.attn = ops.Attention(
+        self.attn = Attention(
             self.num_heads,
             self.head_dim,
             self.scaling,
