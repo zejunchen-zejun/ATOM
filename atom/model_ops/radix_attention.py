@@ -32,6 +32,8 @@ class RadixAttention(BaseAttention):
         per_layer_sliding_window: Optional[int] = None,
         rotary_emb: Optional[torch.nn.Module] = None,
         prefix: Optional[str] = None,
+        q_norm: Optional[torch.nn.Module] = None,
+        k_norm: Optional[torch.nn.Module] = None,
         **kwargs,
     ):
         super().__init__(
@@ -49,6 +51,10 @@ class RadixAttention(BaseAttention):
             prefix=prefix,
             **kwargs,
         )
+        self.q_norm = q_norm
+        self.k_norm = k_norm
+        self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
 
         if is_sglang():
             self.rotary_emb = rotary_emb
