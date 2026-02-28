@@ -831,8 +831,8 @@ class PagedAttentionImplPluginModeMethods:
             if self.use_triton_attn:
                 self.paged_attention_triton_plugin_mode(
                     q=query[:num_decode_tokens],
-                    k=new_key_cache,
-                    v=new_value_cache,
+                    k_cache=new_key_cache,
+                    v_cache=new_value_cache,
                     k_scale=k_scale,
                     v_scale=v_scale,
                     out=output_actual_tokens[:num_decode_tokens],

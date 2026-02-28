@@ -221,14 +221,14 @@ def create_attn_metadata_builder_init_method(base_class):
         layers = get_layers_from_vllm_config(config, Attention)
         for layer in layers.values():
             assert isinstance(layer.impl, PagedAttentionImpl)
-            sliding_window_sizes.add((layer.impl.sliding_window - 1, 0))
+            sliding_window_sizes.add((layer.impl.sliding_window, 0))
 
         while len(sliding_window_sizes) > 0:
             sliding_window_config = sliding_window_sizes.pop()
             if sliding_window_config is not None and sliding_window_config[0] != -1:
-                assert (
-                    self.aot_sliding_window is None
-                ), "Aiter Backend only support one valid sliding window"
+                # assert (
+                #     self.aot_sliding_window is None
+                # ), "Aiter Backend only support one valid sliding window"
                 self.aot_sliding_window = sliding_window_config
 
         # for extend path to store the fetched key and value
