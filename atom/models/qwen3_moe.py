@@ -2,7 +2,7 @@ from typing import Optional, Union, Any, Iterable
 
 import torch
 from aiter.dist.communication_op import tensor_model_parallel_all_reduce
-from aiter.dist.parallel_state import get_pp_group, get_tensor_model_parallel_world_size
+from aiter.dist.parallel_state import get_pp_group, get_tensor_model_parallel_world_size, is_global_first_rank
 
 # from atom.model_ops.rotary_embedding import get_rope
 from aiter.rotary_embedding import get_rope
@@ -196,14 +196,14 @@ class Qwen3MoeAttention(nn.Module):
             base=rope_theta,
             rope_scaling=rope_scaling,
         )
-        if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
-            cos, sin = self.rotary_emb.cos_cache, self.rotary_emb.sin_cache
-            joint_cache = torch.cat((cos, sin), dim=-1)
-            self.rotary_emb.register_buffer(
-                "cos_sin_cache",
-                joint_cache.view(joint_cache.size(0), self.head_dim),
-                persistent=False,
-            )
+        # if ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION:
+        #     cos, sin = self.rotary_emb.cos_cache, self.rotary_emb.sin_cache
+        #     joint_cache = torch.cat((cos, sin), dim=-1)
+        #     self.rotary_emb.register_buffer(
+        #         "cos_sin_cache",
+        #         joint_cache.view(joint_cache.size(0), self.head_dim),
+        #         persistent=False,
+        #     )
 
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
@@ -263,8 +263,12 @@ class Qwen3MoeDecoderLayer(nn.Module):
         config = self.atom_config.hf_config
         self.hidden_size = config.hidden_size
         rope_params = config.rope_parameters
-        rope_theta = rope_params["rope_theta"]
-        rope_scaling = rope_params
+        if rope_params is None:
+            rope_theta = 10000
+            rope_scaling = None
+        else:
+            rope_theta = rope_params["rope_theta"]
+            rope_scaling = rope_params
         kv_cache_dtype = atom_config.kv_cache_dtype
         max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
         # DecoderLayers are created with `make_layers` which passes the prefix
@@ -328,11 +332,14 @@ class Qwen3MoeDecoderLayer(nn.Module):
         **model_kwargs: dict[str, Any] | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Self Attention
+        # if is_global_first_rank():
+            # print(f"Layer {self.layer_idx} input hidden_states, before input_layer_norm: {hidden_states.norm().item():.4f}", flush=True)
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
+
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
@@ -345,7 +352,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
         return hidden_states, residual
 
 
-@support_torch_compile
+# @support_torch_compile
 class Qwen3MoeModel(nn.Module):
     def __init__(
         self,
@@ -410,7 +417,12 @@ class Qwen3MoeModel(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
+        layer_idx = 0
         for layer in self.layers[self.start_layer : self.end_layer]:
+            if is_global_first_rank():
+                print("=" * 20 + f" Layer {layer_idx} " + "=" * 20, flush=True)
+                print(f"Layer {layer_idx} input hidden_states: {hidden_states.norm().item():.4f}", flush=True)
+                layer_idx += 1
             hidden_states, residual = layer(
                 positions, hidden_states, residual, **model_kwargs
             )

@@ -134,6 +134,7 @@ def _generate_atom_config_from_sglang_config(config: Any):
     server_args: ServerArgs = prepare_server_args(sys.argv[1:])
 
     sgl_model_config = SglangModelConfig.from_server_args(server_args)
+    print(f"sgl_model_config: {sgl_model_config.model_path}", flush=True)
     sgl_model_opt_config = ModelOptConfig(
         quant=server_args.modelopt_quant,
         checkpoint_restore_path=server_args.modelopt_checkpoint_restore_path,
@@ -191,7 +192,8 @@ def _generate_atom_config_from_sglang_config(config: Any):
     # force max num batched tokens to 16K because sgl doesn't have
     # concept for max num batched tokens
     return Config(
-        model=None,
+        model=sgl_model_config.model_path,
+        # model=sgl_model_config.model_path,
         max_num_batched_tokens=16384,
         max_num_seqs=server_args.max_running_requests,
         max_model_len=server_args.context_length,

@@ -379,6 +379,7 @@ _CONFIG_REGISTRY: dict[str, str] = {
 
 
 def get_hf_config(model: str) -> PretrainedConfig:
+    print("model", model, flush=True)
     config_dict, _ = PretrainedConfig.get_config_dict(
         model,
     )
@@ -610,10 +611,12 @@ class Config:
         ), f"kv_cache_block_size ({self.kv_cache_block_size}) must be a multiple of 16 or 1"
         assert 1 <= self.tensor_parallel_size <= 8
         self.hf_config = get_hf_config(self.model)
+        print("hf_config", self.hf_config, flush=True)
         if not hasattr(self.hf_config, "rope_parameters"):
             # Compatible with both transformers < 5
             rope_params = getattr(self.hf_config, "rope_scaling", {})
-            rope_params["rope_theta"] = self.hf_config.rope_theta
+            if rope_params is not None:
+                rope_params["rope_theta"] = self.hf_config.rope_theta
             self.hf_config.rope_parameters = rope_params
 
         self.generation_config = get_generation_config(self.model)
