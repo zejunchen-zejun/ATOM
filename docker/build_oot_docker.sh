@@ -6,17 +6,19 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 DOCKERFILE_PATH="${SCRIPT_DIR}/Dockerfile_For_OOT"
 VLLM_REPO="${VLLM_REPO:-https://github.com/vllm-project/vllm.git}"
-VLLM_DOCKER_REF="${VLLM_DOCKER_REF:-main}"
 VLLM_COMMIT="f5d17400303149bbb480f6abfb6f7bb646c1d895"
+VLLM_DOCKER_REF="${VLLM_DOCKER_REF:-${VLLM_COMMIT}}"
 IMAGE_TAG="${IMAGE_TAG:-atom-vllm-oot}"
+ATOM_BASE_IMAGE="${ATOM_BASE_IMAGE:-rocm/atom-dev:nightly_202603040155}"
+BASE_IMAGE="${BASE_IMAGE:-${ATOM_BASE_IMAGE}}"
 VLLM_BASE_IMAGE="${VLLM_BASE_IMAGE:-rocm/vllm-dev:base}"
-BUILD_VLLM_BASE="${BUILD_VLLM_BASE:-1}"
+BUILD_VLLM_BASE="${BUILD_VLLM_BASE:-0}"
 
 if [[ "${BUILD_VLLM_BASE}" == "1" ]]; then
   VLLM_TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "${VLLM_TMP_DIR}"' EXIT
 
-  echo "Step 1/2: clone vLLM and build ROCm base image"
+  echo "Step 1/2: build vLLM ROCm base image"
   echo "  vLLM repo   : ${VLLM_REPO}"
   echo "  vLLM ref    : ${VLLM_DOCKER_REF}"
   echo "  Image tag   : ${VLLM_BASE_IMAGE}"
@@ -34,18 +36,22 @@ if [[ "${BUILD_VLLM_BASE}" == "1" ]]; then
     -f "${VLLM_BASE_DOCKERFILE}" \
     -t "${VLLM_BASE_IMAGE}" \
     "${VLLM_TMP_DIR}"
+
+  BASE_IMAGE="${VLLM_BASE_IMAGE}"
+else
+  echo "Step 1/2: skip vLLM base build (using atom base image)"
 fi
 
-echo "Step 2/2: build ATOM OOT image"
+echo "Step 2/2: build remaining vLLM + ATOM OOT image"
 echo "  Dockerfile : ${DOCKERFILE_PATH}"
 echo "  Image tag  : ${IMAGE_TAG}"
-echo "  Base image : ${VLLM_BASE_IMAGE}"
+echo "  Base image : ${BASE_IMAGE}"
 echo "  VLLM commit: ${VLLM_COMMIT}"
 
 DOCKER_BUILDKIT=1 docker build \
   -f "${DOCKERFILE_PATH}" \
   -t "${IMAGE_TAG}" \
-  --build-arg "BASE_IMAGE=${VLLM_BASE_IMAGE}" \
+  --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
   --build-arg "VLLM_COMMIT=${VLLM_COMMIT}" \
   "$@" \
   "${REPO_ROOT}"
