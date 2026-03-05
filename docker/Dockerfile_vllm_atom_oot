@@ -90,9 +90,9 @@ RUN echo "========== [6/7] Install vLLM wheel (no dependency override) =========
 # Install vLLM runtime Python packages without touching core stack versions.
 RUN echo "========== [6.5/7] Install vLLM runtime requirements ==========" \
     && cd /app/vllm \
-    && "${VENV_PYTHON}" -m pip uninstall -y triton || true \
-    && "${VENV_PYTHON}" -m pip install --upgrade-strategy only-if-needed "triton==3.5.1" \
-    && "${VENV_PYTHON}" -m pip install --upgrade-strategy only-if-needed -c /tmp/atom-base-constraints.txt -r requirements/common.txt \
+    && sed '/^xgrammar[[:space:]]*==/d' requirements/common.txt > /tmp/requirements.common.no_xgrammar.txt \
+    && "${VENV_PYTHON}" -m pip install --upgrade-strategy only-if-needed -c /tmp/atom-base-constraints.txt -r /tmp/requirements.common.no_xgrammar.txt \
+    && "${VENV_PYTHON}" -m pip install --no-deps "xgrammar==0.1.29" \
     && "${VENV_PYTHON}" -m pip install --upgrade-strategy only-if-needed -c /tmp/atom-base-constraints.txt -r requirements/rocm.txt \
     && if [ -d /opt/rocm/share/amd_smi ]; then \
          "${VENV_PYTHON}" -m pip install /opt/rocm/share/amd_smi; \
