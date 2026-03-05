@@ -1,88 +1,65 @@
-ARG BASE_IMAGE="rocm/vllm-dev:nightly_main_20260118"
-ARG GPU_ARCH="gfx942;gfx950"
-
+ARG BASE_IMAGE="rocm/atom-dev:nightly_202603040155"
 FROM ${BASE_IMAGE}
 
-ARG GPU_ARCH
-ENV GPU_ARCH_LIST=${GPU_ARCH}
-ENV PYTORCH_ROCM_ARCH=${GPU_ARCH}
-
-ARG ATOM_REPO="https://github.com/ROCm/ATOM.git"
-ARG ATOM_COMMIT="HEAD"
-ARG AITER_REPO="https://github.com/ROCm/aiter.git"
-ARG AITER_COMMIT="HEAD"
-ARG MORI_COMMIT="b0dce4beebeb1f26c784eee17d5fd9785ee9447f"
-ARG BUILD_MORI=0
-ARG PREBUILD_KERNELS=0
+ARG VLLM_REPO="https://github.com/vllm-project/vllm.git"
+ARG VLLM_COMMIT="f5d17400303149bbb480f6abfb6f7bb646c1d895"
 ARG MAX_JOBS=64
+ARG INSTALL_LM_EVAL=1
 
-RUN pip install --upgrade pip
-RUN pip install lm-eval[api]
-RUN pip show lm-eval || true
+ENV DEBIAN_FRONTEND=noninteractive
+ENV MAX_JOBS=${MAX_JOBS}
+WORKDIR /app
 
-# Install MORI (Modular RDMA Interface)
-RUN apt-get update && apt --fix-broken install -y
-RUN apt-get update && apt-get install -y \
-    git \
-    cython3 \
-    ibverbs-utils \
-    openmpi-bin \
-    libopenmpi-dev \
-    libpci-dev \
-    cmake \
-    libdw1 \
-    locales
+# Keep toolchain utilities lightweight and deterministic.
+RUN echo "========== [1/7] Prepare build utilities ==========" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN if [ "${BUILD_MORI}" = "1" ]; then \
-      git clone https://github.com/ROCm/mori.git /app/mori && \
-      cd /app/mori && \
-      git checkout ${MORI_COMMIT} && \
-      pip install -r requirements-build.txt && \
-      git submodule update --init --recursive && \
-      python setup.py install && \
-      pip show mori || true; \
-    else \
-      echo "Skip MORI build (BUILD_MORI=${BUILD_MORI})"; \
-    fi
+# Do not rebuild or overwrite torch/triton/aiter from atom base image.
+RUN echo "========== [2/7] Verify atom base core packages ==========" \
+    && python3 -m pip --version \
+    && python3 -m pip show torch || true \
+    && python3 -m pip show triton || true \
+    && python3 -m pip show amd-aiter || true
 
-# Update RCCL
-ARG RCCL_REPO="https://github.com/ROCm/rccl.git"
-ARG RCCL_BRANCH="29e1567b95e28823b0beb1a988adc587bfab5b4f"
-ARG RCCL_SRC_DIR="/app/rccl/"
-RUN pip install cmake
-RUN git clone "${RCCL_REPO}" ${RCCL_SRC_DIR} \
-    && cd ${RCCL_SRC_DIR} \
-    && git checkout "${RCCL_BRANCH}" \
-    && ./install.sh -p --amdgpu_targets=${GPU_ARCH_LIST}
-RUN DEBIAN_FRONTEND=noninteractive dpkg -i --force-all ${RCCL_SRC_DIR}/build/release/*.deb && rm -rf ${RCCL_SRC_DIR}/build
+RUN echo "========== [3/7] Clone vLLM and checkout target commit ==========" \
+    && git clone "${VLLM_REPO}" /app/vllm \
+    && cd /app/vllm \
+    && git checkout "${VLLM_COMMIT}" \
+    && git submodule update --init --recursive \
+    && echo "vLLM commit:" \
+    && git rev-parse HEAD
 
-# Update Triton
-RUN pip show triton || true
-RUN pip uninstall -y triton || true
-RUN git clone --depth=1 --branch release/internal/3.5.x https://github.com/ROCm/triton.git /triton-test && \
-    cd /triton-test && \
-    pip install -r python/requirements.txt && \
-    pip install filecheck && \
-    MAX_JOBS=${MAX_JOBS} pip --retries=10 --default-timeout=60 install .
-RUN pip show triton || true
+# Install vLLM Python dependencies only (torch/triton/aiter remain from base image).
+RUN echo "========== [4/7] Install vLLM ROCm Python requirements ==========" \
+    && cd /app/vllm \
+    && python3 -m pip install --upgrade pip \
+    && python3 -m pip install -r requirements/rocm.txt
 
-# Install AITER
-RUN mkdir -p /app
-RUN pip uninstall -y aiter || true
-RUN git clone ${AITER_REPO} /app/aiter-test && \
-    cd /app/aiter-test && \
-    pip install -r requirements.txt && \
-    git checkout ${AITER_COMMIT} && \
-    git submodule sync && git submodule update --init --recursive && \
-    MAX_JOBS=${MAX_JOBS} PREBUILD_KERNELS=${PREBUILD_KERNELS} GPU_ARCHS=${GPU_ARCH_LIST} python3 setup.py develop
-RUN pip show amd-aiter || true
+RUN echo "========== [5/7] Build vLLM wheel ==========" \
+    && cd /app/vllm \
+    && python3 setup.py clean --all \
+    && MAX_JOBS="${MAX_JOBS}" python3 setup.py bdist_wheel --dist-dir=/tmp/vllm-wheels \
+    && ls -lh /tmp/vllm-wheels
 
-# Install ATOM
-RUN pip uninstall -y atom || true
-RUN git clone ${ATOM_REPO} /app/ATOM && \
-    cd /app/ATOM && \
-    git checkout ${ATOM_COMMIT} && \
-    pip install -e .
-RUN pip show atom || true
+# Install vLLM wheel without dependency resolution to avoid overriding base torch/triton/aiter.
+RUN echo "========== [6/7] Install vLLM wheel (no dependency override) ==========" \
+    && python3 -m pip uninstall -y vllm || true \
+    && python3 -m pip install --no-deps /tmp/vllm-wheels/*.whl \
+    && python3 -m pip show vllm
+
+RUN echo "========== [7/7] Optional utilities and final version print ==========" \
+    && if [ "${INSTALL_LM_EVAL}" = "1" ]; then python3 -m pip install "lm-eval[api]"; else echo "Skip lm-eval install"; fi \
+    && python3 - <<'PY' \
+import importlib.metadata as m; \
+pkgs = ["vllm", "torch", "triton", "amd-aiter", "atom"]; \
+print("Final package versions:"); \
+for p in pkgs: \
+    try: \
+        print(f"  {p}: {m.version(p)}"); \
+    except Exception: \
+        print(f"  {p}: <not installed>"); \
+PY
 
 CMD ["/bin/bash"]
