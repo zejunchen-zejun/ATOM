@@ -52,11 +52,22 @@ with open(out, "w", encoding="utf-8") as f:
 print(f"Constraints file: {out}")
 PY
 
-RUN echo "========== [4/7] Install vLLM ROCm Python requirements ==========" \
+RUN echo "========== [4/7] Install vLLM build-only requirements ==========" \
     && cat /tmp/atom-base-constraints.txt \
     && cd /app/vllm \
     && python3 -m pip install --upgrade pip \
-    && python3 -m pip install --upgrade-strategy only-if-needed -c /tmp/atom-base-constraints.txt -r requirements/rocm.txt
+    && python3 -m pip install --upgrade-strategy only-if-needed \
+        "cmake>=3.26.1" \
+        "ninja" \
+        "packaging>=24.2" \
+        "setuptools>=77.0.3,<81.0.0" \
+        "setuptools-scm>=8" \
+        "wheel" \
+        "jinja2>=3.1.6" \
+        "regex" \
+        "build" \
+        "protobuf>=6.33.2" \
+        "grpcio-tools>=1.76.0"
 
 RUN echo "========== [5/7] Build vLLM wheel ==========" \
     && cd /app/vllm \
