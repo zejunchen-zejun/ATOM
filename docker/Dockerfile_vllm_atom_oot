@@ -9,28 +9,24 @@ ARG INSTALL_FASTSAFETENSORS=1
 ARG VENV_PYTHON="/opt/venv/bin/python"
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV MAX_JOBS=${MAX_JOBS}
-ENV VLLM_TARGET_DEVICE=rocm
 ENV PATH="/opt/venv/bin:${PATH}"
+ENV VLLM_TARGET_DEVICE=rocm
+ENV MAX_JOBS=${MAX_JOBS}
+ENV LD_LIBRARY_PATH="/opt/venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}"
 WORKDIR /app
 
-# Repair apt dependency state first, then install required utilities.
-RUN echo "========== [1/7] Fix apt dependencies and prepare build utilities ==========" \
+RUN echo "========== [1/7] Prepare build tools ==========" \
     && apt-get update \
     && apt --fix-broken install -y \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Do not rebuild or overwrite torch/triton/aiter from atom base image.
-RUN echo "========== [2/7] Verify atom base core packages ==========" \
-    && which python \
-    && which pip \
-    && "${VENV_PYTHON}" -m pip --version \
-    && "${VENV_PYTHON}" -m pip show torch || true \
-    && "${VENV_PYTHON}" -m pip show triton || true \
-    && "${VENV_PYTHON}" -m pip show amd-aiter || true
+RUN echo "========== [2/7] Verify base packages (atom/aiter/mori) ==========" \
+    && "${VENV_PYTHON}" -m pip show atom || true \
+    && "${VENV_PYTHON}" -m pip show amd-aiter || true \
+    && "${VENV_PYTHON}" -m pip show mori || true
 
-RUN echo "========== [3/7] Clone vLLM and checkout target commit ==========" \
+RUN echo "========== [3/7] Clone vLLM ==========" \
     && git clone "${VLLM_REPO}" /app/vllm \
     && cd /app/vllm \
     && git checkout "${VLLM_COMMIT}" \
@@ -38,42 +34,12 @@ RUN echo "========== [3/7] Clone vLLM and checkout target commit ==========" \
     && echo "vLLM commit:" \
     && git rev-parse HEAD
 
-# Install vLLM Python dependencies while preserving atom base core stack.
-RUN echo "========== [4/7] Build constraints from atom base packages ==========" \
-    && "${VENV_PYTHON}" - <<'PY'
-import importlib.metadata as m
-from importlib.metadata import PackageNotFoundError
-
-# Keep only core packages pinned. Let pip freely resolve non-core runtime deps.
-pins = ["torch", "amd-aiter"]
-out = "/tmp/atom-base-constraints.txt"
-with open(out, "w", encoding="utf-8") as f:
-    for pkg in pins:
-        try:
-            ver = m.version(pkg)
-            f.write(f"{pkg}=={ver}\n")
-            print(f"Pin {pkg}=={ver}")
-        except PackageNotFoundError:
-            pass
-print(f"Constraints file: {out}")
-PY
-
-RUN echo "========== [4/7] Install vLLM build-only requirements ==========" \
-    && cat /tmp/atom-base-constraints.txt \
+# Follow vLLM ROCm standard: allow torch/triton override.
+RUN echo "========== [4/7] Install vLLM ROCm build dependencies ==========" \
     && cd /app/vllm \
     && "${VENV_PYTHON}" -m pip install --upgrade pip \
-    && "${VENV_PYTHON}" -m pip install --upgrade-strategy only-if-needed \
-        "cmake>=3.26.1" \
-        "ninja" \
-        "packaging>=24.2" \
-        "setuptools>=77.0.3,<81.0.0" \
-        "setuptools-scm>=8" \
-        "wheel" \
-        "jinja2>=3.1.6" \
-        "regex" \
-        "build" \
-        "protobuf>=6.33.2" \
-        "grpcio-tools>=1.76.0"
+    && "${VENV_PYTHON}" -m pip uninstall -y torch triton torchvision torchaudio || true \
+    && "${VENV_PYTHON}" -m pip install -r requirements/rocm-build.txt
 
 RUN echo "========== [5/7] Build vLLM wheel ==========" \
     && cd /app/vllm \
@@ -81,48 +47,41 @@ RUN echo "========== [5/7] Build vLLM wheel ==========" \
     && MAX_JOBS="${MAX_JOBS}" VLLM_TARGET_DEVICE=rocm "${VENV_PYTHON}" setup.py bdist_wheel --dist-dir=/tmp/vllm-wheels \
     && ls -lh /tmp/vllm-wheels
 
-# Install vLLM wheel without dependency resolution to avoid overriding base torch/triton/aiter.
-RUN echo "========== [6/7] Install vLLM wheel (no dependency override) ==========" \
-    && "${VENV_PYTHON}" -m pip uninstall -y vllm || true \
-    && "${VENV_PYTHON}" -m pip install --no-deps /tmp/vllm-wheels/*.whl \
-    && "${VENV_PYTHON}" -m pip show vllm
-
-# Install vLLM runtime Python packages without touching core stack versions.
-RUN echo "========== [6.5/7] Install vLLM runtime requirements ==========" \
+RUN echo "========== [6/7] Install vLLM runtime dependencies ==========" \
     && cd /app/vllm \
-    && sed '/^xgrammar[[:space:]]*==/d' requirements/common.txt > /tmp/requirements.common.no_xgrammar.txt \
-    && "${VENV_PYTHON}" -m pip install --no-deps -r /tmp/requirements.common.no_xgrammar.txt \
-    && "${VENV_PYTHON}" -m pip install --no-deps "xgrammar==0.1.29" \
-    && "${VENV_PYTHON}" -m pip install --no-deps -r requirements/rocm.txt \
-    && "${VENV_PYTHON}" -m pip install --upgrade-strategy only-if-needed -c /tmp/atom-base-constraints.txt \
-       "openai>=1.99.1" \
-       "anthropic>=0.71.0" \
-       "fastapi[standard]>=0.115.0" \
-       "aiohttp" \
-       "runai-model-streamer[s3,gcs]==0.15.3" \
-    && if [ -d /opt/rocm/share/amd_smi ]; then \
-         "${VENV_PYTHON}" -m pip install --no-deps /opt/rocm/share/amd_smi; \
-       else \
-         "${VENV_PYTHON}" -m pip install --no-deps amdsmi; \
-       fi \
-    && "${VENV_PYTHON}" -m pip install --no-deps cbor2 gguf amdsmi uvloop httptools websockets \
-    && "${VENV_PYTHON}" -m pip show cbor2 gguf amdsmi uvloop
+    && "${VENV_PYTHON}" -m pip install -r requirements/rocm.txt \
+    && "${VENV_PYTHON}" -m pip uninstall -y vllm || true \
+    && "${VENV_PYTHON}" -m pip install /tmp/vllm-wheels/*.whl \
+    && "${VENV_PYTHON}" -m pip install uvloop
 
-RUN echo "========== [7/7] Optional utilities ==========" \
+RUN echo "========== [7/7] Optional tools and final checks ==========" \
     && if [ "${INSTALL_LM_EVAL}" = "1" ]; then "${VENV_PYTHON}" -m pip install "lm-eval[api]"; else echo "Skip lm-eval install"; fi \
-    && if [ "${INSTALL_FASTSAFETENSORS}" = "1" ]; then "${VENV_PYTHON}" -m pip install "git+https://github.com/foundation-model-stack/fastsafetensors.git"; else echo "Skip fastsafetensors install"; fi
-
-RUN echo "========== [7/7] Re-align critical non-torch dependencies ==========" \
-    && "${VENV_PYTHON}" -m pip install --upgrade-strategy only-if-needed -c /tmp/atom-base-constraints.txt \
-       "transformers>=4.56.0,<5" \
-       "huggingface-hub>=0.34.0,<1.0" \
-       "tokenizers>=0.21.1" \
-    && "${VENV_PYTHON}" -m pip show transformers huggingface-hub tokenizers || true
-
-RUN echo "========== [7/7] Final version print ==========" \
+    && if [ "${INSTALL_FASTSAFETENSORS}" = "1" ]; then "${VENV_PYTHON}" -m pip install "git+https://github.com/foundation-model-stack/fastsafetensors.git"; else echo "Skip fastsafetensors install"; fi \
     && "${VENV_PYTHON}" - <<'PY'
 import importlib.metadata as m
-pkgs = ["vllm", "torch", "triton", "amd-aiter", "atom"]
+import glob
+import os
+import torch
+
+print(f"torch.version.hip: {torch.version.hip}")
+print(f"torch.version.cuda: {torch.version.cuda}")
+torch_lib_dir = os.path.join(os.path.dirname(torch.__file__), "lib")
+print(f"torch lib dir: {torch_lib_dir}")
+print(f"libtorch_hip candidates: {glob.glob(os.path.join(torch_lib_dir, 'libtorch_hip.so*'))}")
+if torch.version.hip is None:
+    raise RuntimeError("Torch is not ROCm build (torch.version.hip is None).")
+
+pkgs = [
+    "vllm",
+    "torch",
+    "triton",
+    "torchvision",
+    "torchaudio",
+    "amdsmi",
+    "amd-aiter",
+    "atom",
+    "mori",
+]
 print("Final package versions:")
 for p in pkgs:
     try:
