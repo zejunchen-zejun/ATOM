@@ -8,6 +8,7 @@ ARG INSTALL_LM_EVAL=1
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV MAX_JOBS=${MAX_JOBS}
+ENV VLLM_TARGET_DEVICE=rocm
 WORKDIR /app
 
 # Repair apt dependency state first, then install required utilities.
@@ -32,16 +33,35 @@ RUN echo "========== [3/7] Clone vLLM and checkout target commit ==========" \
     && echo "vLLM commit:" \
     && git rev-parse HEAD
 
-# Install vLLM Python dependencies only (torch/triton/aiter remain from base image).
+# Install vLLM Python dependencies while preserving atom base torch/triton/aiter.
+RUN echo "========== [4/7] Build constraints from atom base packages ==========" \
+    && python3 - <<'PY'
+import importlib.metadata as m
+from importlib.metadata import PackageNotFoundError
+
+pins = ["torch", "triton", "amd-aiter", "torchvision", "torchaudio"]
+out = "/tmp/atom-base-constraints.txt"
+with open(out, "w", encoding="utf-8") as f:
+    for pkg in pins:
+        try:
+            ver = m.version(pkg)
+            f.write(f"{pkg}=={ver}\n")
+            print(f"Pin {pkg}=={ver}")
+        except PackageNotFoundError:
+            pass
+print(f"Constraints file: {out}")
+PY
+
 RUN echo "========== [4/7] Install vLLM ROCm Python requirements ==========" \
+    && cat /tmp/atom-base-constraints.txt \
     && cd /app/vllm \
     && python3 -m pip install --upgrade pip \
-    && python3 -m pip install -r requirements/rocm.txt
+    && python3 -m pip install --upgrade-strategy only-if-needed -c /tmp/atom-base-constraints.txt -r requirements/rocm.txt
 
 RUN echo "========== [5/7] Build vLLM wheel ==========" \
     && cd /app/vllm \
-    && python3 setup.py clean --all \
-    && MAX_JOBS="${MAX_JOBS}" python3 setup.py bdist_wheel --dist-dir=/tmp/vllm-wheels \
+    && VLLM_TARGET_DEVICE=rocm python3 setup.py clean --all \
+    && MAX_JOBS="${MAX_JOBS}" VLLM_TARGET_DEVICE=rocm python3 setup.py bdist_wheel --dist-dir=/tmp/vllm-wheels \
     && ls -lh /tmp/vllm-wheels
 
 # Install vLLM wheel without dependency resolution to avoid overriding base torch/triton/aiter.
