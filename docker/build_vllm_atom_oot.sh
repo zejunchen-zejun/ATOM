@@ -37,19 +37,31 @@ echo "MAX_JOBS        : ${MAX_JOBS}"
 echo "INSTALL_LM_EVAL : ${INSTALL_LM_EVAL}"
 echo
 echo "Build plan:"
-echo "  Step 1/3: (optional) pull base image"
-echo "  Step 2/3: build image from Dockerfile_vllm_atom_oot"
-echo "  Step 3/3: print final image info"
+echo "  Step 1/4: (optional) pull base image"
+echo "  Step 2/4: check/remove existing target image"
+echo "  Step 3/4: build image from Dockerfile_vllm_atom_oot"
+echo "  Step 4/4: print final image info"
 echo
 
 if [[ "${PULL_BASE_IMAGE}" == "1" ]]; then
-  print_banner "Step 1/3 - Pull base image: ${BASE_IMAGE}"
+  print_banner "Step 1/4 - Pull base image: ${BASE_IMAGE}"
   docker pull "${BASE_IMAGE}"
 else
-  print_banner "Step 1/3 - Skip base image pull (PULL_BASE_IMAGE=${PULL_BASE_IMAGE})"
+  print_banner "Step 1/4 - Skip base image pull (PULL_BASE_IMAGE=${PULL_BASE_IMAGE})"
 fi
 
-print_banner "Step 2/3 - Build target image: ${IMAGE_TAG}"
+print_banner "Step 2/4 - Check whether target image already exists"
+if docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+  echo "Target image already exists: ${IMAGE_TAG}"
+  docker image inspect "${IMAGE_TAG}" --format 'Existing image -> ID={{.Id}}  Created={{.Created}}'
+  echo "Removing existing target image: ${IMAGE_TAG}"
+  docker image rm -f "${IMAGE_TAG}"
+else
+  echo "Target image does not exist yet: ${IMAGE_TAG}"
+fi
+echo
+
+print_banner "Step 3/4 - Build target image: ${IMAGE_TAG}"
 DOCKER_BUILDKIT=1 docker build \
   -f "${DOCKERFILE_PATH}" \
   -t "${IMAGE_TAG}" \
@@ -61,5 +73,5 @@ DOCKER_BUILDKIT=1 docker build \
   "$@" \
   "${REPO_ROOT}"
 
-print_banner "Step 3/3 - Build completed"
+print_banner "Step 4/4 - Build completed"
 docker image inspect "${IMAGE_TAG}" --format 'Image={{.RepoTags}}  ID={{.Id}}  Created={{.Created}}'

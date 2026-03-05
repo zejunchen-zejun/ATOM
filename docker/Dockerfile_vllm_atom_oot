@@ -5,6 +5,7 @@ ARG VLLM_REPO="https://github.com/vllm-project/vllm.git"
 ARG VLLM_COMMIT="f5d17400303149bbb480f6abfb6f7bb646c1d895"
 ARG MAX_JOBS=64
 ARG INSTALL_LM_EVAL=1
+ARG INSTALL_FASTSAFETENSORS=1
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV MAX_JOBS=${MAX_JOBS}
@@ -81,8 +82,21 @@ RUN echo "========== [6/7] Install vLLM wheel (no dependency override) =========
     && python3 -m pip install --no-deps /tmp/vllm-wheels/*.whl \
     && python3 -m pip show vllm
 
+# Install vLLM runtime Python packages without touching core stack versions.
+RUN echo "========== [6.5/7] Install vLLM runtime requirements (no deps) ==========" \
+    && cd /app/vllm \
+    && python3 -m pip install --no-deps -r requirements/common.txt \
+    && python3 -m pip install --no-deps -r requirements/rocm.txt \
+    && if [ -d /opt/rocm/share/amd_smi ]; then \
+         python3 -m pip install /opt/rocm/share/amd_smi; \
+       else \
+         python3 -m pip install amdsmi || true; \
+       fi \
+    && python3 -m pip show cbor2 gguf amdsmi || true
+
 RUN echo "========== [7/7] Optional utilities ==========" \
-    && if [ "${INSTALL_LM_EVAL}" = "1" ]; then python3 -m pip install "lm-eval[api]"; else echo "Skip lm-eval install"; fi
+    && if [ "${INSTALL_LM_EVAL}" = "1" ]; then python3 -m pip install "lm-eval[api]"; else echo "Skip lm-eval install"; fi \
+    && if [ "${INSTALL_FASTSAFETENSORS}" = "1" ]; then python3 -m pip install "git+https://github.com/foundation-model-stack/fastsafetensors.git"; else echo "Skip fastsafetensors install"; fi
 
 RUN echo "========== [7/7] Final version print ==========" \
     && python3 - <<'PY'
