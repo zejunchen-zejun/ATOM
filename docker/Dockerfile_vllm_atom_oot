@@ -1,8 +1,8 @@
-ARG BASE_IMAGE="rocm/atom-dev:nightly_202603040155"
+ARG BASE_IMAGE="rocm/atom-dev:latest"
 FROM ${BASE_IMAGE}
 
 ARG VLLM_REPO="https://github.com/vllm-project/vllm.git"
-ARG VLLM_COMMIT="f5d17400303149bbb480f6abfb6f7bb646c1d895"
+ARG VLLM_COMMIT="b31e9326a7d9394aab8c767f8ebe225c65594b60"
 ARG MAX_JOBS=64
 ARG INSTALL_LM_EVAL=1
 ARG INSTALL_FASTSAFETENSORS=1
@@ -40,6 +40,12 @@ RUN echo "========== [4/7] Install vLLM ROCm build dependencies ==========" \
     && "${VENV_PYTHON}" -m pip install --upgrade pip \
     && "${VENV_PYTHON}" -m pip uninstall -y torch triton torchvision torchaudio || true \
     && "${VENV_PYTHON}" -m pip install -r requirements/rocm-build.txt
+
+
+RUN echo "Install amdsmi before building vLLM" \
+    && cd /opt/rocm/share/amd_smi \
+    && pip wheel . --wheel-dir=dist \
+    && pip install dist/*.whl
 
 RUN echo "========== [5/7] Build vLLM wheel ==========" \
     && cd /app/vllm \

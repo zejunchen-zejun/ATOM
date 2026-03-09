@@ -11,10 +11,10 @@ mkdir -p "${LOG_DIR}"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
 DOCKERFILE_PATH="${SCRIPT_DIR}/Dockerfile_vllm_atom_oot"
-IMAGE_TAG="${IMAGE_TAG:-rocm/atom-vllm-dev:nightly_202603040155}"
-BASE_IMAGE="${BASE_IMAGE:-rocm/atom-dev:nightly_202603040155}"
+IMAGE_TAG="${IMAGE_TAG:-rocm/atom-vllm-dev:latest}"
+BASE_IMAGE="${BASE_IMAGE:-rocm/atom-dev:latest}"
 VLLM_REPO="${VLLM_REPO:-https://github.com/vllm-project/vllm.git}"
-VLLM_COMMIT="${VLLM_COMMIT:-f5d17400303149bbb480f6abfb6f7bb646c1d895}"
+VLLM_COMMIT="${VLLM_COMMIT:-b31e9326a7d9394aab8c767f8ebe225c65594b60}"
 MAX_JOBS="${MAX_JOBS:-64}"
 INSTALL_LM_EVAL="${INSTALL_LM_EVAL:-1}"
 PULL_BASE_IMAGE="${PULL_BASE_IMAGE:-1}"
