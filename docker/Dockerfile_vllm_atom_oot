@@ -34,12 +34,18 @@ RUN echo "========== [3/7] Clone vLLM ==========" \
     && echo "vLLM commit:" \
     && git rev-parse HEAD
 
+RUN echo "======  Verify other packages (torch/amdsmi) ==========" \
+&& "${VENV_PYTHON}" -m pip show torch || true
+
 # Follow vLLM ROCm standard: allow torch/triton override.
 RUN echo "========== [4/7] Install vLLM ROCm build dependencies ==========" \
     && cd /app/vllm \
     && "${VENV_PYTHON}" -m pip install --upgrade pip \
-    && "${VENV_PYTHON}" -m pip uninstall -y torch triton torchvision torchaudio || true \
-    && "${VENV_PYTHON}" -m pip install -r requirements/rocm-build.txt
+    && sed -i -e '/xgrammar/d' -e '/compressed-tensors/d' requirements/common.txt \
+    && "${VENV_PYTHON}" -m pip install --no-deps xgrammar==0.1.29 compressed-tensors==0.13.0 \
+    && sed -i -e '/peft/d' -e '/tensorizer/d' -e '/runai/d' -e '/timm/d' requirements/rocm.txt \
+    && "${VENV_PYTHON}" -m pip install --no-deps peft tensorizer==2.10.1 runai-model-streamer[s3,gcs]==0.15.3 timm>=1.0.17 \
+    && "${VENV_PYTHON}" -m pip install -r requirements/rocm.txt
 
 
 RUN echo "Install amdsmi before building vLLM" \
@@ -55,7 +61,6 @@ RUN echo "========== [5/7] Build vLLM wheel ==========" \
 
 RUN echo "========== [6/7] Install vLLM runtime dependencies ==========" \
     && cd /app/vllm \
-    && "${VENV_PYTHON}" -m pip install -r requirements/rocm.txt \
     && "${VENV_PYTHON}" -m pip uninstall -y vllm || true \
     && "${VENV_PYTHON}" -m pip install /tmp/vllm-wheels/*.whl \
     && "${VENV_PYTHON}" -m pip install uvloop
