@@ -127,10 +127,13 @@ def _generate_atom_config_from_sglang_config(config: Any):
     from sglang.srt.configs.load_config import LoadConfig
     from atom.config import Config, ParallelConfig, CompilationConfig
 
+    # Format1: sglang serve --model-path ...
+    # Format2: python3 -m sglang.launch_server --model-path ...
+    args_list = sys.argv[2:] if sys.argv[1] == "serve" else sys.argv[1:]
     # sglang has no global config variable like vllm,
     # so here construct the server args from sys.argv passed by users
     # this is the only way to get full arguments
-    server_args: ServerArgs = prepare_server_args(sys.argv[1:])
+    server_args: ServerArgs = prepare_server_args(args_list)
 
     sgl_model_config = SglangModelConfig.from_server_args(server_args)
     sgl_model_opt_config = ModelOptConfig(
@@ -222,7 +225,6 @@ def generate_atom_config_for_plugin_mode(config: Any = None):
     """
 
     logger.info("Generate atom config for plugin mode from passed config")
-
     atom_config = None
     from atom.plugin import is_vllm, is_sglang
     from atom.config import set_current_atom_config
