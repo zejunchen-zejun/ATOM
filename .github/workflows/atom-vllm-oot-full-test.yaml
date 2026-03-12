@@ -138,32 +138,27 @@ jobs:
             model_path: "Qwen/Qwen3-8B"
             extra_args: "--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 1"
             env_vars: ""
-            accuracy_test_threshold: "0.70"
             runner: linux-atom-mi355-1
           - model_name: "Qwen3 MoE"
             model_path: "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
             extra_args: "--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8 --enable-expert-parallel"
             env_vars: ""
-            accuracy_test_threshold: "0.87"
             runner: atom-mi355-8gpu.predownload
           - model_name: "DeepSeek-V3 family"
             model_path: "deepseek-ai/DeepSeek-R1-0528"
             extra_args: "--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8"
             env_vars: ""
-            accuracy_test_threshold: "0.93"
             runner: atom-mi355-8gpu.predownload
           - model_name: "GPT-OSS"
             model_path: "openai/gpt-oss-120b"
             extra_args: "--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 2 --enable-dp-attention --enable-expert-parallel --gpu-memory-utilization 0.3"
             env_vars: |
               ATOM_GPT_OSS_MODEL=1
-            accuracy_test_threshold: "0.38"
             runner: linux-atom-mi355-4
           - model_name: "Kimi-K2"
             model_path: "amd/Kimi-K2-Thinking-MXFP4"
             extra_args: "--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8 --enable-expert-parallel"
             env_vars: ""
-            accuracy_test_threshold: "0.90"
             runner: atom-mi355-8gpu.predownload
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240

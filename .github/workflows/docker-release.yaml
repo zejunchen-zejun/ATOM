@@ -192,5 +192,8 @@ jobs:
           # Remove build and tagged images to free disk space
           docker rmi atom_release:ci || true
           docker rmi rocm/atom-dev:latest || true
+          docker rmi atom_oot_release:ci || true
+          docker rmi rocm/atom-dev-vllm:latest || true
           # Remove nightly tagged image if it exists
           docker images "rocm/atom-dev:nightly_*" -q | xargs -r docker rmi || true
+          docker images "rocm/atom-dev-vllm-v*:*" -q | xargs -r docker rmi || true

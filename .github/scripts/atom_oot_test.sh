@@ -47,7 +47,7 @@ CI_MODE_MODELS=(
 FULL_MODE_MODELS=(
   "Qwen3 Dense|Qwen/Qwen3-8B|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 1|0.70"
   "Qwen3 MoE|Qwen/Qwen3-235B-A22B-Instruct-2507-FP8|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8 --enable-expert-parallel|0.87"
-  "DeepSeek-V3 family|deepseek-ai/DeepSeek-R1-0528|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8|0.93"
+  "DeepSeek-V3 family|deepseek-ai/DeepSeek-R1-0528|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8|0.94"
   "GPT-OSS|openai/gpt-oss-120b|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 2 --enable-dp-attention --enable-expert-parallel --gpu-memory-utilization 0.3|0.38"
   "Kimi-K2|amd/Kimi-K2-Thinking-MXFP4|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8 --enable-expert-parallel|0.90"
 )
@@ -132,7 +132,6 @@ launch_one_model() {
   nohup vllm serve "${resolved_model_path}" \
     --host "${VLLM_HOST}" \
     --port "${VLLM_PORT}" \
-    --disable-log-requests \
     --async-scheduling \
     --load-format fastsafetensors \
     --max-model-len 16384 \

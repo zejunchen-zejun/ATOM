@@ -43,7 +43,6 @@ jobs:
           # Keep CI runtime under control: enable only one OOT model for now.
           - model_name: "Kimi-K2-Thinking-MXFP4"
             model_path: "amd/Kimi-K2-Thinking-MXFP4"
-            accuracy_test_threshold: "0.90"
             runner: atom-mi355-8gpu.predownload
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
