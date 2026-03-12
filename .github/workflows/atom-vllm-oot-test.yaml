@@ -181,12 +181,18 @@ jobs:
 
       - name: Build OOT vLLM image
         run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
+            pull_base_image=0
+          else
+            pull_base_image=1
+          fi
           chmod +x docker/plugin/build_OOT_vLLM.sh
           IMAGE_TAG="${OOT_IMAGE_TAG}" \
           BASE_IMAGE="${OOT_BASE_IMAGE}" \
           VLLM_COMMIT="${VLLM_COMMIT}" \
           VLLM_VERSION="${VLLM_VERSION}" \
           INSTALL_LM_EVAL=1 \
+          PULL_BASE_IMAGE="${pull_base_image}" \
           BUILD_NO_CACHE=1 \
           docker/plugin/build_OOT_vLLM.sh
 
