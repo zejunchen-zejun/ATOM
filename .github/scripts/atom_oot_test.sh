@@ -40,6 +40,9 @@ ACCURACY_LOG_FILE=${ACCURACY_LOG_FILE:-/tmp/oot_accuracy_output.txt}
 
 # Format:
 #   MODEL_NAME|MODEL_PATH|EXTRA_ARGS|THRESHOLD
+# Note: CI runs Kimi-K2 with TP=4 on an 8-GPU runner to reduce runtime and
+# improve CI stability. Full mode uses TP=8 on the same class of runner for
+# higher-fidelity validation.
 CI_MODE_MODELS=(
   "Kimi-K2|amd/Kimi-K2-Thinking-MXFP4|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 4 --enable-expert-parallel|0.90"
 )

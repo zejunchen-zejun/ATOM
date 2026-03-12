@@ -6,7 +6,7 @@ ARG GPU_ARCH="gfx942;gfx950"
 # OOT image stage: extends an ATOM base image with vLLM + OOT deps.
 # Build with: docker build --target oot_image --build-arg BASE_IMAGE=...
 # --------------------------------------------------------------------
-FROM ${BASE_IMAGE} as oot_image
+FROM ${BASE_IMAGE} AS oot_image
 
 ARG MAX_JOBS=64
 ARG VENV_PYTHON="/opt/venv/bin/python"
