@@ -41,7 +41,7 @@ ACCURACY_LOG_FILE=${ACCURACY_LOG_FILE:-/tmp/oot_accuracy_output.txt}
 # Format:
 #   MODEL_NAME|MODEL_PATH|EXTRA_ARGS|THRESHOLD
 CI_MODE_MODELS=(
-  "Kimi-K2|amd/Kimi-K2-Thinking-MXFP4|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 8 --enable-expert-parallel|0.90"
+  "Kimi-K2|amd/Kimi-K2-Thinking-MXFP4|--trust-remote-code --kv-cache-dtype fp8 --tensor-parallel-size 4 --enable-expert-parallel|0.90"
 )
 
 FULL_MODE_MODELS=(

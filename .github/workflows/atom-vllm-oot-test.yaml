@@ -26,178 +26,15 @@ env:
   GITHUB_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.event.head_commit.id }}
 
 jobs:
-  wait-atom-test-success:
-    name: Wait for ATOM Test success
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    outputs:
-      atom_test_ok: ${{ steps.wait.outputs.atom_test_ok }}
-    steps:
-      - name: Wait until ATOM Test is completed for this commit
-        id: wait
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const eventName = context.eventName;
-            const headSha = context.payload.pull_request?.head?.sha ?? context.sha;
-            const maxAttempts = 180;
-            const sleepMs = 60000;
-
-            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-            if (eventName === "workflow_dispatch") {
-              core.info("workflow_dispatch detected: bypass ATOM Test gate.");
-              core.setOutput("atom_test_ok", "true");
-              return;
-            }
-
-            let foundCompletedRun = null;
-
-            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-              const resp = await github.rest.actions.listWorkflowRuns({
-                owner,
-                repo,
-                workflow_id: "atom-test.yaml",
-                event: eventName,
-                head_sha: headSha,
-                per_page: 20,
-              });
-
-              const candidates = (resp.data.workflow_runs || [])
-                .filter((run) => run.name === "ATOM Test" && run.id !== context.runId)
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-              if (candidates.length > 0) {
-                const latest = candidates[0];
-                core.info(
-                  `Attempt ${attempt}/${maxAttempts}: latest ATOM Test run id=${latest.id}, status=${latest.status}, conclusion=${latest.conclusion}`
-                );
-                if (latest.status === "completed") {
-                  foundCompletedRun = latest;
-                  break;
-                }
-              } else {
-                core.info(`Attempt ${attempt}/${maxAttempts}: no ATOM Test run found yet for this sha.`);
-              }
-
-              await sleep(sleepMs);
-            }
-
-            if (!foundCompletedRun) {
-              core.warning("Timeout waiting for ATOM Test workflow completion. OOT workflow will be skipped.");
-              core.setOutput("atom_test_ok", "false");
-              return;
-            }
-
-            const ok = foundCompletedRun.conclusion === "success";
-            core.setOutput("atom_test_ok", ok ? "true" : "false");
-            if (!ok) {
-              core.warning(
-                `Skip OOT workflow: ATOM Test conclusion is '${foundCompletedRun.conclusion}'.`
-              );
-            }
-
   pre-checks:
-    needs: [wait-atom-test-success]
-    if: ${{ needs.wait-atom-test-success.outputs.atom_test_ok == 'true' }}
     uses: ./.github/workflows/pre-checks.yaml
     with:
       black: true
       ruff: true
 
-  build_atom_image:
-    if: ${{ needs.wait-atom-test-success.outputs.atom_test_ok == 'true' && needs.pre-checks.result == 'success' && (!github.event.pull_request || github.event.pull_request.draft == false) }}
-    needs: [wait-atom-test-success, pre-checks]
-    name: Build ATOM image
-    runs-on: build-only-atom
-    steps:
-      - name: Docker Login
-        if: ${{ !github.event.pull_request.head.repo.fork }}
-        run: |
-          docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Try pull pre-built ATOM image
-        if: ${{ !github.event.pull_request.head.repo.fork }}
-        id: pull_prebuilt
-        run: |
-          IMAGE_TAG=rocm/atom-dev:pre-build-${{ env.GITHUB_COMMIT_SHA }}
-          if docker pull "$IMAGE_TAG"; then
-            echo "image_ready=true" >> "$GITHUB_OUTPUT"
-            echo "Reusing existing image: $IMAGE_TAG"
-          else
-            echo "image_ready=false" >> "$GITHUB_OUTPUT"
-            echo "Pre-built image not found, will rebuild: $IMAGE_TAG"
-          fi
-
-      - name: Checkout ATOM repo
-        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
-        uses: actions/checkout@v4
-
-      - name: Generate Dockerfile
-        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
-        run: |
-          cat <<EOF > Dockerfile.mod
-          FROM ${{ env.ATOM_BASE_NIGHTLY_IMAGE }}
-          RUN pip install -U lm-eval[api]
-          RUN pip show lm-eval || true
-          RUN pip install hf_transfer
-          RUN pip show hf_transfer || true
-          RUN echo "=== Aiter version BEFORE uninstall ===" && pip show amd-aiter || true
-          RUN pip uninstall -y amd-aiter
-          RUN pip install --upgrade "pybind11>=3.0.1"
-          RUN pip show pybind11
-          RUN wget https://github.com/stedolan/jq/releases/download/jq-1.7/jq-linux64 -O jq
-          RUN chmod +x jq
-          RUN mv jq /usr/local/bin/jq
-          RUN rm -rf /app/aiter-test
-          RUN git clone --depth 1 https://github.com/ROCm/aiter.git /app/aiter-test && \\
-              cd /app/aiter-test && \\
-              git checkout HEAD && \\
-              git submodule sync && git submodule update --init --recursive && \\
-              MAX_JOBS=64 PREBUILD_KERNELS=0 GPU_ARCHS=gfx950 python3 setup.py develop
-          RUN echo "=== Aiter version AFTER installation ===" && pip show amd-aiter || true
-          
-          RUN echo "=== ATOM version BEFORE uninstall ===" && pip show atom || true
-          RUN pip uninstall -y atom
-          RUN rm -rf /app/ATOM
-          RUN git clone ${{ env.GITHUB_REPO_URL }} /app/ATOM && \\
-              cd /app/ATOM && \\
-              git checkout ${{ env.GITHUB_COMMIT_SHA }} && \\
-              pip install -e .
-
-          RUN echo "=== ATOM version AFTER installation ===" && pip show atom || true
-          EOF
-
-      - name: Build Docker image
-        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
-        run: |
-          docker build --pull --network=host \
-            --no-cache \
-            -t atom_test:ci \
-            -f Dockerfile.mod .
-
-      - name: Push Docker image
-        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
-        run: |
-          IMAGE_TAG=rocm/atom-dev:pre-build-${{ env.GITHUB_COMMIT_SHA }}
-          docker tag atom_test:ci $IMAGE_TAG
-          docker push $IMAGE_TAG
-
-      - name: Success message
-        if: ${{ !github.event.pull_request.head.repo.fork }}
-        run: |
-          IMAGE_TAG=rocm/atom-dev:pre-build-${{ env.GITHUB_COMMIT_SHA }}
-          if [ "${{ steps.pull_prebuilt.outputs.image_ready }}" = "true" ]; then
-            echo "Successfully reused image: $IMAGE_TAG"
-          else
-            echo "Successfully rebuilt and pushed image: $IMAGE_TAG"
-          fi
-
   atom-vllm-oot:
-    needs: [wait-atom-test-success, pre-checks, build_atom_image]
-    if: ${{ needs.wait-atom-test-success.outputs.atom_test_ok == 'true' && needs.pre-checks.result == 'success' && needs.build_atom_image.result == 'success' && (!github.event.pull_request || github.event.pull_request.draft == false) }}
+    needs: [pre-checks]
+    if: ${{ needs.pre-checks.result == 'success' && (!github.event.pull_request || github.event.pull_request.draft == false) }}
     name: ATOM vLLM OOT Test
     strategy:
       fail-fast: false
@@ -230,13 +67,7 @@ jobs:
       - name: Checkout ATOM repo
         uses: actions/checkout@v4
 
-      - name: Docker Login
-        if: ${{ !github.event.pull_request.head.repo.fork }}
-        run: |
-          docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Prepare OOT base image for forked repo
-        if: ${{ github.event.pull_request.head.repo.fork }}
+      - name: Build ATOM base image
         run: |
           cat <<EOF > Dockerfile.mod
           FROM ${{ env.ATOM_BASE_NIGHTLY_IMAGE }}
@@ -256,8 +87,6 @@ jobs:
               MAX_JOBS=64 PREBUILD_KERNELS=0 GPU_ARCHS=gfx950 python3 setup.py develop
           RUN echo "=== Aiter version AFTER installation ===" && pip show amd-aiter || true
           RUN echo "=== ATOM version BEFORE uninstall ===" && pip show atom || true
-          # Fork PR fallback: this workflow cannot rely on pre-built images from
-          # other workflows, so reinstall ATOM from the current PR commit.
           RUN pip uninstall -y atom
           RUN rm -rf /app/ATOM
           RUN git clone ${{ env.GITHUB_REPO_URL }} /app/ATOM && \\
@@ -271,27 +100,16 @@ jobs:
             --no-cache \
             -t atom_oot_base:ci \
             -f Dockerfile.mod .
-          echo "OOT_BASE_IMAGE=atom_oot_base:ci" >> "$GITHUB_ENV"
-
-      - name: Select OOT base image from pre-built ATOM image
-        if: ${{ !github.event.pull_request.head.repo.fork }}
-        run: |
-          echo "OOT_BASE_IMAGE=rocm/atom-dev:pre-build-${{ env.GITHUB_COMMIT_SHA }}" >> "$GITHUB_ENV"
 
       - name: Build OOT vLLM image
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
-            pull_base_image=0
-          else
-            pull_base_image=1
-          fi
           chmod +x docker/plugin/build_OOT_vLLM.sh
           IMAGE_TAG="${OOT_IMAGE_TAG}" \
-          BASE_IMAGE="${OOT_BASE_IMAGE}" \
+          BASE_IMAGE="atom_oot_base:ci" \
           VLLM_COMMIT="${VLLM_COMMIT}" \
           VLLM_VERSION="${VLLM_VERSION}" \
           INSTALL_LM_EVAL=1 \
-          PULL_BASE_IMAGE="${pull_base_image}" \
+          PULL_BASE_IMAGE=0 \
           BUILD_NO_CACHE=1 \
           docker/plugin/build_OOT_vLLM.sh
 
@@ -336,6 +154,7 @@ jobs:
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
       - name: Download model if needed
+        if: success()
         run: |
           if [ -d "/models" ] && [ ! -f "/models/${{ matrix.model_path }}/config.json" ]; then
             echo "Downloading model to /models/${{ matrix.model_path }}"
@@ -345,6 +164,7 @@ jobs:
           fi
 
       - name: Run OOT launch and gsm8k accuracy via script (ci mode)
+        if: success()
         timeout-minutes: 90
         run: |
           docker exec "$CONTAINER_NAME" bash -lc "
