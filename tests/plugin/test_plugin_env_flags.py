@@ -16,4 +16,3 @@ def test_disable_vllm_plugin_flag_disables_platform(monkeypatch):
 
         assert platform_module.ATOMPlatform is None
         assert register_module.register_platform() is None
-
