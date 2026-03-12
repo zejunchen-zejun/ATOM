@@ -169,7 +169,7 @@ accuracy_one_model() {
   echo "Threshold: ${threshold}"
 
   lm_eval --model local-completions \
-    --model_args model="${resolved_model_path}",base_url="http://127.0.0.1:${VLLM_PORT}/v1/completions",num_concurrent=65,max_retries=1,tokenized_requests=False \
+    --model_args model="${resolved_model_path}",base_url="http://127.0.0.1:${VLLM_PORT}/v1/completions",num_concurrent=65,max_retries=1,tokenized_requests=False,trust_remote_code=True \
     --tasks gsm8k \
     --num_fewshot 3 \
     --output_path "${result_file}" 2>&1 | tee -a "${ACCURACY_LOG_FILE}"
