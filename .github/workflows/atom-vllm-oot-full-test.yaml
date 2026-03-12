@@ -1,10 +1,13 @@
-name: ATOM vLLM OOT Validation
+name: ATOM vLLM OOT Full Validation
 
 on:
   workflow_dispatch:
     inputs:
       vllm_commit:
         description: "vLLM commit to validate"
+        # NOTE: For full validation, set this commit explicitly when your PR
+        # adapts ATOM to a newer vLLM version; using an old default commit can
+        # hide real compatibility issues.
         required: false
         type: string
         default: "b31e9326a7d9394aab8c767f8ebe225c65594b60"
