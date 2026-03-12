@@ -179,10 +179,10 @@ jobs:
         run: |
           TAG=nightly_$(date +%Y%m%d)
           VLLM_VER="${{ inputs.vllm_version || env.VLLM_VERSION }}"
-          docker tag atom_oot_release:ci rocm/atom-vllm:latest
-          docker push rocm/atom-vllm:latest
-          docker tag atom_oot_release:ci rocm/atom-vllm-v${VLLM_VER}:${TAG}
-          docker push rocm/atom-vllm-v${VLLM_VER}:${TAG}
+          docker tag atom_oot_release:ci rocm/atom-dev-vllm:latest
+          docker push rocm/atom-dev-vllm:latest
+          docker tag atom_oot_release:ci rocm/atom-dev-vllm-v${VLLM_VER}:${TAG}
+          docker push rocm/atom-dev-vllm-v${VLLM_VER}:${TAG}
 
       - name: Clean Up
         if: always()
