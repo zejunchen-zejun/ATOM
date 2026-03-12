@@ -103,15 +103,16 @@ jobs:
 
       - name: Build OOT vLLM image
         run: |
-          chmod +x docker/plugin/build_OOT_vLLM.sh
-          IMAGE_TAG="${OOT_IMAGE_TAG}" \
-          BASE_IMAGE="atom_oot_base:ci" \
-          VLLM_COMMIT="${VLLM_COMMIT}" \
-          VLLM_VERSION="${VLLM_VERSION}" \
-          INSTALL_LM_EVAL=1 \
-          PULL_BASE_IMAGE=0 \
-          BUILD_NO_CACHE=1 \
-          docker/plugin/build_OOT_vLLM.sh
+          docker build --network=host \
+            --no-cache \
+            --target oot_image \
+            -t "${OOT_IMAGE_TAG}" \
+            --build-arg BASE_IMAGE="atom_oot_base:ci" \
+            --build-arg MAX_JOBS=64 \
+            --build-arg VLLM_COMMIT="${VLLM_COMMIT}" \
+            --build-arg INSTALL_LM_EVAL=1 \
+            --build-arg INSTALL_FASTSAFETENSORS=1 \
+            -f docker/Dockerfile .
 
       - name: Run all plugin unit tests
         run: |

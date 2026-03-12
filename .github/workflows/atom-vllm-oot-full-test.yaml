@@ -80,15 +80,17 @@ jobs:
       - name: Build OOT vLLM image from rebuilt ATOM base
         id: meta
         run: |
-          chmod +x docker/plugin/build_OOT_vLLM.sh
           OOT_IMAGE_TAG="${VALIDATION_IMAGE_REPO}:oot-vllm-validation-${GITHUB_COMMIT_SHA}-${{ github.run_id }}"
-          IMAGE_TAG="${OOT_IMAGE_TAG}" \
-          BASE_IMAGE="atom_oot_base:ci" \
-          VLLM_COMMIT="${{ inputs.vllm_commit || 'b31e9326a7d9394aab8c767f8ebe225c65594b60' }}" \
-          VLLM_VERSION="${{ inputs.vllm_version || '0.17' }}" \
-          INSTALL_LM_EVAL=1 \
-          BUILD_NO_CACHE=1 \
-          docker/plugin/build_OOT_vLLM.sh
+          docker build --network=host \
+            --no-cache \
+            --target oot_image \
+            -t "${OOT_IMAGE_TAG}" \
+            --build-arg BASE_IMAGE="atom_oot_base:ci" \
+            --build-arg MAX_JOBS=64 \
+            --build-arg VLLM_COMMIT="${{ inputs.vllm_commit || 'b31e9326a7d9394aab8c767f8ebe225c65594b60' }}" \
+            --build-arg INSTALL_LM_EVAL=1 \
+            --build-arg INSTALL_FASTSAFETENSORS=1 \
+            -f docker/Dockerfile .
 
           echo "oot_image_tag=${OOT_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
