@@ -32,7 +32,10 @@ def test_disable_vllm_plugin_attention_fallbacks_to_non_atom_backend(monkeypatch
 
     class _RocmPlatform:
         @classmethod
-        def get_attn_backend_cls(cls, selected_backend, attn_selector_config):
+        def get_attn_backend_cls(
+            cls, selected_backend, attn_selector_config, num_heads
+        ):
+            assert num_heads == 16
             return "vllm.default.backend"
 
     rocm_module.RocmPlatform = _RocmPlatform
@@ -52,5 +55,6 @@ def test_disable_vllm_plugin_attention_fallbacks_to_non_atom_backend(monkeypatch
     result = platform_module.ATOMPlatform.get_attn_backend_cls(
         selected_backend="x",
         attn_selector_config=types.SimpleNamespace(use_mla=True),
+        num_heads=16,
     )
     assert result == "vllm.default.backend"

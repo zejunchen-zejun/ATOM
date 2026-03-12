@@ -21,32 +21,125 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  ATOM_BASE_NIGTHLY_IMAGE: rocm/atom-dev:latest
+  ATOM_BASE_NIGHTLY_IMAGE: rocm/atom-dev:latest
   GITHUB_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url || 'https://github.com/ROCm/ATOM.git' }}
   GITHUB_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.event.head_commit.id }}
 
 jobs:
+  wait-atom-test-success:
+    name: Wait for ATOM Test success
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    outputs:
+      atom_test_ok: ${{ steps.wait.outputs.atom_test_ok }}
+    steps:
+      - name: Wait until ATOM Test is completed for this commit
+        id: wait
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const eventName = context.eventName;
+            const headSha = context.payload.pull_request?.head?.sha ?? context.sha;
+            const maxAttempts = 180;
+            const sleepMs = 60000;
+
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+            if (eventName === "workflow_dispatch") {
+              core.info("workflow_dispatch detected: bypass ATOM Test gate.");
+              core.setOutput("atom_test_ok", "true");
+              return;
+            }
+
+            let foundCompletedRun = null;
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              const resp = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: "atom-test.yaml",
+                event: eventName,
+                head_sha: headSha,
+                per_page: 20,
+              });
+
+              const candidates = (resp.data.workflow_runs || [])
+                .filter((run) => run.name === "ATOM Test" && run.id !== context.runId)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+              if (candidates.length > 0) {
+                const latest = candidates[0];
+                core.info(
+                  `Attempt ${attempt}/${maxAttempts}: latest ATOM Test run id=${latest.id}, status=${latest.status}, conclusion=${latest.conclusion}`
+                );
+                if (latest.status === "completed") {
+                  foundCompletedRun = latest;
+                  break;
+                }
+              } else {
+                core.info(`Attempt ${attempt}/${maxAttempts}: no ATOM Test run found yet for this sha.`);
+              }
+
+              await sleep(sleepMs);
+            }
+
+            if (!foundCompletedRun) {
+              core.warning("Timeout waiting for ATOM Test workflow completion. OOT workflow will be skipped.");
+              core.setOutput("atom_test_ok", "false");
+              return;
+            }
+
+            const ok = foundCompletedRun.conclusion === "success";
+            core.setOutput("atom_test_ok", ok ? "true" : "false");
+            if (!ok) {
+              core.warning(
+                `Skip OOT workflow: ATOM Test conclusion is '${foundCompletedRun.conclusion}'.`
+              );
+            }
+
   pre-checks:
+    needs: [wait-atom-test-success]
+    if: ${{ needs.wait-atom-test-success.outputs.atom_test_ok == 'true' }}
     uses: ./.github/workflows/pre-checks.yaml
     with:
       black: true
       ruff: true
 
   build_atom_image:
-    if: ${{ needs.pre-checks.result == 'success' && (!github.event.pull_request || github.event.pull_request.draft == false) }}
-    needs: [pre-checks]
+    if: ${{ needs.wait-atom-test-success.outputs.atom_test_ok == 'true' && needs.pre-checks.result == 'success' && (!github.event.pull_request || github.event.pull_request.draft == false) }}
+    needs: [wait-atom-test-success, pre-checks]
     name: Build ATOM image
     runs-on: build-only-atom
     steps:
-      - name: Checkout ATOM repo
+      - name: Docker Login
         if: ${{ !github.event.pull_request.head.repo.fork }}
+        run: |
+          docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Try pull pre-built ATOM image
+        if: ${{ !github.event.pull_request.head.repo.fork }}
+        id: pull_prebuilt
+        run: |
+          IMAGE_TAG=rocm/atom-dev:pre-build-${{ env.GITHUB_COMMIT_SHA }}
+          if docker pull "$IMAGE_TAG"; then
+            echo "image_ready=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing existing image: $IMAGE_TAG"
+          else
+            echo "image_ready=false" >> "$GITHUB_OUTPUT"
+            echo "Pre-built image not found, will rebuild: $IMAGE_TAG"
+          fi
+
+      - name: Checkout ATOM repo
+        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
         uses: actions/checkout@v4
 
       - name: Generate Dockerfile
-        if: ${{ !github.event.pull_request.head.repo.fork }}
+        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
         run: |
           cat <<EOF > Dockerfile.mod
-          FROM ${{ env.ATOM_BASE_NIGTHLY_IMAGE }}
+          FROM ${{ env.ATOM_BASE_NIGHTLY_IMAGE }}
           RUN pip install -U lm-eval[api]
           RUN pip show lm-eval || true
           RUN pip install hf_transfer
@@ -78,7 +171,7 @@ jobs:
           EOF
 
       - name: Build Docker image
-        if: ${{ !github.event.pull_request.head.repo.fork }}
+        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
         run: |
           docker build --pull --network=host \
             --no-cache \
@@ -86,21 +179,25 @@ jobs:
             -f Dockerfile.mod .
 
       - name: Push Docker image
-        if: ${{ !github.event.pull_request.head.repo.fork }}
+        if: ${{ !github.event.pull_request.head.repo.fork && steps.pull_prebuilt.outputs.image_ready != 'true' }}
         run: |
           IMAGE_TAG=rocm/atom-dev:pre-build-${{ env.GITHUB_COMMIT_SHA }}
           docker tag atom_test:ci $IMAGE_TAG
-          docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
           docker push $IMAGE_TAG
 
       - name: Success message
         if: ${{ !github.event.pull_request.head.repo.fork }}
         run: |
-          echo "Successfully prepared image: $IMAGE_TAG"
+          IMAGE_TAG=rocm/atom-dev:pre-build-${{ env.GITHUB_COMMIT_SHA }}
+          if [ "${{ steps.pull_prebuilt.outputs.image_ready }}" = "true" ]; then
+            echo "Successfully reused image: $IMAGE_TAG"
+          else
+            echo "Successfully rebuilt and pushed image: $IMAGE_TAG"
+          fi
 
   atom-vllm-oot:
-    needs: [pre-checks, build_atom_image]
-    if: ${{ needs.pre-checks.result == 'success' && needs.build_atom_image.result == 'success' && (!github.event.pull_request || github.event.pull_request.draft == false) }}
+    needs: [wait-atom-test-success, pre-checks, build_atom_image]
+    if: ${{ needs.wait-atom-test-success.outputs.atom_test_ok == 'true' && needs.pre-checks.result == 'success' && needs.build_atom_image.result == 'success' && (!github.event.pull_request || github.event.pull_request.draft == false) }}
     name: ATOM vLLM OOT Test
     strategy:
       fail-fast: false
@@ -142,7 +239,7 @@ jobs:
         if: ${{ github.event.pull_request.head.repo.fork }}
         run: |
           cat <<EOF > Dockerfile.mod
-          FROM ${{ env.ATOM_BASE_NIGTHLY_IMAGE }}
+          FROM ${{ env.ATOM_BASE_NIGHTLY_IMAGE }}
           RUN pip install -U lm-eval[api]
           RUN pip show lm-eval || true
           RUN pip install hf_transfer
@@ -159,6 +256,8 @@ jobs:
               MAX_JOBS=64 PREBUILD_KERNELS=0 GPU_ARCHS=gfx950 python3 setup.py develop
           RUN echo "=== Aiter version AFTER installation ===" && pip show amd-aiter || true
           RUN echo "=== ATOM version BEFORE uninstall ===" && pip show atom || true
+          # Fork PR fallback: this workflow cannot rely on pre-built images from
+          # other workflows, so reinstall ATOM from the current PR commit.
           RUN pip uninstall -y atom
           RUN rm -rf /app/ATOM
           RUN git clone ${{ env.GITHUB_REPO_URL }} /app/ATOM && \\
@@ -196,6 +295,14 @@ jobs:
           BUILD_NO_CACHE=1 \
           docker/plugin/build_OOT_vLLM.sh
 
+      - name: Run all plugin unit tests
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            "$OOT_IMAGE_TAG" \
+            bash -lc "pytest -q tests/plugin"
+
       - name: Start OOT test container
         run: |
           if [ -f "/etc/podinfo/gha-render-devices" ]; then
@@ -223,22 +330,10 @@ jobs:
             --security-opt seccomp=unconfined \
             --ulimit memlock=-1 \
             --ulimit stack=67108864 \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
             --name "$CONTAINER_NAME" \
             "$OOT_IMAGE_TAG"
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
-
-      - name: Resolve model path
-        run: |
-          if [ -f "/models/${{ matrix.model_path }}/config.json" ]; then
-            echo "MODEL_PATH=/models/${{ matrix.model_path }}" >> "$GITHUB_ENV"
-            echo "Use pre-downloaded model path: /models/${{ matrix.model_path }}"
-          else
-            echo "MODEL_PATH=${{ matrix.model_path }}" >> "$GITHUB_ENV"
-            echo "Use HuggingFace model path: ${{ matrix.model_path }}"
-          fi
 
       - name: Download model if needed
         run: |
@@ -249,73 +344,12 @@ jobs:
             echo "Skip model download"
           fi
 
-      - name: Launch vLLM server with ATOM OOT plugin
+      - name: Run OOT launch and gsm8k accuracy via script (ci mode)
+        timeout-minutes: 90
         run: |
           docker exec "$CONTAINER_NAME" bash -lc "
             set -euo pipefail
-            export SAFETENSORS_FAST_GPU=1
-            export VLLM_ROCM_USE_AITER=1
-            export VLLM_RPC_TIMEOUT=1800000
-            export VLLM_CACHE_ROOT=/tmp/.cache/vllm
-            export TORCHINDUCTOR_CACHE_DIR=/tmp/.cache/inductor
-            rm -rf /tmp/.cache
-
-            nohup vllm serve \"$MODEL_PATH\" \
-              --host 0.0.0.0 \
-              --port 8000 \
-              --tensor-parallel-size 8 \
-              --enable-expert-parallel \
-              --trust-remote-code \
-              --disable-log-requests \
-              --gpu-memory-utilization 0.9 \
-              --async-scheduling \
-              --load-format fastsafetensors \
-              --kv-cache-dtype fp8 \
-              --max-model-len 16384 \
-              > /tmp/vllm_oot.log 2>&1 &
-            echo \$! > /tmp/vllm_oot.pid
-            echo \"Server PID: \$(cat /tmp/vllm_oot.pid)\"
-          "
-
-      - name: Wait for vLLM readiness
-        timeout-minutes: 30
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 60); do
-            if docker exec "$CONTAINER_NAME" bash -lc "curl -sS http://127.0.0.1:8000/v1/models >/dev/null"; then
-              echo "vLLM server is ready."
-              exit 0
-            fi
-            echo "Waiting for server... ($i/60)"
-            sleep 30
-          done
-          echo "vLLM server did not become ready in time."
-          docker exec "$CONTAINER_NAME" bash -lc "tail -n 200 /tmp/vllm_oot.log || true"
-          exit 1
-
-      - name: Run OOT accuracy test (gsm8k)
-        timeout-minutes: 45
-        run: |
-          docker exec "$CONTAINER_NAME" bash -lc "
-            set -euo pipefail
-            if ! command -v lm_eval >/dev/null 2>&1; then
-              pip install 'lm-eval[api]'
-            fi
-            mkdir -p /tmp/oot_accuracy_results
-            RESULT_FILE=/tmp/oot_accuracy_results/\$(date +%Y%m%d%H%M%S).json
-            lm_eval --model local-completions \
-              --model_args model=\"$MODEL_PATH\",base_url=http://127.0.0.1:8000/v1/completions,num_concurrent=65,max_retries=1,tokenized_requests=False \
-              --tasks gsm8k \
-              --num_fewshot 3 \
-              --output_path \"\$RESULT_FILE\" 2>&1 | tee /tmp/oot_accuracy_output.txt
-            echo \"OOT_RESULT_FILE=\$RESULT_FILE\"
-          "
-
-      - name: Check OOT accuracy threshold
-        run: |
-          docker exec "$CONTAINER_NAME" bash -lc "
-            set -euo pipefail
-            python -c \"import json, glob; files=sorted(glob.glob('/tmp/oot_accuracy_results/*.json')); assert files, 'ERROR: No OOT accuracy result JSON found.'; threshold=float('${{ matrix.accuracy_test_threshold }}'); result_file=files[-1]; data=json.load(open(result_file)); value=data['results']['gsm8k']['exact_match,flexible-extract']; print('RESULT_FILE:', result_file); print('Flexible extract value:', value); print('Accuracy threshold:', threshold); assert value >= threshold, f'Accuracy test failed: {value} < {threshold}'; print(f'Accuracy test passed: {value} >= {threshold}')\"
+            bash .github/scripts/atom_oot_test.sh accuracy ci
           "
 
       - name: Collect OOT accuracy summary

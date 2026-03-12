@@ -113,7 +113,7 @@ jobs:
         run: |
           docker pull "${{ needs.build-oot-image.outputs.oot_image_tag }}"
 
-      - name: Run plugin unit tests
+      - name: Run all plugin unit tests
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
@@ -221,71 +221,20 @@ jobs:
         env:
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
-      - name: Resolve and download model
+      - name: Pre-download model if /models exists
         run: |
-          if [ -f "/models/${{ matrix.model_path }}/config.json" ]; then
-            echo "MODEL_PATH=/models/${{ matrix.model_path }}" >> "$GITHUB_ENV"
+          if [ -d "/models" ] && [ ! -f "/models/${{ matrix.model_path }}/config.json" ]; then
+            docker exec -e HF_TOKEN=${{ secrets.AMD_HF_TOKEN }} "$CONTAINER_NAME" bash -lc "hf download ${{ matrix.model_path }} --local-dir /models/${{ matrix.model_path }}"
           else
-            echo "MODEL_PATH=${{ matrix.model_path }}" >> "$GITHUB_ENV"
-            if [ -d "/models" ]; then
-              docker exec -e HF_TOKEN=${{ secrets.AMD_HF_TOKEN }} "$CONTAINER_NAME" bash -lc "hf download ${{ matrix.model_path }} --local-dir /models/${{ matrix.model_path }}"
-              echo "MODEL_PATH=/models/${{ matrix.model_path }}" >> "$GITHUB_ENV"
-            fi
+            echo "Skip model pre-download"
           fi
 
-      - name: Launch vLLM server with ATOM OOT plugin
+      - name: Run OOT launch and gsm8k accuracy via script (full mode)
+        timeout-minutes: 120
         run: |
           docker exec "$CONTAINER_NAME" bash -lc "
             set -euo pipefail
-            export SAFETENSORS_FAST_GPU=1
-            export VLLM_ROCM_USE_AITER=1
-            export VLLM_RPC_TIMEOUT=1800000
-            export VLLM_CACHE_ROOT=/tmp/.cache/vllm
-            export TORCHINDUCTOR_CACHE_DIR=/tmp/.cache/inductor
-            rm -rf /tmp/.cache
-
-            nohup vllm serve \"$MODEL_PATH\" \
-              --host 0.0.0.0 \
-              --port 8000 \
-              ${{ matrix.extra_args }} \
-              > /tmp/vllm_oot.log 2>&1 &
-            echo \$! > /tmp/vllm_oot.pid
-          "
-
-      - name: Wait for vLLM readiness
-        timeout-minutes: 30
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 60); do
-            if docker exec "$CONTAINER_NAME" bash -lc "curl -sS http://127.0.0.1:8000/v1/models >/dev/null"; then
-              echo "vLLM server is ready."
-              exit 0
-            fi
-            echo "Waiting for server... ($i/60)"
-            sleep 30
-          done
-          docker exec "$CONTAINER_NAME" bash -lc "tail -n 200 /tmp/vllm_oot.log || true"
-          exit 1
-
-      - name: Run gsm8k accuracy
-        timeout-minutes: 60
-        run: |
-          docker exec "$CONTAINER_NAME" bash -lc "
-            set -euo pipefail
-            mkdir -p /tmp/oot_accuracy_results
-            RESULT_FILE=/tmp/oot_accuracy_results/\$(date +%Y%m%d%H%M%S).json
-            lm_eval --model local-completions \
-              --model_args model=\"$MODEL_PATH\",base_url=http://127.0.0.1:8000/v1/completions,num_concurrent=65,max_retries=1,tokenized_requests=False \
-              --tasks gsm8k \
-              --num_fewshot 3 \
-              --output_path \"\$RESULT_FILE\" 2>&1 | tee /tmp/oot_accuracy_output.txt
-          "
-
-      - name: Check accuracy threshold
-        run: |
-          docker exec "$CONTAINER_NAME" bash -lc "
-            set -euo pipefail
-            python -c \"import json, glob; files=sorted(glob.glob('/tmp/oot_accuracy_results/*.json')); assert files, 'No accuracy JSON found'; threshold=float('${{ matrix.accuracy_test_threshold }}'); result_file=files[-1]; data=json.load(open(result_file)); value=data['results']['gsm8k']['exact_match,flexible-extract']; print('RESULT_FILE:', result_file); print('value:', value, 'threshold:', threshold); assert value >= threshold, f'Accuracy failed: {value} < {threshold}'\"
+            bash .github/scripts/atom_oot_test.sh accuracy full '${{ matrix.model_name }}'
           "
 
       - name: Collect summary
