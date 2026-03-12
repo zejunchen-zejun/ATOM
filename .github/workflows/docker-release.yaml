@@ -28,11 +28,11 @@ on:
         type: string
         default: "atom-mi355-8gpu.predownload"
       build_oot_image:
-        description: "Build OOT vLLM image in addition to ATOM image"
+        description: "Build OOT vLLM image"
         type: boolean
         default: false
       oot_base_image:
-        description: "Base image for OOT build (empty means use local atom_release:ci)"
+        description: "Base image for OOT vLLM (empty means rocm/atom-dev:latest)"
         default: ""
       vllm_commit:
         description: "vLLM commit for OOT image"
@@ -177,12 +177,10 @@ jobs:
       - name: Push OOT Docker image
         if: ${{ success() && inputs.build_oot_image == true }}
         run: |
-          TAG=nightly_$(date +%Y%m%d)
           VLLM_VER="${{ inputs.vllm_version || env.VLLM_VERSION }}"
-          docker tag atom_oot_release:ci rocm/atom-dev-vllm:latest
-          docker push rocm/atom-dev-vllm:latest
-          docker tag atom_oot_release:ci rocm/atom-dev-vllm-v${VLLM_VER}:${TAG}
-          docker push rocm/atom-dev-vllm-v${VLLM_VER}:${TAG}
+          OOT_TAG="vllm-v${VLLM_VER}-nightly_$(date +%Y%m%d)"
+          docker tag atom_oot_release:ci rocm/atom-dev:${OOT_TAG}
+          docker push rocm/atom-dev:${OOT_TAG}
 
       - name: Clean Up
         if: always()
@@ -193,7 +191,6 @@ jobs:
           docker rmi atom_release:ci || true
           docker rmi rocm/atom-dev:latest || true
           docker rmi atom_oot_release:ci || true
-          docker rmi rocm/atom-dev-vllm:latest || true
           # Remove nightly tagged image if it exists
           docker images "rocm/atom-dev:nightly_*" -q | xargs -r docker rmi || true
-          docker images "rocm/atom-dev-vllm-v*:*" -q | xargs -r docker rmi || true
+          docker images "rocm/atom-dev:vllm-v*-nightly_*" -q | xargs -r docker rmi || true
