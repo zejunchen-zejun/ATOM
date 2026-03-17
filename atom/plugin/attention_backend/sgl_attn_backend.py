@@ -247,6 +247,12 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         )
         self.decode_using_pa_ps = self.page_size == 1024 and not self.asymmetric_kv
 
+        if self.asymmetric_kv:
+            self._decode_max_kv_splits = max(
+                1,
+                model_runner.server_args.triton_attention_num_kv_splits,
+            )
+
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         """Init auxiliary variables for triton attention backend."""
 
@@ -722,26 +728,42 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
                 )
             else:
-                # Non-MLA decode mode: kv_indptr and kv_indices are NOT used in forward_decode
-                # (forward_decode uses pa_metadata_pages_kv_indptr and pa_metadata_kv_indices instead)
                 page_table = self.page_table[:bs, :]
                 self.seq_lens[:bs].copy_(seq_lens, non_blocking=True)
                 seq_lens_persistent = self.seq_lens[:bs]
+
+                if self.asymmetric_kv:
+                    kv_indptr = self.kv_indptr
+                    kv_indptr[1 : bs + 1] = torch.cumsum(seq_lens, dim=0)
+                    kv_indptr = kv_indptr[: bs + 1]
+                    kv_indices = self.cuda_graph_kv_indices
+                    create_flashinfer_kv_indices_triton[(bs,)](
+                        self.req_to_token,
+                        req_pool_indices,
+                        seq_lens,
+                        kv_indptr,
+                        None,
+                        kv_indices,
+                        self.req_to_token.stride(0),
+                    )
+                else:
+                    kv_indptr = None
+                    kv_indices = None
+
                 self.forward_metadata = ForwardMetadata(
-                    None,  # kv_indptr not used in non-MLA decode mode
-                    None,  # kv_indices not used in non-MLA decode mode
-                    None,  # qo_indptr will be set by _build_pa_metadata_for_decode
-                    None,  # kv_last_page_len not used in non-MLA mode
+                    kv_indptr,
+                    kv_indices,
+                    None,
+                    None,
                     1,  # max_q_len = 1 for decode mode
-                    None,  # max_kv_len
+                    None,
                     page_table,
                     seq_lens_persistent,
                 )
 
-                # Build pa_metadata using CUDA graph buffers
                 if self.decode_using_pa_ps:
                     self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
-                return  # Early return for non-MLA decode mode
+                return
         else:
             raise ValueError(f"Invalid mode: {forward_mode=}")
 
@@ -781,20 +803,35 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
                 )
             else:
-                # Non-MLA decode mode: kv_indptr and kv_indices are NOT used in forward_decode
-                # (forward_decode uses pa_metadata_pages_kv_indptr and pa_metadata_kv_indices instead)
+                if self.asymmetric_kv:
+                    kv_indptr = self.kv_indptr
+                    kv_indptr[1 : bs + 1] = torch.cumsum(seq_lens, dim=0)
+                    kv_indptr = kv_indptr[: bs + 1]
+                    kv_indices = self.cuda_graph_kv_indices
+                    create_flashinfer_kv_indices_triton[(bs,)](
+                        self.req_to_token,
+                        req_pool_indices,
+                        seq_lens,
+                        kv_indptr,
+                        None,
+                        kv_indices,
+                        self.req_to_token.stride(0),
+                    )
+                else:
+                    kv_indptr = None
+                    kv_indices = None
+
                 self.forward_metadata = ForwardMetadata(
-                    None,  # kv_indptr not used in non-MLA decode mode
-                    None,  # kv_indices not used in non-MLA decode mode
+                    kv_indptr,
+                    kv_indices,
                     None,
-                    None,  # kv_last_page_len not used in non-MLA mode
-                    1,  # max_q_len = 1 for decode mode, non-MTP
-                    None,  # max_kv_len
+                    None,
+                    1,  # max_q_len = 1 for decode mode
+                    None,
                     page_table_persistent[:bs, :max_seq_pages],
                     seq_lens_persistent[:bs],
                 )
 
-                # Rebuild pa_metadata using CUDA graph buffers (updates content, keeps same addresses)
                 if self.decode_using_pa_ps:
                     self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
         else:
@@ -1112,7 +1149,8 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         forward_batch: ForwardBatch,
         save_kv_cache=True,
     ):
-        """Fallback decode using flash_attn_varlen_func for asymmetric K/V heads."""
+        """Fallback decode using sglang triton decode kernel for asymmetric K/V heads.
+        Reads K/V directly from cache buffers via kv_indptr/kv_indices without gathering."""
         if save_kv_cache:
             forward_batch.token_to_kv_pool.set_kv_buffer(
                 layer, forward_batch.out_cache_loc, k, v,
@@ -1123,39 +1161,50 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         kv_indptr = self.forward_metadata.kv_indptr
         kv_indices = self.forward_metadata.kv_indices
 
-        k_cache = forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id)
-        v_cache = forward_batch.token_to_kv_pool.get_value_buffer(layer.layer_id)
-        k_gathered = k_cache[kv_indices]
-        v_gathered = v_cache[kv_indices]
-
-        cu_seqlens_q = torch.arange(
-            0, batch_size + 1, dtype=torch.int32, device=q.device
-        )
-        cu_seqlens_k = kv_indptr[:batch_size + 1].to(torch.int32)
-        max_kv_len = forward_batch.seq_lens.max().item()
+        k_buffer = forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id)
+        v_buffer = forward_batch.token_to_kv_pool.get_value_buffer(layer.layer_id)
 
         q_attn = q.contiguous().view(-1, layer.tp_q_head_num, layer.qk_head_dim)
-        k_attn = k_gathered.contiguous().view(-1, layer.tp_k_head_num, layer.qk_head_dim)
-        v_attn = v_gathered.contiguous().view(-1, layer.tp_v_head_num, layer.v_head_dim)
-        if q_attn.dtype != k_attn.dtype:
-            q_attn = q_attn.to(k_attn.dtype)
+        o = q.new_empty((batch_size, layer.tp_q_head_num * layer.v_head_dim))
 
-        o = flash_attn_varlen_func(
-            q_attn,
-            k_attn,
-            v_attn,
-            cu_seqlens_q=cu_seqlens_q,
-            cu_seqlens_k=cu_seqlens_k,
-            max_seqlen_q=1,
-            max_seqlen_k=max_kv_len,
-            min_seqlen_q=0,
-            dropout_p=0.0,
-            softmax_scale=self.scale,
-            causal=True,
-            window_size=(-1, -1, 0),
-            sink_ptr=None,
+        attn_logits = torch.empty(
+            (batch_size, layer.tp_q_head_num, self._decode_max_kv_splits, layer.v_head_dim),
+            dtype=torch.float32,
+            device=q.device,
         )
-        return o.view(-1, layer.tp_q_head_num * layer.v_head_dim)
+        attn_lse = torch.empty(
+            (batch_size, layer.tp_q_head_num, self._decode_max_kv_splits),
+            dtype=torch.float32,
+            device=q.device,
+        )
+        num_kv_splits = torch.empty(
+            (batch_size,), dtype=torch.int32, device=q.device
+        )
+        num_kv_splits.fill_(self._decode_max_kv_splits)
+
+        k_descale = layer.k_scale_float if layer.k_scale is not None else 1.0
+        v_descale = layer.v_scale_float if layer.v_scale is not None else 1.0
+
+        from sglang.srt.layers.attention.triton_ops.decode_attention import (
+            decode_attention_fwd,
+        )
+
+        decode_attention_fwd(
+            q_attn,
+            k_buffer,
+            v_buffer,
+            o.view(-1, layer.tp_q_head_num, layer.v_head_dim),
+            kv_indptr,
+            kv_indices,
+            attn_logits,
+            attn_lse,
+            num_kv_splits,
+            self._decode_max_kv_splits,
+            layer.scaling,
+            k_descale,
+            v_descale,
+        )
+        return o
 
     def forward_decode(
         self,
