@@ -232,8 +232,10 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
         self.pa_metadata_buffers = None
 
-        k_buffer, _ = model_runner.token_to_kv_pool.get_kv_buffer(first_full_attn_id)
-        num_slots, num_kv_heads, _ = k_buffer.shape
+        k_buffer, v_buffer = model_runner.token_to_kv_pool.get_kv_buffer(first_full_attn_id)
+        num_slots, num_kv_heads, k_head_dim = k_buffer.shape
+        v_head_dim = v_buffer.shape[-1]
+        self.asymmetric_kv = k_head_dim != v_head_dim
         block_size = self.page_size
         num_blocks = num_slots // block_size
         max_total_tokens = num_blocks * block_size
@@ -243,7 +245,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         self.v_qscale = torch.ones(
             num_kv_heads, max_total_tokens, dtype=torch.float32, device=self.device
         )
-        self.decode_using_pa_ps = self.page_size == 1024
+        self.decode_using_pa_ps = self.page_size == 1024 and not self.asymmetric_kv
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         """Init auxiliary variables for triton attention backend."""
@@ -843,22 +845,24 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         if k is not None:
             assert v is not None
             if save_kv_cache:
-                k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
-                    layer.layer_id
-                )
-                self.set_kv_buffer_with_layout_shuffle(
-                    cache_loc,
-                    k,
-                    v,
-                    k_buffer,
-                    v_buffer,
-                    layer.k_scale,
-                    layer.v_scale,
-                    self.page_size,
-                )
-                # forward_batch.token_to_kv_pool.set_kv_buffer(
-                #     layer, cache_loc, k, v, layer.k_scale, layer.v_scale
-                # )
+                if k.shape[-1] != v.shape[-1]:
+                    forward_batch.token_to_kv_pool.set_kv_buffer(
+                        layer, cache_loc, k, v, layer.k_scale, layer.v_scale
+                    )
+                else:
+                    k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
+                        layer.layer_id
+                    )
+                    self.set_kv_buffer_with_layout_shuffle(
+                        cache_loc,
+                        k,
+                        v,
+                        k_buffer,
+                        v_buffer,
+                        layer.k_scale,
+                        layer.v_scale,
+                        self.page_size,
+                    )
 
         seqlens_in_batch = forward_batch.seq_lens
         cu_seqlens_q = torch.nn.functional.pad(
@@ -868,9 +872,9 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         if q.dtype != k.dtype and k.dtype == dtypes.fp8:
             q = q.to(dtypes.fp8)
         o = flash_attn_varlen_func(
-            q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim),
-            k.contiguous().view(-1, layer.tp_k_head_num, layer.head_dim),
-            v.contiguous().view(-1, layer.tp_v_head_num, layer.head_dim),
+            q.contiguous().view(-1, layer.tp_q_head_num, layer.qk_head_dim),
+            k.contiguous().view(-1, layer.tp_k_head_num, layer.qk_head_dim),
+            v.contiguous().view(-1, layer.tp_v_head_num, layer.v_head_dim),
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_k=cu_seqlens_q,
             max_seqlen_q=self.forward_metadata.max_q_len,
@@ -883,7 +887,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             sink_ptr=None,
         )
 
-        return o.view(-1, layer.tp_q_head_num * layer.head_dim)
+        return o.view(-1, layer.tp_q_head_num * layer.v_head_dim)
 
     def forward_decode_pa(
         self,
@@ -902,19 +906,25 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             o = torch.empty_like(q)
 
         if save_kv_cache:
-            k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
-                layer.layer_id
-            )
-            self.set_kv_buffer_with_layout_shuffle(
-                forward_batch.out_cache_loc,
-                k,
-                v,
-                k_buffer,
-                v_buffer,
-                layer.k_scale,
-                layer.v_scale,
-                self.page_size,
-            )
+            if k.shape[-1] != v.shape[-1]:
+                forward_batch.token_to_kv_pool.set_kv_buffer(
+                    layer, forward_batch.out_cache_loc, k, v,
+                    layer.k_scale, layer.v_scale
+                )
+            else:
+                k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
+                    layer.layer_id
+                )
+                self.set_kv_buffer_with_layout_shuffle(
+                    forward_batch.out_cache_loc,
+                    k,
+                    v,
+                    k_buffer,
+                    v_buffer,
+                    layer.k_scale,
+                    layer.v_scale,
+                    self.page_size,
+                )
 
         if self.use_mla:
             raise NotImplementedError(
@@ -989,6 +999,11 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 raise NotImplementedError(
                     "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
                 )
+            elif k.shape[-1] != v.shape[-1]:
+                forward_batch.token_to_kv_pool.set_kv_buffer(
+                    layer, forward_batch.out_cache_loc, k, v,
+                    layer.k_scale, layer.v_scale
+                )
             else:
                 k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
                     layer.layer_id
@@ -1003,10 +1018,6 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     layer.v_scale,
                     self.page_size,
                 )
-                # Shuffle operation is already fused in rotary_emb, so just save directly
-                # forward_batch.token_to_kv_pool.set_kv_buffer(
-                #     layer, forward_batch.out_cache_loc, k, v, layer.k_scale, layer.v_scale
-                # )
 
         if self.use_mla:
             raise NotImplementedError(
@@ -1092,6 +1103,60 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             )
         return o.view(-1, layer.tp_q_head_num * head_dim_out)
 
+    def forward_decode_fallback(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        layer: RadixAttention,
+        forward_batch: ForwardBatch,
+        save_kv_cache=True,
+    ):
+        """Fallback decode using flash_attn_varlen_func for asymmetric K/V heads."""
+        if save_kv_cache:
+            forward_batch.token_to_kv_pool.set_kv_buffer(
+                layer, forward_batch.out_cache_loc, k, v,
+                layer.k_scale, layer.v_scale
+            )
+
+        batch_size = q.shape[0]
+        kv_indptr = self.forward_metadata.kv_indptr
+        kv_indices = self.forward_metadata.kv_indices
+
+        k_cache = forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id)
+        v_cache = forward_batch.token_to_kv_pool.get_value_buffer(layer.layer_id)
+        k_gathered = k_cache[kv_indices]
+        v_gathered = v_cache[kv_indices]
+
+        cu_seqlens_q = torch.arange(
+            0, batch_size + 1, dtype=torch.int32, device=q.device
+        )
+        cu_seqlens_k = kv_indptr[:batch_size + 1].to(torch.int32)
+        max_kv_len = forward_batch.seq_lens.max().item()
+
+        q_attn = q.contiguous().view(-1, layer.tp_q_head_num, layer.qk_head_dim)
+        k_attn = k_gathered.contiguous().view(-1, layer.tp_k_head_num, layer.qk_head_dim)
+        v_attn = v_gathered.contiguous().view(-1, layer.tp_v_head_num, layer.v_head_dim)
+        if q_attn.dtype != k_attn.dtype:
+            q_attn = q_attn.to(k_attn.dtype)
+
+        o = flash_attn_varlen_func(
+            q_attn,
+            k_attn,
+            v_attn,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=1,
+            max_seqlen_k=max_kv_len,
+            min_seqlen_q=0,
+            dropout_p=0.0,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=(-1, -1, 0),
+            sink_ptr=None,
+        )
+        return o.view(-1, layer.tp_q_head_num * layer.v_head_dim)
+
     def forward_decode(
         self,
         q: torch.Tensor,
@@ -1104,6 +1169,10 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         if self.use_mla:
             raise NotImplementedError(
                 "MLA decode mode is not implemented yet in ATOMAttnBackendForSgl."
+            )
+        elif self.asymmetric_kv:
+            return self.forward_decode_fallback(
+                q, k, v, layer, forward_batch, save_kv_cache
             )
         else:
             if self.decode_using_pa_ps:

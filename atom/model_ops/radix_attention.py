@@ -31,6 +31,7 @@ class RadixAttention(BaseAttention):
         per_layer_sliding_window: Optional[int] = None,
         rotary_emb: Optional[torch.nn.Module] = None,
         prefix: Optional[str] = None,
+        v_head_dim: int = -1,
         **kwargs,
     ):
         super().__init__(
@@ -58,6 +59,7 @@ class RadixAttention(BaseAttention):
                 scaling=scale,
                 num_kv_heads=num_kv_heads,
                 layer_id=layer_num,
+                v_head_dim=v_head_dim,
                 prefix=maybe_prefix(prefix, "attn"),
             )
         else:
