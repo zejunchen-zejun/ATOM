@@ -88,6 +88,7 @@ from atom.utils import envs
 from atom.utils.custom_register import direct_register_custom_op
 from atom.utils.decorators import support_torch_compile
 from atom.utils.forward_context import get_forward_context
+from atom.plugin.prepare import is_sglang
 from torch import nn
 from transformers import PretrainedConfig
 
@@ -1507,6 +1508,172 @@ class DeepseekV2MLAAttention(nn.Module):
         )
 
 
+class DeepseekV2AttentionFallback(nn.Module):
+    """Non-MLA fallback attention for sglang plugin mode.
+    Fully decompresses Q/K/V through LoRA projections and runs standard
+    multi-head attention via RadixAttention."""
+
+    def __init__(
+        self,
+        config: PretrainedConfig,
+        hidden_size: int,
+        num_heads: int,
+        qk_nope_head_dim: int,
+        qk_rope_head_dim: int,
+        v_head_dim: int,
+        q_lora_rank: Optional[int],
+        kv_lora_rank: int,
+        max_position_embeddings: int = 8192,
+        quant_config: Optional[QuantizationConfig] = None,
+        kv_cache_dtype: str = "bf16",
+        layer_num: int = 0,
+        prefix: str = "",
+    ) -> None:
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.qk_nope_head_dim = qk_nope_head_dim
+        self.qk_rope_head_dim = qk_rope_head_dim
+        self.qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
+        self.v_head_dim = v_head_dim
+        self.q_lora_rank = q_lora_rank
+        self.kv_lora_rank = kv_lora_rank
+        self.num_heads = num_heads
+
+        tp_size = get_tensor_model_parallel_world_size()
+        assert num_heads % tp_size == 0
+        self.num_local_heads = num_heads // tp_size
+        self.scaling = self.qk_head_dim**-0.5
+
+        if self.q_lora_rank is not None:
+            self.fused_qkv_a_proj = MergedReplicatedLinear(
+                self.hidden_size,
+                [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim],
+                bias=False,
+                quant_config=quant_config,
+            )
+            self.q_a_layernorm = RMSNorm(self.q_lora_rank, eps=config.rms_norm_eps)
+            self.q_b_proj = ColumnParallelLinear(
+                q_lora_rank,
+                self.num_heads * self.qk_head_dim,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.q_b_proj",
+            )
+        else:
+            self.q_proj = ColumnParallelLinear(
+                self.hidden_size,
+                self.num_heads * self.qk_head_dim,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.q_proj",
+            )
+            self.kv_a_proj_with_mqa = ReplicatedLinear(
+                self.hidden_size,
+                self.kv_lora_rank + self.qk_rope_head_dim,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.kv_a_proj_with_mqa",
+            )
+
+        self.kv_a_layernorm = RMSNorm(self.kv_lora_rank, eps=config.rms_norm_eps)
+        self.kv_b_proj = ColumnParallelLinear(
+            self.kv_lora_rank,
+            self.num_heads * (self.qk_nope_head_dim + self.v_head_dim),
+            bias=False,
+            quant_config=quant_config,
+            prefix=f"{prefix}.kv_b_proj",
+        )
+        self.o_proj = RowParallelLinear(
+            self.num_heads * self.v_head_dim,
+            self.hidden_size,
+            bias=False,
+            quant_config=quant_config,
+            reduce_results=not ENABLE_ALLREDUCE_RMSNORM_FUSION,
+            prefix=f"{prefix}.o_proj",
+        )
+
+        rope_params = config.rope_parameters
+        rope_params["rope_type"] = "deepseek_yarn"
+        rope_theta = rope_params["rope_theta"]
+        rope_scaling = rope_params
+        self.rotary_emb = get_rope(
+            qk_rope_head_dim,
+            rotary_dim=qk_rope_head_dim,
+            max_position=max_position_embeddings,
+            base=rope_theta,
+            rope_scaling=rope_scaling,
+            is_neox_style=False,
+        )
+        if rope_scaling:
+            mscale_all_dim = rope_scaling.get("mscale_all_dim", False)
+            scaling_factor = rope_scaling["factor"]
+            mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
+            self.scaling = self.scaling * mscale * mscale
+
+        self.attn = Attention(
+            num_heads=self.num_local_heads,
+            head_dim=self.qk_head_dim,
+            scale=self.scaling,
+            num_kv_heads=self.num_local_heads,
+            kv_cache_dtype=kv_cache_dtype,
+            layer_num=layer_num,
+            use_mla=False,
+            v_head_dim=self.v_head_dim,
+            prefix=f"{prefix}.attn",
+        )
+
+    def forward(
+        self,
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        **model_kwargs,
+    ) -> torch.Tensor:
+        if self.q_lora_rank is not None:
+            qkv_lora = self.fused_qkv_a_proj(hidden_states)
+            q_c, kv_c, k_pe = torch.split(
+                qkv_lora,
+                [self.q_lora_rank, self.kv_lora_rank, self.qk_rope_head_dim],
+                dim=-1,
+            )
+            q_c = self.q_a_layernorm(q_c)
+            q = self.q_b_proj(q_c)
+        else:
+            q = self.q_proj(hidden_states)
+            kv_a_out = self.kv_a_proj_with_mqa(hidden_states)
+            kv_c, k_pe = torch.split(
+                kv_a_out,
+                [self.kv_lora_rank, self.qk_rope_head_dim],
+                dim=-1,
+            )
+
+        kv_c_normed = self.kv_a_layernorm(kv_c)
+        kv = self.kv_b_proj(kv_c_normed)
+        kv = kv.view(-1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim)
+        k_nope, v = kv.split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+
+        q = q.view(-1, self.num_local_heads, self.qk_head_dim)
+        q_nope, q_pe = q.split(
+            [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
+        )
+
+        num_tokens = positions.shape[0]
+        q_pe_flat = q_pe.reshape(num_tokens, -1)
+        q_pe_flat, k_pe = self.rotary_emb(positions, q_pe_flat, k_pe)
+        q_pe = q_pe_flat.reshape(num_tokens, self.num_local_heads, self.qk_rope_head_dim)
+
+        q = torch.cat([q_nope, q_pe], dim=-1)
+        k_pe = k_pe.unsqueeze(1).expand(-1, self.num_local_heads, -1)
+        k = torch.cat([k_nope, k_pe], dim=-1)
+
+        q = q.reshape(num_tokens, -1)
+        k = k.reshape(num_tokens, -1)
+        v = v.reshape(num_tokens, -1)
+
+        attn_output = self.attn(q, k, v, positions=positions, **model_kwargs)
+        output = self.o_proj(attn_output)
+        return output
+
+
 class DeepseekV2DecoderLayer(nn.Module):
 
     def __init__(
@@ -1527,22 +1694,43 @@ class DeepseekV2DecoderLayer(nn.Module):
         layer_idx = int(prefix.split(sep=".")[-1])
         self.layer_idx = layer_idx
 
-        self.self_attn = DeepseekV2MLAAttention(
-            config=config,
-            hidden_size=self.hidden_size,
-            num_heads=config.num_attention_heads,
-            qk_nope_head_dim=config.qk_nope_head_dim,
-            qk_rope_head_dim=config.qk_rope_head_dim,
-            v_head_dim=config.v_head_dim,
-            q_lora_rank=config.q_lora_rank if hasattr(config, "q_lora_rank") else None,
-            kv_lora_rank=config.kv_lora_rank,
-            max_position_embeddings=max_position_embeddings,
-            cache_config=cache_config,
-            quant_config=quant_config,
-            prefix=f"{prefix}.self_attn",
-            layer_num=layer_num,
-            topk_indices_buffer=topk_indices_buffer,
-        )
+        if is_sglang():
+            self.self_attn = DeepseekV2AttentionFallback(
+                config=config,
+                hidden_size=self.hidden_size,
+                num_heads=config.num_attention_heads,
+                qk_nope_head_dim=config.qk_nope_head_dim,
+                qk_rope_head_dim=config.qk_rope_head_dim,
+                v_head_dim=config.v_head_dim,
+                q_lora_rank=config.q_lora_rank
+                if hasattr(config, "q_lora_rank")
+                else None,
+                kv_lora_rank=config.kv_lora_rank,
+                max_position_embeddings=max_position_embeddings,
+                quant_config=quant_config,
+                kv_cache_dtype=cache_config,
+                layer_num=layer_num,
+                prefix=f"{prefix}.self_attn",
+            )
+        else:
+            self.self_attn = DeepseekV2MLAAttention(
+                config=config,
+                hidden_size=self.hidden_size,
+                num_heads=config.num_attention_heads,
+                qk_nope_head_dim=config.qk_nope_head_dim,
+                qk_rope_head_dim=config.qk_rope_head_dim,
+                v_head_dim=config.v_head_dim,
+                q_lora_rank=config.q_lora_rank
+                if hasattr(config, "q_lora_rank")
+                else None,
+                kv_lora_rank=config.kv_lora_rank,
+                max_position_embeddings=max_position_embeddings,
+                cache_config=cache_config,
+                quant_config=quant_config,
+                prefix=f"{prefix}.self_attn",
+                layer_num=layer_num,
+                topk_indices_buffer=topk_indices_buffer,
+            )
 
         # When ATOM_ENABLE_DS_INPUT_RMSNORM_QUANT_FUSION is turned on self.fuse_input_norm_quant is turned on only if use_triton_gemm and (FP8 or FP4),
         # Because AR_RMS and RMS_Quant cannot co-exist for input_layernorm, this block of codes ensures 3 things when ATOM_ENABLE_DS_INPUT_RMSNORM_QUANT_FUSION is turned on:
@@ -1614,6 +1802,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: Optional[torch.Tensor],
+        **model_kwargs,
     ) -> torch.Tensor:
         # Self Attention
         if self.fuse_input_norm_quant:
@@ -1670,6 +1859,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
+            **model_kwargs,
         )
 
         if hidden_states.dtype == torch.float16:
@@ -1767,8 +1957,9 @@ class DeepseekV2Model(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        intermediate_tensors: Optional[IntermediateTensors],
+        intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        **model_kwargs,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
@@ -1782,7 +1973,9 @@ class DeepseekV2Model(nn.Module):
             residual = intermediate_tensors["residual"]
 
         for layer in self.layers[self.start_layer : self.end_layer]:
-            hidden_states, residual = layer(positions, hidden_states, residual)
+            hidden_states, residual = layer(
+                positions, hidden_states, residual, **model_kwargs
+            )
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors(
@@ -1826,6 +2019,7 @@ class DeepseekV2ForCausalLM(nn.Module):
         config = atom_config.hf_config
         quant_config = atom_config.quant_config
         self.config = config
+        self.atom_config = atom_config
         self.quant_config = quant_config
 
         if hasattr(config, "q_lora_rank") and config.q_lora_rank is not None:
@@ -1869,11 +2063,20 @@ class DeepseekV2ForCausalLM(nn.Module):
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        **model_kwargs,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(
-            input_ids, positions, intermediate_tensors, inputs_embeds
+            input_ids, positions, intermediate_tensors, inputs_embeds,
+            **model_kwargs,
         )
         return hidden_states
+
+    def load_weights(self, weights):
+        from atom.model_loader.loader import load_model_in_plugin_mode
+
+        return load_model_in_plugin_mode(
+            model=self, config=self.atom_config, prefix="model."
+        )
 
     def compute_logits(
         self,
