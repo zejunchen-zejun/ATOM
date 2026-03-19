@@ -1507,30 +1507,7 @@ class DeepseekV2MLAAttention(nn.Module):
         llama_4_scaling = model_kwargs.get("llama_4_scaling", None)
         q_lora = None
         topk_indices = None
-        # #region agent log
-        try:
-            _pos_0 = int(positions.shape[0])
-            _hs_0 = int(hidden_states.shape[0]) if hasattr(hidden_states, "shape") else -1
-            _tp = int(get_tensor_model_parallel_world_size()) if forward_batch is not None else -1
-            with open("/mnt/raid0/zhiyan/plugin_gb/.cursor/debug-17e017.log", "a") as _f:
-                _f.write(json.dumps({"sessionId": "17e017", "hypothesisId": "A", "location": "deepseek_v2.py:_forward_sgl_prepare_entry", "message": "prepare_entry", "data": {"positions_dim0": _pos_0, "hidden_states_dim0": _hs_0, "tp_world": _tp, "q_lora_rank": getattr(self, "q_lora_rank", None)}, "timestamp": __import__("time").time_ns() // 1000000}) + "\n")
-        except Exception:
-            pass
-        # #endregion
         if self.q_lora_rank is not None:
-            print(
-                f"[MLA_DBG][_forward_sgl_prepare][layer={self.layer_num}] "
-                f"positions={tuple(positions.shape)} hidden_states={tuple(hidden_states.shape)} "
-                f"hs_scale={None if hidden_states_scale is None else tuple(hidden_states_scale.shape)} "
-                f"seq_lens_sum={getattr(forward_batch, 'seq_lens_sum', None)}"
-            )
-            # qkv_lora = self.fused_qkv_a_proj(hidden_states, hidden_states_scale)
-            # q, latent_cache = torch.split(
-            #     qkv_lora,
-            #     [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim],
-            #     dim=-1
-            # )
-
             q, latent_cache = (
                 get_attn_tp_context()
                 .fetch_qkv_latent()
@@ -1539,20 +1516,6 @@ class DeepseekV2MLAAttention(nn.Module):
                     dim=-1,
                 )
             )
-            print(
-                f"[MLA_DBG][_forward_sgl_prepare][layer={self.layer_num}] "
-                f"fetched q={tuple(q.shape)} latent={tuple(latent_cache.shape)} "
-                f"positions={tuple(positions.shape)} tp_world={get_tensor_model_parallel_world_size()}"
-            )
-            # #region agent log
-            try:
-                _q0, _p0, _tp = int(q.shape[0]), int(positions.shape[0]), int(get_tensor_model_parallel_world_size())
-                _fallback_cond = _q0 != _p0 and _tp > 1
-                with open("/mnt/raid0/zhiyan/plugin_gb/.cursor/debug-17e017.log", "a") as _f:
-                    _f.write(json.dumps({"sessionId": "17e017", "hypothesisId": "B,C", "location": "deepseek_v2.py:after_fetch", "message": "after_fetch", "data": {"q_dim0": _q0, "positions_dim0": _p0, "tp_world": _tp, "fallback_will_run": _fallback_cond}, "timestamp": __import__("time").time_ns() // 1000000}) + "\n")
-            except Exception:
-                pass
-            # #endregion
 
             if q.shape[0] != positions.shape[0] and get_tensor_model_parallel_world_size() > 1:
                 qkv_lora = torch.cat([q, latent_cache], dim=-1)
@@ -1567,17 +1530,6 @@ class DeepseekV2MLAAttention(nn.Module):
                     [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim],
                     dim=-1,
                 )
-                print(
-                    f"[MLA_DBG][_forward_sgl_prepare][layer={self.layer_num}] "
-                    f"after_fallback_gather q={tuple(q.shape)} latent={tuple(latent_cache.shape)}"
-                )
-                # #region agent log
-                try:
-                    with open("/mnt/raid0/zhiyan/plugin_gb/.cursor/debug-17e017.log", "a") as _f:
-                        _f.write(json.dumps({"sessionId": "17e017", "hypothesisId": "C", "location": "deepseek_v2.py:after_fallback", "message": "after_fallback", "data": {"q_dim0": int(q.shape[0]), "positions_dim0": int(positions.shape[0])}, "timestamp": __import__("time").time_ns() // 1000000}) + "\n")
-                except Exception:
-                    pass
-                # #endregion
 
             k_nope = latent_cache[..., : self.kv_lora_rank]
 
@@ -1687,18 +1639,11 @@ class DeepseekV2MLAAttention(nn.Module):
 
         q_nope, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
         k_pe = latent_cache[..., self.kv_lora_rank :].unsqueeze(1)
-        # #region agent log
-        try:
-            with open("/mnt/raid0/zhiyan/plugin_gb/.cursor/debug-17e017.log", "a") as _f:
-                _f.write(json.dumps({"sessionId": "17e017", "hypothesisId": "D,E", "location": "deepseek_v2.py:before_rope_assert", "message": "before_rope", "data": {"q_pe_dim0": int(q_pe.shape[0]), "k_pe_dim0": int(k_pe.shape[0]), "positions_dim0": int(positions.shape[0]), "q_lora_rank": getattr(self, "q_lora_rank", None)}, "timestamp": __import__("time").time_ns() // 1000000}) + "\n")
-        except Exception:
-            pass
-        # #endregion
-        print(
-            f"[MLA_DBG][_forward_sgl_prepare][layer={self.layer_num}] "
-            f"q_nope={tuple(q_nope.shape)} q_pe={tuple(q_pe.shape)} k_pe={tuple(k_pe.shape)} "
-            f"positions={tuple(positions.shape)}"
-        )
+        # print(
+        #     f"[MLA_DBG][_forward_sgl_prepare][layer={self.layer_num}] "
+        #     f"q_nope={tuple(q_nope.shape)} q_pe={tuple(q_pe.shape)} k_pe={tuple(k_pe.shape)} "
+        #     f"positions={tuple(positions.shape)}"
+        # )
 
         _is_hip= True
         if self.use_deep_gemm_bmm:
@@ -1743,7 +1688,7 @@ class DeepseekV2MLAAttention(nn.Module):
                     q_nope_out = batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant(
                         X=q_nope,
                         WQ=self.w_kc.transpose(-1, -2),
-                        w_scale=self.mla_attn.w_scale,
+                        w_scale=self.w_scale,
                         group_size=128,
                         YQ=None,  # allocate (B, M, N)
                         transpose_bm=False,  # (B, M, N)
@@ -1924,15 +1869,15 @@ class DeepseekV2MLAAttention(nn.Module):
         hidden_states_scale = None
         if isinstance(hidden_states, tuple):
             hidden_states, hidden_states_scale = hidden_states
-        print(
-            f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] "
-            f"hidden_states={tuple(hidden_states.shape)} "
-            f"hs_scale={None if hidden_states_scale is None else tuple(hidden_states_scale.shape)} "
-            f"seq_lens_sum={getattr(forward_batch, 'seq_lens_sum', None)} "
-            f"positions={None if getattr(forward_batch, 'positions', None) is None else tuple(forward_batch.positions.shape)}"
-        )
+        # print(
+        #     f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] "
+        #     f"hidden_states={tuple(hidden_states.shape)} "
+        #     f"hs_scale={None if hidden_states_scale is None else tuple(hidden_states_scale.shape)} "
+        #     f"seq_lens_sum={getattr(forward_batch, 'seq_lens_sum', None)} "
+        #     f"positions={None if getattr(forward_batch, 'positions', None) is None else tuple(forward_batch.positions.shape)}"
+        # )
         qkv_lora = self.fused_qkv_a_proj(hidden_states, hidden_states_scale)
-        print(f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] qkv_lora={tuple(qkv_lora.shape)}")
+        # print(f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] qkv_lora={tuple(qkv_lora.shape)}")
 
         # Fallback: when communicator does not enable input_scattered gather,
         # force qkv latent token dimension to align with positions.
@@ -1949,11 +1894,11 @@ class DeepseekV2MLAAttention(nn.Module):
             and qkv_lora.shape[0] != expected_tokens
             and get_tensor_model_parallel_world_size() > 1
         ):
-            print(
-                f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] before_fallback_gather "
-                f"qkv_lora={tuple(qkv_lora.shape)} expected={expected_tokens} "
-                f"tp_world={get_tensor_model_parallel_world_size()}"
-            )
+            # print(
+            #     f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] before_fallback_gather "
+            #     f"qkv_lora={tuple(qkv_lora.shape)} expected={expected_tokens} "
+            #     f"tp_world={get_tensor_model_parallel_world_size()}"
+            # )
             qkv_lora = get_tp_group().all_gather(qkv_lora, dim=0)
             if qkv_lora.shape[0] > expected_tokens:
                 qkv_lora = qkv_lora[:expected_tokens]
@@ -1962,9 +1907,9 @@ class DeepseekV2MLAAttention(nn.Module):
                     f"prepare_qkv_latent gather mismatch: got {qkv_lora.shape[0]}, "
                     f"expected {expected_tokens}"
                 )
-        print(
-            f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] return_qkv_lora={tuple(qkv_lora.shape)} expected={expected_tokens}"
-        )
+        # print(
+        #     f"[MLA_DBG][prepare_qkv_latent][layer={self.layer_num}] return_qkv_lora={tuple(qkv_lora.shape)} expected={expected_tokens}"
+        # )
         return qkv_lora
 
 
@@ -1981,19 +1926,19 @@ class DeepseekV2MLAAttention(nn.Module):
             raise RuntimeError("forward_batch is required in forward_sgl_plugin_mode")
 
         attn_tp_context = get_attn_tp_context()
-        print(
-            f"[MLA_DBG][forward_sgl_plugin_mode][layer={self.layer_num}] "
-            f"positions={tuple(positions.shape)} "
-            f"hidden_states={'tuple' if isinstance(hidden_states, tuple) else tuple(hidden_states.shape)} "
-            f"seq_lens_sum={getattr(forward_batch, 'seq_lens_sum', None)} "
-            f"input_ids={None if getattr(forward_batch, 'input_ids', None) is None else tuple(forward_batch.input_ids.shape)} "
-            f"allow_scatter={attn_tp_context.allow_input_scattered}"
-        )
+        # print(
+        #     f"[MLA_DBG][forward_sgl_plugin_mode][layer={self.layer_num}] "
+        #     f"positions={tuple(positions.shape)} "
+        #     f"hidden_states={'tuple' if isinstance(hidden_states, tuple) else tuple(hidden_states.shape)} "
+        #     f"seq_lens_sum={getattr(forward_batch, 'seq_lens_sum', None)} "
+        #     f"input_ids={None if getattr(forward_batch, 'input_ids', None) is None else tuple(forward_batch.input_ids.shape)} "
+        #     f"allow_scatter={attn_tp_context.allow_input_scattered}"
+        # )
         with attn_tp_context.maybe_input_scattered(forward_batch):
-            print(
-                f"[MLA_DBG][forward_sgl_plugin_mode][layer={self.layer_num}] "
-                f"input_scattered={attn_tp_context.input_scattered}"
-            )
+            # print(
+            #     f"[MLA_DBG][forward_sgl_plugin_mode][layer={self.layer_num}] "
+            #     f"input_scattered={attn_tp_context.input_scattered}"
+            # )
             if self.q_lora_rank is not None:
                 attn_tp_context.set_attn_inputs(
                     AttentionInputs(
@@ -2404,12 +2349,12 @@ class DeepseekV2DecoderLayer(nn.Module):
         **model_kwargs: dict[str, Any] | None
     ) -> torch.Tensor:
         # Self Attention
-        print(
-            f"[MLA_DBG][decoder_layer][layer={self.layer_idx}] positions={tuple(positions.shape)} "
-            f"hidden_states={'tuple' if isinstance(hidden_states, tuple) else tuple(hidden_states.shape)} "
-            f"residual={None if residual is None else tuple(residual.shape)} "
-            f"fuse_input_norm_quant={self.fuse_input_norm_quant}"
-        )
+        # print(
+        #     f"[MLA_DBG][decoder_layer][layer={self.layer_idx}] positions={tuple(positions.shape)} "
+        #     f"hidden_states={'tuple' if isinstance(hidden_states, tuple) else tuple(hidden_states.shape)} "
+        #     f"residual={None if residual is None else tuple(residual.shape)} "
+        #     f"fuse_input_norm_quant={self.fuse_input_norm_quant}"
+        # )
         if self.fuse_input_norm_quant:
             assert self.quant_dtype is not None
             weight = self.input_layernorm.weight
