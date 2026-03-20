@@ -1967,9 +1967,8 @@ class vllmMLASparseIndexerAttentionMetadataBuilderMethods:
 class vllmAiterMLASparseBackendMethods:
     accept_output_buffer: bool = True
     supported_dtypes: list = [torch.float16, torch.bfloat16]
-    # Sparse MLA plugin mode supports both bf16 and fp8 kv cache paths.
-    # Keep the backend contract aligned with attention_mla_sparse.py runtime path.
-    supported_kv_cache_dtypes: list = ["auto", "bfloat16", "fp8", "fp8_ds_mla"]
+    # Sparse MLA plugin mode supports only bf16 kv cache for now.
+    supported_kv_cache_dtypes: list = ["auto", "bfloat16"]
 
     def __init__(self):
         raise TypeError(
