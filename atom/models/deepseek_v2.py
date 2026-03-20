@@ -50,6 +50,7 @@ from aiter.ops.triton.fused_mxfp4_quant import (
     fused_reduce_rms_mxfp4_quant,
     fused_rms_mxfp4_quant,
 )
+from aiter.ops.triton.fused_kv_cache import fused_qk_rope_cat_and_cache_mla
 from aiter.ops.triton.pa_mqa_logits import deepgemm_fp8_paged_mqa_logits
 from aiter.rotary_embedding import get_rope
 from atom.config import (
@@ -1480,6 +1481,7 @@ class DeepseekV2MLAAttention(nn.Module):
         self.use_nsa = is_deepseek_nsa(config)
         self.use_deep_gemm_bmm = False
         self.alt_stream = None
+        self.use_fused_qk_rope_concat_and_cache_mla = _use_aiter_gfx95
         # self.w_kc, self.w_vc = self.kv_b_proj.weight.data.unflatten(
         #     0, (-1, self.qk_nope_head_dim + self.v_head_dim)
         # ).split([self.qk_nope_head_dim, self.v_head_dim], dim=1)
@@ -1720,12 +1722,7 @@ class DeepseekV2MLAAttention(nn.Module):
 
         q_nope_out = q_nope_out.transpose(0, 1)
 
-        if (
-            self.rotary_emb is not None
-            # and (not self._fuse_rope_for_trtllm_mla(forward_batch))
-            and (not _use_aiter or not _is_gfx95_supported or self.use_nsa)
-        ):
-            # Optional hard check during debugging
+        if self.rotary_emb is not None and not self.use_fused_qk_rope_concat_and_cache_mla:
             assert q_pe.shape[0] == positions.shape[0], (
                 f"q_pe tokens {q_pe.shape[0]} != positions {positions.shape[0]}"
             )
@@ -1765,9 +1762,35 @@ class DeepseekV2MLAAttention(nn.Module):
         llama_4_scaling,            
     ):
         # 1) build q/k for radix attention path
-        _is_hip = True
-        q = torch.cat([q_nope_out, q_pe], dim=-1)
-        k = torch.cat([k_nope, k_pe], dim=-1)
+        save_kv_cache = True
+
+        if self.use_fused_qk_rope_concat_and_cache_mla:
+            cos = self.rotary_emb.cos_cache
+            sin = self.rotary_emb.sin_cache
+            kv_cache = forward_batch.token_to_kv_pool.get_key_buffer(
+                self.layer_num
+            )
+            k_scale = self.mla_attn.attn.k_scale
+
+            q, _, k_pe_roped, _ = fused_qk_rope_cat_and_cache_mla(
+                q_nope_out,
+                q_pe,
+                k_nope,
+                k_pe,
+                kv_cache,
+                forward_batch.out_cache_loc,
+                positions,
+                cos,
+                sin,
+                k_scale,
+                self.rotary_emb.is_neox_style,
+                q_out_dtype=q_nope_out.dtype,
+            )
+            k = torch.cat([k_nope, k_pe_roped], dim=-1)
+            save_kv_cache = False
+        else:
+            q = torch.cat([q_nope_out, q_pe], dim=-1)
+            k = torch.cat([k_nope, k_pe], dim=-1)
 
         if llama_4_scaling is not None:
             q = q * llama_4_scaling
@@ -1778,7 +1801,7 @@ class DeepseekV2MLAAttention(nn.Module):
             k,
             k_nope,
             forward_batch=forward_batch,
-            save_kv_cache=True,
+            save_kv_cache=save_kv_cache,
             **(dict(topk_indices=topk_indices) if topk_indices is not None else {}),
         )
         attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)

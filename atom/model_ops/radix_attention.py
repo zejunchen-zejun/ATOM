@@ -94,6 +94,7 @@ class RadixAttention(BaseAttention):
         if is_sglang():
             # for sglang, forward_batch is required
             forward_batch = kwargs.get("forward_batch", None)
+            save_kv_cache = kwargs.get("save_kv_cache", not self.use_aiter_rope_fused_qknorm)
             assert forward_batch is not None, "forward_batch is required for sglang"
             # forward_batch contains the filed attn_backend, which will find the backend registered in ATOM
             return self.attn(
@@ -101,7 +102,7 @@ class RadixAttention(BaseAttention):
                 key,
                 value,
                 forward_batch=forward_batch,
-                save_kv_cache=not self.use_aiter_rope_fused_qknorm,
+                save_kv_cache=save_kv_cache,
             )
         else:
             raise NotImplementedError(
