@@ -27,6 +27,7 @@ from .backends import AttentionBackend, CommonAttentionBuilder
 from atom.plugin.prepare import is_plugin_mode
 from atom.plugin.attention import AiterMLAAttentionMetadataBuilderDecoratorForPluginMode
 from atom.plugin.attention import AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode
+from atom.plugin.attention import AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode
 from atom.plugin.attention import AiterBackendDecoratorForPluginMode
 
 logger = logging.getLogger("atom")
@@ -498,10 +499,8 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
 @AiterBackendDecoratorForPluginMode
 class AiterMLASparseBackend(AttentionBackend):
     """
-    Sparse MLA attention backend for both main attention layers and
-    the indexer cache layer in sparse MLA models to provide the sparse
-    metadata builder with fields needed for topk index conversion and
-    ragged kernel call. The impl is the same as non-sparse MLAAttention.
+    Sparse MLA attention backend for main attention layers to provide sparse
+    metadata builder for top-k index conversion and ragged kernel call.
     """
 
     @staticmethod
@@ -533,4 +532,35 @@ class AiterMLASparseMetadataBuilder(AiterMLAMetadataBuilder):
     In standalone mode, delegates to CommonAttentionBuilder.
     In plugin mode, the decorator replaces __init__ and build() methods.
     """
+    pass
+
+
+@AiterBackendDecoratorForPluginMode
+class AiterMLASparseIndexerBackend(AttentionBackend):
+
+    @staticmethod
+    def get_name() -> str:
+        return "ROCM_AITER_MLA_SPARSE_INDEXER" if not is_plugin_mode() else "CUSTOM"
+
+    @staticmethod
+    def get_builder_cls() -> Type["AiterMLASparseIndexerMetadataBuilder"]:
+        return AiterMLASparseIndexerMetadataBuilder
+
+    @staticmethod
+    def get_impl_cls() -> Type["MLAAttention"]:
+        return MLAAttention
+
+    @classmethod
+    def is_sparse(cls) -> bool:
+        return True
+
+    @classmethod
+    def is_mla(cls) -> bool:
+        return True
+
+
+@AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode(
+    default_base_class=AiterMLAMetadataBuilder
+)
+class AiterMLASparseIndexerMetadataBuilder(AiterMLAMetadataBuilder):
     pass

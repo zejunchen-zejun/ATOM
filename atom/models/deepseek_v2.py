@@ -994,7 +994,6 @@ class DeepseekV32IndexerCache(nn.Module):
             self._register_with_vllm(prefix)
 
     def _register_with_vllm(self, prefix: str):
-        """Register with vLLM's static_forward_context for KV cache allocation."""
         from atom.config import get_current_atom_config
 
         atom_config = get_current_atom_config()
@@ -1004,10 +1003,6 @@ class DeepseekV32IndexerCache(nn.Module):
         compilation_config.static_forward_context[prefix] = self
 
     def get_kv_cache_spec(self, vllm_config):
-        """Return KV cache spec for vLLM plugin mode.
-
-        Mirrors vLLM's DeepseekV32IndexerCache.get_kv_cache_spec().
-        """
         from vllm.v1.kv_cache_interface import MLAAttentionSpec
 
         return MLAAttentionSpec(
@@ -1018,13 +1013,9 @@ class DeepseekV32IndexerCache(nn.Module):
         )
 
     def get_attn_backend(self):
-        """Return the indexer backend class for vLLM plugin mode.
+        from atom.model_ops.attentions.aiter_mla import AiterMLASparseIndexerBackend
 
-        Mirrors vLLM's DeepseekV32IndexerCache.get_attn_backend().
-        """
-        from atom.model_ops.attentions.aiter_mla import AiterMLASparseBackend
-
-        return AiterMLASparseBackend
+        return AiterMLASparseIndexerBackend
 
     def forward(self):
         ...
@@ -1052,6 +1043,8 @@ def _sparse_attn_indexer_plugin_mode(
     dict[str, AttentionMetadata] keyed by layer name.
     This mirrors vLLM's rocm_aiter_sparse_attn_indexer.
     """
+    # from atom.plugin.attention import vllmDeepseekV32IndexerMetadata
+
     # During profile/dummy run the metadata dict may not contain
     # our layer or may be None.
     if attn_metadata_dict is None:
@@ -1062,11 +1055,15 @@ def _sparse_attn_indexer_plugin_mode(
     if layer_meta is None:
         return weights
 
-    # In plugin mode, the metadata for the indexer cache layer is
-    # built by AiterMLASparseMetadataBuilder, which wraps metadata in
-    # AttentionMetaData(slot_mapping=..., plugin_metadata=AiterMLASparseMetadataForPluginMode).
+    # In plugin mode, plugin_metadata is vllmDeepseekV32IndexerMetadata from
+    # AiterMLASparseIndexerMetadataBuilder.
     plugin_meta = layer_meta.plugin_metadata
-    indexer_meta = plugin_meta.indexer_metadata
+    # indexer_meta = (
+    #     plugin_meta
+    #     if isinstance(plugin_meta, vllmDeepseekV32IndexerMetadata)
+    #     else plugin_meta.indexer_metadata
+    # )
+    indexer_meta = plugin_meta
     slot_mapping = indexer_meta.slot_mapping
     has_decode = indexer_meta.num_decodes > 0
     has_prefill = indexer_meta.num_prefills > 0
