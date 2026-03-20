@@ -82,6 +82,10 @@ from atom.utils import envs
 from atom.utils.custom_register import direct_register_custom_op
 from atom.utils.decorators import mark_trace, support_torch_compile
 from atom.utils.forward_context import get_forward_context
+from atom.plugin.attention_mla_sparse import (
+    IndexerDecoratorForPluginMode,
+    DeepseekV32IndexerCacheDecoratorForPluginMode,
+)
 from torch import nn
 from transformers import PretrainedConfig
 from atom.plugin.prepare import is_sglang
@@ -972,6 +976,7 @@ def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
     return 0.1 * mscale * math.log(scale) + 1.0
 
 
+@DeepseekV32IndexerCacheDecoratorForPluginMode
 class DeepseekV32IndexerCache(nn.Module):
 
     def __init__(
@@ -984,215 +989,8 @@ class DeepseekV32IndexerCache(nn.Module):
         self.cache_config = cache_config
         self.dtype = dtype
 
-        # In vLLM plugin mode, register this cache layer in
-        # static_forward_context so vLLM can discover it and allocate
-        # KV cache for the indexer (mirrors vLLM's DeepseekV32IndexerCache
-        # which inherits AttentionLayerBase).
-        from atom.plugin import is_plugin_mode
-
-        if is_plugin_mode():
-            self._register_with_vllm(prefix)
-
-    def _register_with_vllm(self, prefix: str):
-        from atom.config import get_current_atom_config
-
-        atom_config = get_current_atom_config()
-        compilation_config = atom_config.compilation_config
-        if prefix in compilation_config.static_forward_context:
-            raise ValueError(f"Duplicate layer name: {prefix}")
-        compilation_config.static_forward_context[prefix] = self
-
-    def get_kv_cache_spec(self, vllm_config):
-        from vllm.v1.kv_cache_interface import MLAAttentionSpec
-
-        return MLAAttentionSpec(
-            block_size=1,  # block_size = 1 for indexer on ROCm
-            num_kv_heads=1,
-            head_size=self.head_dim,
-            dtype=self.dtype,
-        )
-
-    def get_attn_backend(self):
-        from atom.model_ops.attentions.aiter_mla import AiterMLASparseIndexerBackend
-
-        return AiterMLASparseIndexerBackend
-
     def forward(self):
         ...
-
-
-def _sparse_attn_indexer_plugin_mode(
-    hidden_states: torch.Tensor,
-    k_cache_prefix: str,
-    kv_cache: torch.Tensor,
-    q_fp8: torch.Tensor,
-    k: torch.Tensor,
-    weights: torch.Tensor,
-    quant_block_size: int,
-    scale_fmt: Optional[str],
-    topk_tokens: int,
-    head_dim: int,
-    max_model_len: int,
-    total_seq_lens: int,
-    topk_indices_buffer: torch.Tensor,
-    attn_metadata_dict: dict,
-) -> torch.Tensor:
-    """Sparse attention indexer for vLLM plugin mode.
-
-    In vLLM plugin mode, forward_context.attn_metadata is a
-    dict[str, AttentionMetadata] keyed by layer name.
-    This mirrors vLLM's rocm_aiter_sparse_attn_indexer.
-    """
-    # from atom.plugin.attention import vllmDeepseekV32IndexerMetadata
-
-    # During profile/dummy run the metadata dict may not contain
-    # our layer or may be None.
-    if attn_metadata_dict is None:
-        return weights
-    if k_cache_prefix not in attn_metadata_dict:
-        return weights
-    layer_meta = attn_metadata_dict[k_cache_prefix]
-    if layer_meta is None:
-        return weights
-
-    # In plugin mode, plugin_metadata is vllmDeepseekV32IndexerMetadata from
-    # AiterMLASparseIndexerMetadataBuilder.
-    plugin_meta = layer_meta.plugin_metadata
-    # indexer_meta = (
-    #     plugin_meta
-    #     if isinstance(plugin_meta, vllmDeepseekV32IndexerMetadata)
-    #     else plugin_meta.indexer_metadata
-    # )
-    indexer_meta = plugin_meta
-    slot_mapping = indexer_meta.slot_mapping
-    has_decode = indexer_meta.num_decodes > 0
-    has_prefill = indexer_meta.num_prefills > 0
-    num_decode_tokens = indexer_meta.num_decode_tokens
-
-    # Write k to the indexer KV cache
-    indexer_k_quant_and_cache(
-        k,
-        kv_cache,
-        slot_mapping,
-        quant_block_size,
-        scale_fmt,
-    )
-    
-    topk_indices_buffer[: hidden_states.shape[0]] = -1
-    # topk_indices_buffer[: num_actual_tokens] = -1
-    if has_prefill:
-        prefill_metadata = indexer_meta.prefill
-        for chunk in prefill_metadata.chunks:
-            k_fp8 = torch.empty(
-                [chunk.total_seq_lens, head_dim],
-                device=k.device,
-                dtype=dtypes.fp8,
-            )
-            k_scale = torch.empty(
-                [chunk.total_seq_lens, 1], # ??? or [..., 4]
-                device=k.device,
-                dtype=torch.float32, # ??? or torch.uint8
-            )
-            
-            cp_gather_indexer_k_quant_cache(
-                kv_cache,
-                k_fp8,
-                k_scale.view(dtypes.fp8),
-                chunk.block_table,
-                chunk.cu_seq_lens,
-            )
-            
-            logits = fp8_mqa_logits(
-                Q=q_fp8[chunk.token_start : chunk.token_end],
-                KV=k_fp8,
-                kv_scales=k_scale,#.view(torch.float32),
-                weights=weights[chunk.token_start : chunk.token_end],
-                cu_starts=chunk.cu_seqlen_ks,
-                cu_ends=chunk.cu_seqlen_ke,
-            )
-            num_rows = logits.shape[0]
-            assert topk_tokens == 2048, "top_k_per_row assumes size 2048"
-            topk_indices = topk_indices_buffer[
-                chunk.token_start : chunk.token_end, :topk_tokens
-            ]
-            top_k_per_row_prefill(
-                logits=logits,
-                rowStarts=chunk.cu_seqlen_ks,
-                rowEnds=chunk.cu_seqlen_ke,
-                indices=topk_indices,
-                values=None,
-                numRows=num_rows,
-                stride0=logits.stride(0),
-                stride1=logits.stride(1),
-            )
-            # Convert global (concatenated KV buffer) indices to request-local
-            valid_mask = topk_indices != -1
-            topk_indices.sub_(chunk.cu_seqlen_ks.unsqueeze(1))
-            topk_indices.masked_fill_(~valid_mask, -1)
-    
-    if has_decode:
-        decode_metadata = indexer_meta.decode
-        # kv_cache size requirement [num_block, block_size, n_head, head_dim],
-        # we only have [num_block, block_size, head_dim],
-        kv_cache = kv_cache.unsqueeze(-2)
-        decode_lens = decode_metadata.decode_lens
-        if decode_metadata.requires_padding:
-            # pad in edge case where we have short chunked prefill length <
-            # decode_threshold since we unstrictly split
-            # prefill and decode by decode_threshold
-            # (currently set to 1 + speculative tokens)
-            from vllm.v1.attention.ops.common import pack_seq_triton
-            padded_q_fp8_decode_tokens = pack_seq_triton(
-                q_fp8[:num_decode_tokens], decode_lens
-            )
-        else:
-            padded_q_fp8_decode_tokens = q_fp8[:num_decode_tokens].reshape(
-                decode_lens.shape[0], -1, *q_fp8.shape[1:]
-            )
-        # TODO: move and optimize below logic with triton kernels
-        batch_size = padded_q_fp8_decode_tokens.shape[0]
-        next_n = padded_q_fp8_decode_tokens.shape[1]
-        assert batch_size == decode_metadata.seq_lens.shape[0]
-        num_padded_tokens = batch_size * next_n
-        logits = torch.empty(
-            [batch_size * next_n, max_model_len], dtype=torch.float32, device="cuda"
-        )
-        deepgemm_fp8_paged_mqa_logits(
-            padded_q_fp8_decode_tokens,
-            kv_cache,
-            weights[:num_padded_tokens],
-            logits,
-            decode_metadata.seq_lens,
-            decode_metadata.block_table,
-            max_model_len,
-        )
-        
-        num_rows = logits.shape[0]
-        assert topk_tokens == 2048, "top_k_per_row assumes size 2048"
-        topk_indices = topk_indices_buffer[:num_decode_tokens, :topk_tokens]
-        top_k_per_row_decode(
-            logits,
-            next_n,
-            decode_metadata.seq_lens,
-            topk_indices,
-            num_rows,
-            logits.stride(0),
-            logits.stride(1),
-        )
-
-        if decode_metadata.requires_padding:
-            # if padded, we need to unpack
-            # the topk indices removing padded tokens
-            from vllm.v1.attention.ops.common import unpack_seq_triton
-            topk_indices = unpack_seq_triton(
-                topk_indices.reshape(batch_size, -1, topk_indices.shape[-1]),
-                decode_lens,
-            )
-            topk_indices_buffer[:num_decode_tokens, : topk_indices.shape[-1]] = (
-                topk_indices
-            )
-            
-    return weights
 
 
 def sparse_attn_indexer(
@@ -1213,42 +1011,6 @@ def sparse_attn_indexer(
     # careful! this will be None in dummy run
     forward_context = get_forward_context()
     attn_metadata = forward_context.attn_metadata
-
-    # In vLLM plugin mode, ATOM's forward context is not populated.
-    # Use vLLM's forward context instead, which maps layer names to metadata.
-    if isinstance(attn_metadata, dict) and len(attn_metadata) == 0:
-        # ATOM forward context empty — try vLLM's forward context
-        try:
-            from vllm.forward_context import (
-                get_forward_context as get_vllm_forward_context,
-                is_forward_context_available as is_vllm_ctx_available,
-            )
-            if is_vllm_ctx_available():
-                vllm_ctx = get_vllm_forward_context()
-                attn_metadata = vllm_ctx.attn_metadata
-        except ImportError:
-            pass
-
-    # In vLLM plugin mode, attn_metadata is a dict keyed by layer name.
-    # Look up the indexer's metadata by k_cache_prefix.
-    # (Mirrors vLLM's rocm_aiter_sparse_attn_indexer which does the same.)
-    if isinstance(attn_metadata, dict) or attn_metadata is None:
-        return _sparse_attn_indexer_plugin_mode(
-            hidden_states,
-            k_cache_prefix,
-            kv_cache,
-            q_fp8,
-            k,
-            weights,
-            quant_block_size,
-            scale_fmt,
-            topk_tokens,
-            head_dim,
-            max_model_len,
-            total_seq_lens,
-            topk_indices_buffer,
-            attn_metadata,
-        )
 
     context = forward_context.context
     slot_mapping = attn_metadata.slot_mapping
@@ -1395,6 +1157,7 @@ direct_register_custom_op(
 )
 
 
+@IndexerDecoratorForPluginMode
 class Indexer(nn.Module):
 
     def __init__(
@@ -1455,6 +1218,8 @@ class Indexer(nn.Module):
         self.max_total_seq_len = atom_config.max_num_seqs * self.max_model_len
         # register_metadata_builder("indexer_attn_metadata", self.k_cache.get_attn_backend().get_builder_cls())
 
+        self.sparse_attn_indexer_impl = torch.ops.aiter.sparse_attn_indexer
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1490,7 +1255,7 @@ class Indexer(nn.Module):
         )
         weights = weights.squeeze(-1)
 
-        return torch.ops.aiter.sparse_attn_indexer(
+        return self.sparse_attn_indexer_impl(
             hidden_states,
             self.k_cache.prefix,
             self.k_cache.kv_cache[0],
