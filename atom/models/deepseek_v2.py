@@ -1807,6 +1807,7 @@ class DeepseekV2MLAAttention(nn.Module):
         attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)
 
         # 3) up-proj by w_vc (port from sglang forward_absorb_core)
+        _is_hip = True
         if self.use_deep_gemm_bmm:
             attn_output_val, attn_output_scale, masked_m, expected_m, aligned_m = (
                 per_token_group_quant_mla_deep_gemm_masked_fp8(attn_output.transpose(0, 1))
