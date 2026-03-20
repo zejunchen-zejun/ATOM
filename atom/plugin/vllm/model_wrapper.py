@@ -38,6 +38,7 @@ _ATOM_MODEL_CLASSES: dict[str, str] = {
     "Glm4MoeForCausalLM": "atom.models.glm4_moe:Glm4MoeForCausalLM",
     "Qwen3_5MoeForConditionalGeneration": "atom.models.qwen3_5:Qwen3_5MoeForConditionalGeneration_",
     "Qwen3_5ForConditionalGeneration": "atom.models.qwen3_5:Qwen3_5ForConditionalGeneration_",
+    "GlmMoeDsaForCausalLM": "atom.models.deepseek_v2:GlmMoeDsaForCausalLM",
 }
 
 
@@ -84,6 +85,7 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
         self.ignore_unexpected_prefixes: list[str] = []
         self.ignore_unexpected_suffixes: list[str] = []
 
+        self.vllm_config = vllm_config
         self.atom_config = generate_atom_config_for_plugin_mode(vllm_config)
 
         _prepare_env(atom_config=self.atom_config)
@@ -94,6 +96,11 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
         logger.info(f"Construct ATOM model {model_arch} for vLLM plugin mode")
         self.model = model_cls(self.atom_config)
 
+        # For sparse MLA, register the Indexer's DeepseekV32IndexerCache as
+        # a virtual subclass of vLLM's AttentionLayerBase so vLLM can discover 
+        # it and allocate KV cache.
+        self._register_indexer_caches_with_vllm()
+
         if self.model is None:
             model_arch = vllm_config.model_config.architectures[0]
             raise ValueError(
@@ -103,6 +110,71 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
         # here init aiter dist for using aiter custom collective ops
         self.pp_group = get_pp_group()
         self.tp_group = get_tp_group()
+
+    def _register_indexer_caches_with_vllm(self):
+        """Register DeepseekV32IndexerCache instances with vLLM so that:
+        1. vLLM discovers them via isinstance(AttentionLayerBase) for KV cache
+           allocation (get_kv_cache_spec iterates static_forward_context)
+        2. bind_kv_cache() can find them in vLLM's static_forward_context to
+           assign the allocated KV cache tensor
+        3. The indexer's metadata lookup uses the correct prefix in vLLM's
+           attn_metadata dict
+
+        ATOM's DeepseekV32IndexerCache inherits from nn.Module (not vLLM's
+        AttentionLayerBase), so we register it as a virtual subclass.
+        We also register each instance in vLLM's static_forward_context using
+        the same prefix convention as other attention layers (the prefix
+        parameter passed at construction, e.g. 'model.layers.0...k_cache').
+        """
+        from atom.models.deepseek_v2 import DeepseekV32IndexerCache
+
+        # Find indexer cache instances. module.prefix is the ATOM-internal
+        # prefix set during __init__ (e.g. "model.layers.0.self_attn.indexer.k_cache").
+        indexer_caches = []
+        for _name, module in self.model.named_modules():
+            if isinstance(module, DeepseekV32IndexerCache):
+                indexer_caches.append(module)
+
+        if not indexer_caches:
+            return
+
+        try:
+            from vllm.model_executor.layers.attention_layer_base import (
+                AttentionLayerBase,
+            )
+
+            # Register DeepseekV32IndexerCache as a virtual subclass of
+            # AttentionLayerBase so vLLM's isinstance() check passes.
+            AttentionLayerBase.register(DeepseekV32IndexerCache)
+            logger.info(
+                "Registered DeepseekV32IndexerCache as AttentionLayerBase "
+                "virtual subclass for vLLM KV cache allocation"
+            )
+        except ImportError:
+            logger.warning(
+                "Could not import AttentionLayerBase from vLLM. "
+                "Indexer cache will not be managed by vLLM."
+            )
+            return
+
+        # Register each indexer cache in vLLM's static_forward_context.
+        # Use module.prefix (the ATOM-internal prefix), which follows the same
+        # convention as vLLM's MLAAttention layers that self-register with
+        # their prefix parameter (e.g. "model.layers.0.self_attn.attn").
+        vllm_sfc = self.vllm_config.compilation_config.static_forward_context
+        for module in indexer_caches:
+            prefix = module.prefix
+            if prefix not in vllm_sfc:
+                vllm_sfc[prefix] = module
+                logger.info(
+                    f"Registered indexer cache in vLLM static_forward_context: "
+                    f"{prefix}"
+                )
+            else:
+                logger.warning(
+                    f"Indexer cache {prefix} already in vLLM "
+                    f"static_forward_context, skipping"
+                )
 
     def forward(
         self,

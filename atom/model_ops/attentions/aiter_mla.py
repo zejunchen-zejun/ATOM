@@ -26,6 +26,7 @@ from .backends import AttentionBackend, CommonAttentionBuilder
 
 from atom.plugin.prepare import is_plugin_mode
 from atom.plugin.attention import AiterMLAAttentionMetadataBuilderDecoratorForPluginMode
+from atom.plugin.attention import AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode
 from atom.plugin.attention import AiterBackendDecoratorForPluginMode
 
 logger = logging.getLogger("atom")
@@ -492,3 +493,44 @@ class AiterMLAMetadataBuilder(CommonAttentionBuilder):
             positions=positions, is_prefill=False, batch_size=bs, graph_bs=bs
         )
         return attn_matadata, context
+
+
+@AiterBackendDecoratorForPluginMode
+class AiterMLASparseBackend(AttentionBackend):
+    """
+    Sparse MLA attention backend for both main attention layers and
+    the indexer cache layer in sparse MLA models to provide the sparse
+    metadata builder with fields needed for topk index conversion and
+    ragged kernel call. The impl is the same as non-sparse MLAAttention.
+    """
+
+    @staticmethod
+    def get_name() -> str:
+        return "ROCM_AITER_MLA_SPARSE" if not is_plugin_mode() else "CUSTOM"
+
+    @staticmethod
+    def get_builder_cls() -> Type["AiterMLASparseMetadataBuilder"]:
+        return AiterMLASparseMetadataBuilder
+
+    @staticmethod
+    def get_impl_cls() -> Type["MLAAttention"]:
+        return MLAAttention
+
+    @classmethod
+    def is_sparse(cls) -> bool:
+        return True
+
+    @classmethod
+    def is_mla(cls) -> bool:
+        return True
+
+
+@AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode(
+    default_base_class=AiterMLAMetadataBuilder
+)
+class AiterMLASparseMetadataBuilder(AiterMLAMetadataBuilder):
+    """ Metadata builder for sparse MLA.
+    In standalone mode, delegates to CommonAttentionBuilder.
+    In plugin mode, the decorator replaces __init__ and build() methods.
+    """
+    pass
