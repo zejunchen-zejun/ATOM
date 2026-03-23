@@ -15,7 +15,6 @@ write, Q absorption, topk index conversion, sparse kernel, V up-projection.
 """
 
 import torch
-import aiter
 from aiter.ops.triton.batched_gemm_a16wfp4 import batched_gemm_a16wfp4
 
 from aiter.ops.triton.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant import (  # noqa: E501 # isort: skip
@@ -117,9 +116,9 @@ class MLASparseAttentionImplPluginModeMethods:
 
     def _forward_sparse_bf16_kv(
         self,
-        q: torch.Tensor, # [sq, heads, d_qk]
-        kv_cache: torch.Tensor, # [blocks, heads, d_qk]
-        topk_indices_global: torch.Tensor, # [sq, topk]
+        q: torch.Tensor,  # [sq, heads, d_qk]
+        kv_cache: torch.Tensor,  # [blocks, heads, d_qk]
+        topk_indices_global: torch.Tensor,  # [sq, topk]
         attn_metadata,
         layer,
     ) -> torch.Tensor:
@@ -129,7 +128,8 @@ class MLASparseAttentionImplPluginModeMethods:
         padded_num_heads = max(self.num_heads, _MLA_MIN_HEADS)
         output = torch.empty(
             [num_tokens, padded_num_heads, self.kv_lora_rank],
-            dtype=q.dtype,
+            # dtype=q.dtype,
+            dtype=torch.bfloat16,
             device=q.device,
         )
 
@@ -147,97 +147,75 @@ class MLASparseAttentionImplPluginModeMethods:
             sparse_meta.ragged_layout_built = True
 
         kv_buffer = kv_cache.unsqueeze(2)
-        
-        fp8_kv = self.kv_cache_dtype.startswith("fp8")
-        if fp8_kv and sparse_meta.work_meta_data is not None:
-            # Update persistent scheduling metadata for this batch
-            from aiter.ops.attention import decode_update_mla_metadata_v1
-            decode_update_mla_metadata_v1(
-                seqlens_qo_indptr=sparse_meta.qo_indptr,
-                seqlens_kv_indptr=sparse_meta.paged_kv_indptr,
-                kv_last_page_lens=sparse_meta.paged_kv_last_page_len,
-                num_heads_per_head_k=padded_num_heads,
-                num_heads_k=1,
-                is_causal=False,
-                work_metadata_ptrs=sparse_meta.work_meta_data,
-                work_info_set=sparse_meta.work_info_set,
-                work_indptr=sparse_meta.work_indptr,
-                reduce_indptr=sparse_meta.reduce_indptr,
-                reduce_final_map=sparse_meta.reduce_final_map,
-                reduce_partial_map=sparse_meta.reduce_partial_map,
+
+        # fp8_kv = self.kv_cache_dtype.startswith("fp8")
+        # use_persistent_mode = not (self.dcp_world_size > 1 and fp8_kv)
+        use_persistent_mode = False # Disable persistent mode for now
+
+        work_meta_data = None
+        work_indptr = None
+        work_info_set = None
+        reduce_indptr = None
+        reduce_final_map = None
+        reduce_partial_map = None
+
+        if use_persistent_mode and fp8_kv and sparse_meta.work_meta_data is not None:
+            from aiter.ops.attention import get_mla_metadata_v1
+            from vllm.platforms import current_platform
+
+            fp8_dtype = current_platform.fp8_dtype()
+            get_mla_metadata_v1(
+                sparse_meta.qo_indptr,
+                sparse_meta.paged_kv_indptr,
+                sparse_meta.paged_kv_last_page_len,
+                padded_num_heads,
+                1,
+                False,
+                sparse_meta.work_meta_data,
+                sparse_meta.work_info_set,
+                sparse_meta.work_indptr,
+                sparse_meta.reduce_indptr,
+                sparse_meta.reduce_final_map,
+                sparse_meta.reduce_partial_map,
                 page_size=1,
                 kv_granularity=16,
                 max_seqlen_qo=1,
+                dtype_q=fp8_dtype,
+                dtype_kv=fp8_dtype,
             )
+            work_meta_data = sparse_meta.work_meta_data
+            work_indptr = sparse_meta.work_indptr
+            work_info_set = sparse_meta.work_info_set
+            reduce_indptr = sparse_meta.reduce_indptr
+            reduce_final_map = sparse_meta.reduce_final_map
+            reduce_partial_map = sparse_meta.reduce_partial_map
 
-            mla_decode_fwd(
-                q,
-                kv_buffer.view(-1, 1, 1, q.shape[-1]),
-                output,
-                sparse_meta.qo_indptr,
-                sparse_meta.paged_kv_indptr,
-                sparse_meta.paged_kv_indices,
-                sparse_meta.paged_kv_last_page_len,
-                1,  # max_qo_len
-                sm_scale=self.scale,
-                q_scale=layer._q_scale,
-                kv_scale=layer._k_scale,
-                page_size=1,
-                # Persistent mode args:
-                work_meta_data=sparse_meta.work_meta_data,
-                work_indptr=sparse_meta.work_indptr,
-                work_info_set=sparse_meta.work_info_set,
-                reduce_indptr=sparse_meta.reduce_indptr,
-                reduce_final_map=sparse_meta.reduce_final_map,
-                reduce_partial_map=sparse_meta.reduce_partial_map,
-            )
-            
-        else:
-            use_persistent_mode = not (
-                self.dcp_world_size > 1 and self.kv_cache_dtype == "fp8"
-            )
-            if not use_persistent_mode:
-                # DP : disable persistent mode to avoid overflow
-                work_meta_data = None
-                work_indptr = None
-                work_info_set = None
-                reduce_indptr = None
-                reduce_final_map = None
-                reduce_partial_map = None
-            else:
-                work_meta_data = attn_metadata.work_meta_data
-                work_indptr = attn_metadata.work_indptr
-                work_info_set = attn_metadata.work_info_set
-                reduce_indptr = attn_metadata.reduce_indptr
-                reduce_final_map = attn_metadata.reduce_final_map
-                reduce_partial_map = attn_metadata.reduce_partial_map
-
-            mla_decode_fwd(
-                q,
-                kv_buffer.view(-1, 1, 1, q.shape[-1]),
-                output,
-                sparse_meta.qo_indptr,
-                sparse_meta.paged_kv_indptr,
-                sparse_meta.paged_kv_indices,
-                sparse_meta.paged_kv_last_page_len,
-                1,  # max_qo_len = 1 for sparse MQA (each token is a single query)
-                work_meta_data=work_meta_data,
-                work_indptr=work_indptr,
-                work_info_set=work_info_set,
-                reduce_indptr=reduce_indptr,
-                reduce_final_map=reduce_final_map,
-                reduce_partial_map=reduce_partial_map,
-                sm_scale=self.scale,
-                q_scale=layer._q_scale,
-                kv_scale=layer._k_scale,
-                # page_size=1,
-            )
+        mla_decode_fwd(
+            q,
+            kv_buffer.view(-1, 1, 1, q.shape[-1]),
+            output,
+            sparse_meta.qo_indptr,
+            sparse_meta.paged_kv_indptr,
+            sparse_meta.paged_kv_indices,
+            sparse_meta.paged_kv_last_page_len,
+            1,
+            sm_scale=self.scale,
+            q_scale=layer._q_scale,
+            kv_scale=layer._k_scale,
+            page_size=1,
+            work_meta_data=work_meta_data,
+            work_indptr=work_indptr,
+            work_info_set=work_info_set,
+            reduce_indptr=reduce_indptr,
+            reduce_final_map=reduce_final_map,
+            reduce_partial_map=reduce_partial_map,
+        )
 
         if self.num_heads < _MLA_MIN_HEADS:
             head_repeat_factor = _MLA_MIN_HEADS // self.num_heads
-            output = output[:, :: head_repeat_factor, :].contiguous()
+            output = output[:, ::head_repeat_factor, :].contiguous()
 
-        return output[:, :self.num_heads, :]
+        return output[:, : self.num_heads, :]
 
     def forward_impl_sparse_plugin_mode(
         self,
@@ -276,8 +254,8 @@ class MLASparseAttentionImplPluginModeMethods:
         if self.dcp_world_size == -1:
             self.dcp_world_size = get_dcp_group().world_size
 
-        fp8_attention = self.kv_cache_dtype.startswith("fp8")
-        
+        # fp8_attention = self.kv_cache_dtype.startswith("fp8")
+
         sparse_meta = attn_metadata.plugin_metadata
 
         num_actual_toks = sparse_meta.num_actual_tokens
@@ -288,9 +266,9 @@ class MLASparseAttentionImplPluginModeMethods:
         q = q[:num_actual_toks, ...]
         k_c_normed = k_c_normed[:num_actual_toks, ...]
         k_pe = k_pe[:num_actual_toks, ...].unsqueeze(1)
-        
-        if fp8_attention and self.kv_cache_dtype != "fp8_ds_mla":
-            kv_cache = kv_cache.view(current_platform.fp8_dtype())
+
+        # if fp8_attention and self.kv_cache_dtype != "fp8_ds_mla":
+        #     kv_cache = kv_cache.view(current_platform.fp8_dtype())
 
         atom_config = get_current_atom_config()
         positions = atom_config.compilation_config.static_forward_context["positions"][
@@ -300,6 +278,7 @@ class MLASparseAttentionImplPluginModeMethods:
         fp8_attention = self.kv_cache_dtype.startswith("fp8")
         if fp8_attention:
             from vllm.platforms import current_platform
+
             kv_cache = kv_cache.view(current_platform.fp8_dtype())
 
         # Q absorption: q_nope -> W_K BMM -> ql_nope, then concat with q_pe
@@ -356,15 +335,15 @@ class MLASparseAttentionImplPluginModeMethods:
                 ),
                 q_out,
                 attn_metadata.slot_mapping,
-                self._k_scale,
-                self._q_scale,
+                layer._k_scale,
+                layer._q_scale,
                 positions,
                 self.rotary_emb.cos_cache,
                 self.rotary_emb.sin_cache,
                 is_neox=self.rotary_emb.is_neox_style,
                 is_nope_first=True,
             )
-            
+
         head_repeat_factor = _MLA_MIN_HEADS // self.num_heads
         if head_repeat_factor > 1:
             q_out = q_out.repeat_interleave(head_repeat_factor, dim=1)
@@ -385,12 +364,21 @@ class MLASparseAttentionImplPluginModeMethods:
         block_table_i32 = sparse_meta.block_table.to(dtype=torch.int32)
         topk_indices_i32 = topk_indices.to(dtype=torch.int32)
         topk_indices_global = triton_convert_req_index_to_global_index(
-            req_id_i32, # sparse_meta.req_id_per_token,
-            block_table_i32, # sparse_meta.block_table,
-            topk_indices_i32, # topk_indices,
+            req_id_i32,  # sparse_meta.req_id_per_token,
+            block_table_i32,  # sparse_meta.block_table,
+            topk_indices_i32,  # topk_indices,
             BLOCK_SIZE=sparse_meta.block_size,
             NUM_TOPK_TOKENS=sparse_meta.topk_tokens,
         )
+        if fp8_attention:
+            from vllm import _custom_ops as ops
+
+            # Reshape to 2D for scaled_fp8_quant, then restore
+            q_flat, _ = ops.scaled_fp8_quant(
+                q_out.reshape(q_out.shape[0], -1),
+                layer._q_scale,
+            )
+            q_out = q_flat.reshape(q_out.shape)
         attn_out = self._forward_sparse_bf16_kv(
             q_out, kv_cache, topk_indices_global, attn_metadata, layer
         )
@@ -479,6 +467,7 @@ def sparse_attn_indexer_plugin_mode(
             get_forward_context as get_vllm_forward_context,
             is_forward_context_available as is_vllm_ctx_available,
         )
+
         if is_vllm_ctx_available():
             vllm_ctx = get_vllm_forward_context()
             attn_metadata_dict = vllm_ctx.attn_metadata
@@ -511,7 +500,7 @@ def sparse_attn_indexer_plugin_mode(
         quant_block_size,
         scale_fmt,
     )
-    
+
     topk_indices_buffer[: hidden_states.shape[0]] = -1
     # topk_indices_buffer[: num_actual_tokens] = -1
     if has_prefill:
@@ -527,7 +516,7 @@ def sparse_attn_indexer_plugin_mode(
                 device=k.device,
                 dtype=torch.float32,
             )
-            
+
             cp_gather_indexer_k_quant_cache(
                 kv_cache,
                 k_fp8,
@@ -535,7 +524,7 @@ def sparse_attn_indexer_plugin_mode(
                 chunk.block_table,
                 chunk.cu_seq_lens,
             )
-            
+
             logits = fp8_mqa_logits(
                 Q=q_fp8[chunk.token_start : chunk.token_end],
                 KV=k_fp8,
@@ -576,6 +565,7 @@ def sparse_attn_indexer_plugin_mode(
             # prefill and decode by decode_threshold
             # (currently set to 1 + speculative tokens)
             from vllm.v1.attention.ops.common import pack_seq_triton
+
             padded_q_fp8_decode_tokens = pack_seq_triton(
                 q_fp8[:num_decode_tokens], decode_lens
             )
@@ -618,6 +608,7 @@ def sparse_attn_indexer_plugin_mode(
             # if padded, we need to unpack
             # the topk indices removing padded tokens
             from vllm.v1.attention.ops.common import unpack_seq_triton
+
             topk_indices = unpack_seq_triton(
                 topk_indices.reshape(batch_size, -1, topk_indices.shape[-1]),
                 decode_lens,

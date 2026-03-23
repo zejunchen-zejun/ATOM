@@ -2169,13 +2169,14 @@ def create_mla_sparse_attn_metadata_builder_init_method(base_class):
         # Persistent mode buffers for fp8 kv cache
         from aiter.ops.attention import get_mla_metadata_info_v1
         # Determine dtype_q and dtype_kv based on kv_cache_dtype
-        dtype_q = torch.bfloat16  # q is always bf16
+        dtype_q = torch.bfloat16
         self.dtype_kv = torch.bfloat16  # default
         if hasattr(config.model_config, 'kv_cache_dtype'):
             kv_dtype_str = config.cache_config.cache_dtype
             if kv_dtype_str.startswith("fp8"):
                 from vllm.platforms import current_platform
                 self.dtype_kv = current_platform.fp8_dtype()
+                dtype_q = current_platform.fp8_dtype()
 
         (
             (work_meta_data_size, work_meta_data_type),
@@ -2186,7 +2187,7 @@ def create_mla_sparse_attn_metadata_builder_init_method(base_class):
             (reduce_partial_map_size, reduce_partial_map_type),
         ) = get_mla_metadata_info_v1(
             batch_size=config.scheduler_config.max_num_seqs,
-            max_seqlen_qo=1,       # sparse MLA always uses max_seqlen_q=1
+            max_seqlen_qo=1,
             num_head_qo=self.padded_num_heads,
             q_dtype=dtype_q,
             kv_dtype=self.dtype_kv,
