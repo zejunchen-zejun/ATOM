@@ -1,8 +1,9 @@
-"""ATOM Qwen model wrapper for SGLang external model loading.
+"""ATOM model wrappers for SGLang external model loading (OOT).
 
-Registers Qwen3MoeForCausalLM and Qwen3ForCausalLM as external
-model classes via SGLANG_EXTERNAL_MODEL_PACKAGE, replacing sglang's
-built-in implementations with ATOM-optimized versions.
+Registers model architecture classes via SGLANG_EXTERNAL_MODEL_PACKAGE,
+replacing sglang's built-in implementations with ATOM-optimized versions.
+
+To add a new model, append its architecture class name to _MODEL_NAMES.
 """
 
 import logging
@@ -18,13 +19,20 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTe
 
 logger = logging.getLogger("atom.plugin.sglang.oot")
 
+_MODEL_NAMES = [
+    "DeepseekV2ForCausalLM",
+    "DeepseekV3ForCausalLM",
+    "Qwen3MoeForCausalLM",
+    "Qwen3ForCausalLM",
+]
 
-class Qwen3MoeForCausalLM(nn.Module):
-    """ATOM-backed Qwen3 MoE model for SGLang.
 
-    This wrapper delegates model creation and weight loading to ATOM's
-    plugin system, while conforming to sglang's model interface
-    (forward signature, LogitsProcessorOutput return type, load_weights).
+class _AtomCausalLMBaseForSglangOOT(nn.Module):
+    """Base ATOM model wrapper conforming to sglang's model interface.
+
+    Delegates model creation and weight loading to ATOM's plugin system,
+    while providing the forward signature and LogitsProcessorOutput return
+    type that sglang expects.
     """
 
     def __init__(
@@ -90,8 +98,8 @@ class Qwen3MoeForCausalLM(nn.Module):
         )
 
 
-class Qwen3ForCausalLM(Qwen3MoeForCausalLM):
-    pass
-
-
-EntryClass = [Qwen3MoeForCausalLM, Qwen3ForCausalLM]
+EntryClass = []
+for _name in _MODEL_NAMES:
+    _cls = type(_name, (_AtomCausalLMBaseForSglangOOT,), {})
+    globals()[_name] = _cls
+    EntryClass.append(_cls)
