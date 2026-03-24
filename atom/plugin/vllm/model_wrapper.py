@@ -78,6 +78,7 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
         self.model_config = vllm_config.model_config
         self.parallel_config = vllm_config.parallel_config
         self.quant_config = vllm_config.quant_config
+        self.vllm_compilation_config = vllm_config.compilation_config
 
         # Weights to skip in `self.load_weights`
         self.skip_prefixes: list[str] = []
@@ -161,7 +162,7 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
         # Use module.prefix (the ATOM-internal prefix), which follows the same
         # convention as vLLM's MLAAttention layers that self-register with
         # their prefix parameter (e.g. "model.layers.0.self_attn.attn").
-        vllm_sfc = self.vllm_config.compilation_config.static_forward_context
+        vllm_sfc = self.vllm_compilation_config.static_forward_context
         for module in indexer_caches:
             prefix = module.prefix
             if prefix not in vllm_sfc:

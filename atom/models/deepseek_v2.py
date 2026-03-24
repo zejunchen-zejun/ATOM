@@ -989,9 +989,6 @@ class DeepseekV32IndexerCache(nn.Module):
         self.cache_config = cache_config
         self.dtype = dtype
 
-    def forward(self):
-        ...
-
 
 def sparse_attn_indexer(
     hidden_states: torch.Tensor,
@@ -1011,7 +1008,6 @@ def sparse_attn_indexer(
     # careful! this will be None in dummy run
     forward_context = get_forward_context()
     attn_metadata = forward_context.attn_metadata
-
     context = forward_context.context
     slot_mapping = attn_metadata.slot_mapping
     # Skip for dummy runs to avoid corrupting KV cache

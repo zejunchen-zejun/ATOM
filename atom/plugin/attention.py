@@ -3,7 +3,6 @@ import logging
 
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 
 from aiter import dtypes, get_mla_metadata_info_v1, get_mla_metadata_v1
@@ -1368,7 +1367,6 @@ def AiterBackendDecoratorForPluginMode(cls):
             if name.startswith("_"):
                 continue
             setattr(cls, name, getattr(methods_cls, name))
-            setattr(cls, "forward_includes_kv_cache_update", True)
     return cls
 
 
@@ -1506,7 +1504,7 @@ class vllmDeepseekV32IndexerPrefillMetadata:
 
 
 @dataclass
-class vllmDeepSeekV32IndexerDecodeMetadata:
+class vllmDeepseekV32IndexerDecodeMetadata:
     block_table: torch.Tensor
     seq_lens: torch.Tensor
     decode_lens: torch.Tensor
@@ -1539,7 +1537,7 @@ class vllmDeepseekV32IndexerMetadata:
     num_prefills: int
     num_prefill_tokens: int
 
-    decode: vllmDeepSeekV32IndexerDecodeMetadata | None = None
+    decode: vllmDeepseekV32IndexerDecodeMetadata | None = None
     prefill: vllmDeepseekV32IndexerPrefillMetadata | None = None
 
 
@@ -1647,14 +1645,6 @@ class AiterMLASparseMetadataForPluginMode:
     # Flag to run ragged layout conversion only once per forward (shared across MLA layers)
     ragged_layout_built: bool = False
 
-    # Persistent mode buffers (for FP8 KV cache support)
-    work_meta_data: torch.Tensor | None = None
-    work_indptr: torch.Tensor | None = None
-    work_info_set: torch.Tensor | None = None
-    reduce_indptr: torch.Tensor | None = None
-    reduce_final_map: torch.Tensor | None = None
-    reduce_partial_map: torch.Tensor | None = None
-
 
 class vllmMLASparseAttentionMetadataBuilderMethods:
     def __init__(self):
@@ -1665,15 +1655,15 @@ class vllmMLASparseAttentionMetadataBuilderMethods:
 
     def build(self, common_prefix_len, common_attn_metadata, fast_build=False):
         num_tokens = common_attn_metadata.num_actual_tokens
-        starts = np.asarray(common_attn_metadata.query_start_loc_cpu, dtype=np.int32)
-        seg_lengths = np.diff(starts)
-        req_id_per_token = np.repeat(
-            np.arange(seg_lengths.shape[0], dtype=np.int32), seg_lengths
+        starts = common_attn_metadata.query_start_loc_cpu.to(torch.int32)
+        seg_lengths = torch.diff(starts)
+        req_id_per_token = torch.repeat_interleave(
+            torch.arange(seg_lengths.shape[0], dtype=torch.int32), seg_lengths
         )
         # Zero-fill for cudagraphs
         self.req_id_per_token_buffer.fill_(0)
         self.req_id_per_token_buffer[: req_id_per_token.shape[0]].copy_(
-            torch.from_numpy(req_id_per_token), non_blocking=True
+            req_id_per_token, non_blocking=True
         )
         self.paged_kv_indices.fill_(0)
         self.paged_kv_indptr.fill_(0)
@@ -1702,13 +1692,6 @@ class vllmMLASparseAttentionMetadataBuilderMethods:
             paged_kv_indices=paged_kv_indices,
             paged_kv_indptr=paged_kv_indptr,
             paged_kv_indptr_rest=paged_kv_indptr_rest,
-            # Persistent mode buffers
-            work_meta_data=self.persistent_work_meta_data,
-            work_indptr=self.persistent_work_indptr,
-            work_info_set=self.persistent_work_info_set,
-            reduce_indptr=self.persistent_reduce_indptr,
-            reduce_final_map=self.persistent_reduce_final_map,
-            reduce_partial_map=self.persistent_reduce_partial_map,
         )
 
         attn_metadata = AttentionMetaData(
@@ -1920,7 +1903,7 @@ class vllmMLASparseIndexerAttentionMetadataBuilderMethods:
             _is_large_context = common_attn_metadata.max_seq_len > 8192
             use_large_context_topk = batch_size <= 128 and _is_large_context
 
-            decode_metadata = vllmDeepSeekV32IndexerDecodeMetadata(
+            decode_metadata = vllmDeepseekV32IndexerDecodeMetadata(
                 block_table=block_table,
                 seq_lens=seq_lens,
                 decode_lens=decode_lens,
@@ -1967,8 +1950,7 @@ class vllmMLASparseIndexerAttentionMetadataBuilderMethods:
 class vllmAiterMLASparseBackendMethods:
     accept_output_buffer: bool = True
     supported_dtypes: list = [torch.float16, torch.bfloat16]
-    # Sparse MLA plugin mode supports only bf16 kv cache for now.
-    supported_kv_cache_dtypes: list = ["auto", "bfloat16"]
+    forward_includes_kv_cache_update: bool = True
 
     def __init__(self):
         raise TypeError(

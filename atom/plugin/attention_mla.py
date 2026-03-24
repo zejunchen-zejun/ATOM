@@ -630,8 +630,6 @@ class MLAAttentionImplPluginModeMethods:
         assert output is not None, "Output tensor must be provided."
 
         # Dispatch to sparse MLA forward if this instance uses sparse attention
-        # (topk_indices_buffer is set by the Indexer module for models like
-        # GLM-5 / DeepSeek-V3.2 with index_topk)
         if getattr(self, "topk_indices_buffer", None) is not None:
             return self.forward_impl_sparse_plugin_mode(
                 layer=layer,

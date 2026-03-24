@@ -103,17 +103,6 @@ class MLASparseAttentionImplPluginModeMethods:
             "It is only used as a method container for the decorator."
         )
 
-    def do_kv_cache_update(
-        self,
-        kv_c_normed: torch.Tensor,
-        k_pe: torch.Tensor,
-        kv_cache: torch.Tensor,
-        slot_mapping: torch.Tensor,
-        kv_cache_dtype: str,
-        k_scale: torch.Tensor,
-    ) -> None:
-        pass
-
     def _forward_sparse_bf16_kv(
         self,
         q: torch.Tensor,  # [sq, heads, d_qk]
@@ -148,47 +137,8 @@ class MLASparseAttentionImplPluginModeMethods:
 
         kv_buffer = kv_cache.unsqueeze(2)
 
-        # fp8_kv = self.kv_cache_dtype.startswith("fp8")
-        # use_persistent_mode = not (self.dcp_world_size > 1 and fp8_kv)
-        use_persistent_mode = False # Disable persistent mode for now
-
-        work_meta_data = None
-        work_indptr = None
-        work_info_set = None
-        reduce_indptr = None
-        reduce_final_map = None
-        reduce_partial_map = None
-
-        if use_persistent_mode and fp8_kv and sparse_meta.work_meta_data is not None:
-            from aiter.ops.attention import get_mla_metadata_v1
-            from vllm.platforms import current_platform
-
-            fp8_dtype = current_platform.fp8_dtype()
-            get_mla_metadata_v1(
-                sparse_meta.qo_indptr,
-                sparse_meta.paged_kv_indptr,
-                sparse_meta.paged_kv_last_page_len,
-                padded_num_heads,
-                1,
-                False,
-                sparse_meta.work_meta_data,
-                sparse_meta.work_info_set,
-                sparse_meta.work_indptr,
-                sparse_meta.reduce_indptr,
-                sparse_meta.reduce_final_map,
-                sparse_meta.reduce_partial_map,
-                page_size=1,
-                kv_granularity=16,
-                max_seqlen_qo=1,
-                dtype_q=fp8_dtype,
-                dtype_kv=fp8_dtype,
-            )
-            work_meta_data = sparse_meta.work_meta_data
-            work_indptr = sparse_meta.work_indptr
-            work_info_set = sparse_meta.work_info_set
-            reduce_indptr = sparse_meta.reduce_indptr
-            reduce_final_map = sparse_meta.reduce_final_map
-            reduce_partial_map = sparse_meta.reduce_partial_map
+        # TODO: Enable persistent mode for fp8 kv cache once long input context
+        # can be handled
 
         mla_decode_fwd(
             q,
@@ -203,12 +153,6 @@ class MLASparseAttentionImplPluginModeMethods:
             q_scale=layer._q_scale,
             kv_scale=layer._k_scale,
             page_size=1,
-            work_meta_data=work_meta_data,
-            work_indptr=work_indptr,
-            work_info_set=work_info_set,
-            reduce_indptr=reduce_indptr,
-            reduce_final_map=reduce_final_map,
-            reduce_partial_map=reduce_partial_map,
         )
 
         if self.num_heads < _MLA_MIN_HEADS:
