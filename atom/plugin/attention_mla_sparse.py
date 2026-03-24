@@ -45,8 +45,6 @@ import logging
 
 logger = logging.getLogger("atom")
 
-_MLA_MIN_HEADS = 16  # AITER MLA kernels require at least 16 attention heads
-
 
 @triton.jit
 def fetch_id_to_ragged_kernel(
@@ -114,9 +112,8 @@ class MLASparseAttentionImplPluginModeMethods:
         sparse_meta = attn_metadata.plugin_metadata
 
         num_tokens = q.shape[0]
-        padded_num_heads = max(self.num_heads, _MLA_MIN_HEADS)
         output = torch.empty(
-            [num_tokens, padded_num_heads, self.kv_lora_rank],
+            [num_tokens, self.padded_num_heads, self.kv_lora_rank],
             # dtype=q.dtype,
             dtype=torch.bfloat16,
             device=q.device,
@@ -155,9 +152,8 @@ class MLASparseAttentionImplPluginModeMethods:
             page_size=1,
         )
 
-        if self.num_heads < _MLA_MIN_HEADS:
-            head_repeat_factor = _MLA_MIN_HEADS // self.num_heads
-            output = output[:, ::head_repeat_factor, :].contiguous()
+        if self.head_repeat_factor > 1:
+            output = output[:, ::self.head_repeat_factor, :].contiguous()
 
         return output[:, : self.num_heads, :]
 
@@ -288,9 +284,8 @@ class MLASparseAttentionImplPluginModeMethods:
                 is_nope_first=True,
             )
 
-        head_repeat_factor = _MLA_MIN_HEADS // self.num_heads
-        if head_repeat_factor > 1:
-            q_out = q_out.repeat_interleave(head_repeat_factor, dim=1)
+        if self.head_repeat_factor > 1:
+            q_out = q_out.repeat_interleave(self.head_repeat_factor, dim=1)
 
         assert self.topk_indices_buffer is not None
         topk_indices = self.topk_indices_buffer[:num_actual_toks]
@@ -344,6 +339,10 @@ def _mla_sparse_plugin_mode_init(self, *args, **kwargs):
             and self.kv_b_proj.weight.dtype == torch.bfloat16
         )
         self.q_pad_num_heads = kwargs.get("q_pad_num_heads", None)
+        
+        from atom.model_ops.attention_mla import _MLA_MIN_HEADS
+        self.padded_num_heads = max(self.num_heads, _MLA_MIN_HEADS)
+        self.head_repeat_factor = self.padded_num_heads // self.num_heads
 
         # Sparse MLA specific: verify topk_indices_buffer is present
         assert getattr(self, "topk_indices_buffer", None) is not None, (
