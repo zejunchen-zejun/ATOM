@@ -273,6 +273,18 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         )
         self.decode_using_pa_ps = self.page_size == 1024
 
+        if not self.use_mla:
+            self._num_kv_heads = num_kv_heads
+            gqa_group_size = self.num_head // num_kv_heads
+            padded_group = 1 << (gqa_group_size - 1).bit_length() if gqa_group_size & (gqa_group_size - 1) else gqa_group_size
+            self._gqa_group_size = gqa_group_size
+            self._padded_gqa_group_size = padded_group
+            self._padded_q_heads = padded_group * num_kv_heads
+            self._need_q_pad = self._padded_q_heads != self.num_head
+        else:
+            self._padded_q_heads = self.num_head
+            self._need_q_pad = False
+
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         """Init auxiliary variables for triton attention backend."""
         bs = forward_batch.batch_size
@@ -414,7 +426,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
                 # Build pa_metadata for pa_persistent_fwd
                 if self.decode_using_pa_ps:
-                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
+                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self._padded_q_heads)
                 # return  # Early return for non-MLA decode mode
         else:
             prefix_lens = forward_batch.extend_prefix_lens
@@ -970,7 +982,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 )
                 
                 if self.decode_using_pa_ps:
-                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
+                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self._padded_q_heads)
                 return
         else:
             raise ValueError(f"Invalid mode: {forward_mode=}")
@@ -1083,7 +1095,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 )
                 
                 if self.decode_using_pa_ps:
-                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
+                    self._build_pa_metadata_for_decode(bs, tp_q_head_num=self._padded_q_heads)
         else:
             raise ValueError("Invalid forward mode")
 
@@ -1719,21 +1731,14 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
 
             q = q.view(batch_size, layer.tp_q_head_num, layer.head_dim)
 
-            assert (
-                self.forward_metadata.pa_metadata_qo_indptr is not None
-            ), "pa_metadata_qo_indptr should be set by _build_pa_metadata_for_decode"
-            assert (
-                self.forward_metadata.pa_metadata_pages_kv_indptr is not None
-            ), "pa_metadata_pages_kv_indptr should be set by _build_pa_metadata_for_decode"
-            assert (
-                self.forward_metadata.pa_metadata_kv_indices is not None
-            ), "pa_metadata_kv_indices should be set by _build_pa_metadata_for_decode"
-            assert (
-                self.forward_metadata.pa_metadata_context_lens is not None
-            ), "pa_metadata_context_lens should be set by _build_pa_metadata_for_decode"
-            assert (
-                self.forward_metadata.pa_metadata_max_qlen is not None
-            ), "pa_metadata_max_qlen should be set by _build_pa_metadata_for_decode"
+            if self._need_q_pad:
+                nkv = self._num_kv_heads
+                gs = self._gqa_group_size
+                pgs = self._padded_gqa_group_size
+                q = q.view(batch_size, nkv, gs, layer.head_dim)
+                q = torch.nn.functional.pad(q, (0, 0, 0, pgs - gs))
+                q = q.reshape(batch_size, self._padded_q_heads, layer.head_dim)
+                o = q.new_empty((batch_size, self._padded_q_heads, head_dim_out))
 
             qo_indptr = self.forward_metadata.pa_metadata_qo_indptr
             kv_indptr = self.forward_metadata.pa_metadata_pages_kv_indptr
@@ -1761,6 +1766,15 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 softmax_scale=layer.scaling,
                 mask=1,
             )
+
+            if self._need_q_pad:
+                nkv = self._num_kv_heads
+                gs = self._gqa_group_size
+                pgs = self._padded_gqa_group_size
+                o = o.view(batch_size, nkv, pgs, head_dim_out)
+                o = o[:, :, :gs, :].contiguous()
+                o = o.view(batch_size, layer.tp_q_head_num, head_dim_out)
+
         return o.view(-1, layer.tp_q_head_num * head_dim_out)
 
     def forward_decode(
