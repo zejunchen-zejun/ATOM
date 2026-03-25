@@ -26,8 +26,12 @@ from .backends import AttentionBackend, CommonAttentionBuilder
 
 from atom.plugin.prepare import is_plugin_mode
 from atom.plugin.attention import AiterMLAAttentionMetadataBuilderDecoratorForPluginMode
-from atom.plugin.attention import AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode
-from atom.plugin.attention import AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode
+from atom.plugin.attention import (
+    AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode,
+)
+from atom.plugin.attention import (
+    AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode,
+)
 from atom.plugin.attention import AiterBackendDecoratorForPluginMode
 
 logger = logging.getLogger("atom")
@@ -528,10 +532,11 @@ class AiterMLASparseBackend(AttentionBackend):
     default_base_class=AiterMLAMetadataBuilder
 )
 class AiterMLASparseMetadataBuilder(AiterMLAMetadataBuilder):
-    """ Metadata builder for sparse MLA.
+    """Metadata builder for sparse MLA.
     In standalone mode, delegates to CommonAttentionBuilder.
     In plugin mode, the decorator replaces __init__ and build() methods.
     """
+
     pass
 
 

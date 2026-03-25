@@ -1358,7 +1358,7 @@ def AiterBackendDecoratorForPluginMode(cls):
         if not issubclass(cls.get_impl_cls(), MLAAttention):
             methods_cls = vllmAiterAttentionBackendMethods
         else:
-            is_sparse_mla = getattr(cls, 'is_sparse', lambda: False)()
+            is_sparse_mla = getattr(cls, "is_sparse", lambda: False)()
             if is_sparse_mla:
                 methods_cls = vllmAiterMLASparseBackendMethods
             else:
@@ -1402,8 +1402,8 @@ def AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode(default_base_cl
             )
 
             # replace the __init__ method in the decorated class
-            class_dict["__init__"] = create_mla_sparse_attn_metadata_builder_init_method(
-                base_class
+            class_dict["__init__"] = (
+                create_mla_sparse_attn_metadata_builder_init_method(base_class)
             )
 
             # add the methods to the decorated class
@@ -1431,7 +1431,9 @@ def AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode(default_base_cl
     return decorator
 
 
-def AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode(default_base_class):
+def AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode(
+    default_base_class
+):
     def decorator(cls):
         is_vllm_mode = is_vllm()
         is_sglang_mode = is_sglang()
@@ -1459,8 +1461,8 @@ def AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode(default_
                 )
             )
 
-            class_dict["__init__"] = create_mla_sparse_indexer_metadata_builder_init_method(
-                base_class
+            class_dict["__init__"] = (
+                create_mla_sparse_indexer_metadata_builder_init_method(base_class)
             )
 
             for method_name in dir(vllmMLASparseIndexerAttentionMetadataBuilderMethods):
@@ -1623,7 +1625,7 @@ class AiterMLASparseMetadataForPluginMode:
     num_reqs: int
     max_query_len: int
     max_seq_len: int
-    
+
     seq_lens: torch.Tensor
 
     num_actual_tokens: int  # Number of tokens excluding padding.
@@ -1931,7 +1933,6 @@ class vllmMLASparseIndexerAttentionMetadataBuilderMethods:
         )
 
         return indexer_metadata
-        
 
     def build(self, common_prefix_len, common_attn_metadata, fast_build=False):
         indexer_metadata = self._build_indexer(
@@ -2018,6 +2019,7 @@ def create_mla_sparse_indexer_metadata_builder_init_method(base_class):
         base_class.__init__(self, kv_cache_spec, layer_names, config, device)
         logger.info("init AiterMLASparseIndexerMetadataBuilder for plugin mode")
         from vllm.config import VllmConfig
+
         try:
             from vllm.utils.platform_utils import num_compute_units
         except ImportError:
@@ -2147,54 +2149,6 @@ def create_mla_sparse_attn_metadata_builder_init_method(base_class):
         self.paged_kv_indptr = torch.zeros(
             [max_num_batched_tokens + 1], dtype=torch.int32, device=device
         )
-
-        # Persistent mode buffers for fp8 kv cache
-        from aiter.ops.attention import get_mla_metadata_info_v1
-        # Determine dtype_q and dtype_kv based on kv_cache_dtype
-        dtype_q = torch.bfloat16
-        self.dtype_kv = torch.bfloat16  # default
-        if hasattr(config.model_config, 'kv_cache_dtype'):
-            kv_dtype_str = config.cache_config.cache_dtype
-            if kv_dtype_str.startswith("fp8"):
-                from vllm.platforms import current_platform
-                self.dtype_kv = current_platform.fp8_dtype()
-                dtype_q = current_platform.fp8_dtype()
-
-        (
-            (work_meta_data_size, work_meta_data_type),
-            (work_indptr_size, work_indptr_type),
-            (work_info_set_size, work_info_set_type),
-            (reduce_indptr_size, reduce_indptr_type),
-            (reduce_final_map_size, reduce_final_map_type),
-            (reduce_partial_map_size, reduce_partial_map_type),
-        ) = get_mla_metadata_info_v1(
-            batch_size=config.scheduler_config.max_num_seqs,
-            max_seqlen_qo=1,
-            num_head_qo=self.padded_num_heads,
-            q_dtype=dtype_q,
-            kv_dtype=self.dtype_kv,
-            is_sparse=True,
-        )
-
-        self.persistent_work_meta_data = torch.empty(
-            work_meta_data_size, dtype=work_meta_data_type, device=device
-        )
-        self.persistent_work_indptr = torch.empty(
-            work_indptr_size, dtype=work_indptr_type, device=device
-        )
-        self.persistent_work_info_set = torch.empty(
-            work_info_set_size, dtype=work_info_set_type, device=device
-        )
-        self.persistent_reduce_indptr = torch.empty(
-            reduce_indptr_size, dtype=reduce_indptr_type, device=device
-        )
-        self.persistent_reduce_final_map = torch.empty(
-            reduce_final_map_size, dtype=reduce_final_map_type, device=device
-        )
-        self.persistent_reduce_partial_map = torch.empty(
-            reduce_partial_map_size, dtype=reduce_partial_map_type, device=device
-        )
-
 
     return init_method_under_plugin_mode
 

@@ -134,9 +134,9 @@ class MLASparseAttentionImplPluginModeMethods:
 
         kv_buffer = kv_cache.unsqueeze(2)
 
-        # TODO: Enable persistent mode for fp8 kv cache once long input context
-        # can be handled
-
+        # TODO: Currently, persistent mode has memory access issues when input context is long
+        # in fp8 kv cache settings, so it is not used for now.
+        # Re-enable persistent mode when the issue is fixed.
         mla_decode_fwd(
             q,
             kv_buffer.view(-1, 1, 1, q.shape[-1]),
@@ -153,7 +153,7 @@ class MLASparseAttentionImplPluginModeMethods:
         )
 
         if self.head_repeat_factor > 1:
-            output = output[:, ::self.head_repeat_factor, :].contiguous()
+            output = output[:, :: self.head_repeat_factor, :].contiguous()
 
         return output[:, : self.num_heads, :]
 
@@ -194,8 +194,6 @@ class MLASparseAttentionImplPluginModeMethods:
         if self.dcp_world_size == -1:
             self.dcp_world_size = get_dcp_group().world_size
 
-        # fp8_attention = self.kv_cache_dtype.startswith("fp8")
-
         sparse_meta = attn_metadata.plugin_metadata
 
         num_actual_toks = sparse_meta.num_actual_tokens
@@ -206,9 +204,6 @@ class MLASparseAttentionImplPluginModeMethods:
         q = q[:num_actual_toks, ...]
         k_c_normed = k_c_normed[:num_actual_toks, ...]
         k_pe = k_pe[:num_actual_toks, ...].unsqueeze(1)
-
-        # if fp8_attention and self.kv_cache_dtype != "fp8_ds_mla":
-        #     kv_cache = kv_cache.view(current_platform.fp8_dtype())
 
         atom_config = get_current_atom_config()
         positions = atom_config.compilation_config.static_forward_context["positions"][
@@ -222,9 +217,7 @@ class MLASparseAttentionImplPluginModeMethods:
             kv_cache = kv_cache.view(current_platform.fp8_dtype())
 
         # Q absorption: q_nope -> W_K BMM -> ql_nope, then concat with q_pe
-        q_nope, q_pe = q.split(
-            [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
-        )
+        q_nope, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
 
         # Convert from (B, N, P) to (N, B, P)
         q_nope = q_nope.transpose(0, 1)
@@ -339,8 +332,9 @@ def _mla_sparse_plugin_mode_init(self, *args, **kwargs):
             and self.kv_b_proj.weight.dtype == torch.bfloat16
         )
         self.q_pad_num_heads = kwargs.get("q_pad_num_heads", None)
-        
+
         from atom.model_ops.attention_mla import _MLA_MIN_HEADS
+
         self.padded_num_heads = max(self.num_heads, _MLA_MIN_HEADS)
         self.head_repeat_factor = self.padded_num_heads // self.num_heads
 

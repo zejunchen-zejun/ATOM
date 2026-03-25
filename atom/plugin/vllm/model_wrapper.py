@@ -98,7 +98,7 @@ class ATOMModelBase(nn.Module, VllmModel, SupportsQuant, SupportsPP):
         self.model = model_cls(self.atom_config)
 
         # For sparse MLA, register the Indexer's DeepseekV32IndexerCache as
-        # a virtual subclass of vLLM's AttentionLayerBase so vLLM can discover 
+        # a virtual subclass of vLLM's AttentionLayerBase so vLLM can discover
         # it and allocate KV cache.
         self._register_indexer_caches_with_vllm()
 

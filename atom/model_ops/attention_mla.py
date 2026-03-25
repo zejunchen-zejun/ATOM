@@ -25,7 +25,9 @@ from atom.model_ops.linear import use_triton_gemm
 from atom.model_ops.utils import get_and_maybe_dequant_weights
 from atom.plugin import is_plugin_mode, is_vllm
 from atom.plugin.attention_mla import MLAAttentionImplDecoratorForPluginMode
-from atom.plugin.attention_mla_sparse import MLASparseAttentionImplDecoratorForPluginMode
+from atom.plugin.attention_mla_sparse import (
+    MLASparseAttentionImplDecoratorForPluginMode,
+)
 from atom.utils import envs
 from atom.utils.decorators import mark_trace
 from atom.utils.forward_context import (
@@ -206,7 +208,7 @@ class MLAAttention(nn.Module):
             self.W_V, self.W_V_scale = dynamic_per_batched_tensor_quant(
                 W_V, dtype=dtypes.fp8
             )
-            
+
             if is_plugin_mode() and is_vllm():
                 # The kernel operates on non-padded inputs. Hence, pre-compiling
                 # triton kernel to avoid runtime compilation for unseen batch sizes
@@ -215,6 +217,7 @@ class MLAAttention(nn.Module):
                 max_batch_size = 1024  # [ToDo] Find the optimal upper limit
                 pre_compilation_list = list(range(1, max_batch_size + 1))
                 from vllm.distributed.parallel_state import is_global_first_rank
+
                 if is_global_first_rank():
                     pre_compilation_list = tqdm(
                         pre_compilation_list,
