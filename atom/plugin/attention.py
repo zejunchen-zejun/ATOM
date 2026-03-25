@@ -1432,7 +1432,7 @@ def AiterMLASparseAttentionMetadataBuilderDecoratorForPluginMode(default_base_cl
 
 
 def AiterMLASparseIndexerAttentionMetadataBuilderDecoratorForPluginMode(
-    default_base_class
+    default_base_class,
 ):
     def decorator(cls):
         is_vllm_mode = is_vllm()
