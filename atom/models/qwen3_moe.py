@@ -46,6 +46,18 @@ ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION = (
 ENABLE_AITER_ROPE_FUSED_QKNORM_FOR_SGL_PLUGIN_MODE = envs.ATOM_ROPE_FUSED_QKNORM
 
 
+def _get_page_size(forward_batch, default: int = 1024) -> int:
+    """Resolve page_size from forward_batch's attn_backend or token pool."""
+    for obj in (
+        getattr(forward_batch, "attn_backend", None),
+        getattr(getattr(forward_batch, "token_to_kv_pool", None), "allocator", None),
+        getattr(forward_batch, "token_to_kv_pool", None),
+    ):
+        if obj is not None and hasattr(obj, "page_size"):
+            return obj.page_size
+    return default
+
+
 class Qwen3MoeMLP(nn.Module):
     def __init__(
         self,
@@ -248,17 +260,7 @@ class Qwen3MoeAttention(nn.Module):
             k_buffer, v_buffer = forward_batch.token_to_kv_pool.get_kv_buffer(
                 self.layer_num
             )
-            block_size = 1024  # Default fallback
-            if hasattr(forward_batch, "attn_backend") and hasattr(
-                forward_batch.attn_backend, "page_size"
-            ):
-                block_size = forward_batch.attn_backend.page_size
-            elif hasattr(forward_batch.token_to_kv_pool, "allocator") and hasattr(
-                forward_batch.token_to_kv_pool.allocator, "page_size"
-            ):
-                block_size = forward_batch.token_to_kv_pool.allocator.page_size
-            elif hasattr(forward_batch.token_to_kv_pool, "page_size"):
-                block_size = forward_batch.token_to_kv_pool.page_size
+            block_size = _get_page_size(forward_batch)
             x = 16 // k_buffer.element_size()
             aiter_fused_set_kv_buffer_arg = AiterFusedSetKVBufferArg(
                 kv_cache=(k_buffer, v_buffer),

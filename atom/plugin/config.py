@@ -1,5 +1,3 @@
-import sys
-
 from typing import Any, Optional
 from dataclasses import dataclass
 
@@ -110,8 +108,7 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
 
 def _generate_atom_config_from_sglang_config(config: Any):
     from sglang.srt.server_args import (
-        ServerArgs,
-        prepare_server_args,
+        get_global_server_args,
         PortArgs,
     )
     from sglang.srt.configs.model_config import ModelConfig as SglangModelConfig
@@ -119,13 +116,9 @@ def _generate_atom_config_from_sglang_config(config: Any):
     from sglang.srt.configs.load_config import LoadConfig
     from atom.config import Config, ParallelConfig, CompilationConfig
 
-    # Format1: sglang serve --model-path ...
-    # Format2: python3 -m sglang.launch_server --model-path ...
-    args_list = sys.argv[2:] if sys.argv[1] == "serve" else sys.argv[1:]
-    # sglang has no global config variable like vllm,
-    # so here construct the server args from sys.argv passed by users
-    # this is the only way to get full arguments
-    server_args: ServerArgs = prepare_server_args(args_list)
+    # sglang's ModelRunner already parsed and stored ServerArgs globally
+    # before OOT model loading, so we can retrieve it directly.
+    server_args = get_global_server_args()
 
     sgl_model_config = SglangModelConfig.from_server_args(server_args)
     sgl_model_opt_config = ModelOptConfig(
