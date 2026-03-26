@@ -52,7 +52,13 @@ class RadixAttention(BaseAttention):
         if is_sglang():
             from sglang.srt.layers.radix_attention import RadixAttention
 
-            _v_head_dim = mla_modules.kv_lora_rank if (use_mla and mla_modules is not None) else head_dim
+            explicit_v_head_dim = kwargs.get("v_head_dim", None) # mha uses v_head_dim
+            if explicit_v_head_dim is not None:
+                _v_head_dim = explicit_v_head_dim
+            elif use_mla and mla_modules is not None:
+                _v_head_dim = mla_modules.kv_lora_rank
+            else:
+                _v_head_dim = head_dim
 
             self.attn = RadixAttention(
                 num_heads=num_heads,

@@ -1360,7 +1360,16 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 kvc = kvc.to(dtype)
                 k_pe = k_pe.to(dtype)
 
-            kvprefix = layer.kv_b_proj(kvc.contiguous())[0]
+            # The staged MHA-form MLA cache write keeps a singleton KV-head axis
+            # ([tokens, 1, kv_lora_rank]). Flatten it before kv_b_proj GEMM.
+            if kvc.ndim == 3:
+                assert kvc.shape[1] == 1, (
+                    f"Unexpected prefix latent shape for kv_b_proj: {tuple(kvc.shape)}"
+                )
+            kvc_for_gemm = kvc.reshape(-1, kv_lora_rank).contiguous()
+            kvprefix = layer.kv_b_proj(kvc_for_gemm)
+            if isinstance(kvprefix, tuple):
+                kvprefix = kvprefix[0]
             kvprefix = kvprefix.view(
                 -1, layer.tp_k_head_num, qk_nope_head_dim + layer.v_head_dim
             )
@@ -1807,38 +1816,6 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         reduce_final_map = self.forward_metadata.reduce_final_map
         reduce_partial_map = self.forward_metadata.reduce_partial_map
         num_kv_splits = self.forward_metadata.num_kv_splits
-
-        if layer.layer_id == 0:
-            _q_view = q.view(-1, layer.tp_q_head_num, layer.qk_head_dim)
-            _k_view = k_buffer.view(-1, 1, 1, layer.qk_head_dim)
-            _o_view = o.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            # print(
-            #     f"[MLA_DECODE_DBG] layer=0"
-            #     f" q={tuple(_q_view.shape)} q.dtype={_q_view.dtype}"
-            #     f" k_buf={tuple(_k_view.shape)} k_buf.dtype={_k_view.dtype}"
-            #     f" o={tuple(_o_view.shape)} o.dtype={_o_view.dtype}"
-            #     f" qo_indptr={self.forward_metadata.qo_indptr.tolist()}"
-            #     f" kv_indptr={self.forward_metadata.kv_indptr.tolist()}"
-            #     f" kv_indices_len={self.forward_metadata.kv_indices.shape[0]}"
-            #     f" kv_indices_max={self.forward_metadata.kv_indices.max().item()}"
-            #     f" kv_last_page_len={self.forward_metadata.kv_last_page_len.tolist()}"
-            #     f" max_q_len={self.forward_metadata.max_q_len}"
-            #     f" sm_scale={layer.scaling}"
-            #     f" logit_cap={layer.logit_cap}"
-            #     f" k_scale={layer.k_scale}"
-            #     f" num_kv_splits={num_kv_splits}"
-            #     f" page_size={self.page_size}"
-            #     f" work_metadata={tuple(work_metadata.shape) if work_metadata is not None else None}"
-            #     f" work_indptr={tuple(work_indptr.shape) if work_indptr is not None else None}"
-            #     f" work_info_set={tuple(work_info_set.shape) if work_info_set is not None else None}"
-            #     f" reduce_indptr={tuple(reduce_indptr.shape) if reduce_indptr is not None else None} val={reduce_indptr.tolist() if reduce_indptr is not None and reduce_indptr.numel() < 20 else 'big'}"
-            #     f" reduce_final_map={tuple(reduce_final_map.shape) if reduce_final_map is not None else None}"
-            #     f" reduce_partial_map={tuple(reduce_partial_map.shape) if reduce_partial_map is not None else None}"
-            #     f" intra_batch_mode={_sglang_aiter.intra_batch_mode}"
-            #     f" _use_mla_ps_kernel={_sglang_aiter._use_mla_ps_kernel}"
-            #     f" fast_mode={_sglang_aiter.fast_mode}"
-            #     , flush=True,
-            # )
 
         mla_decode_fwd(
             q.view(-1, layer.tp_q_head_num, layer.qk_head_dim),
