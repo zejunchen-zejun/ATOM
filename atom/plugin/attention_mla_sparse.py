@@ -343,6 +343,7 @@ def _mla_sparse_plugin_mode_init(self, *args, **kwargs):
             "topk_indices_buffer must be set for sparse MLA plugin mode. "
             "Ensure the model's Indexer is properly initialized."
         )
+        self._is_sparse_mla = True
 
 
 def MLASparseAttentionImplDecoratorForPluginMode(cls):

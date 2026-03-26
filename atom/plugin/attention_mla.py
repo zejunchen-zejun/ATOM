@@ -629,8 +629,8 @@ class MLAAttentionImplPluginModeMethods:
     ):
         assert output is not None, "Output tensor must be provided."
 
-        # Dispatch to sparse MLA forward if this instance uses sparse attention
-        if getattr(self, "topk_indices_buffer", None) is not None:
+        # Dispatch using explicit sparse-mode marker set during plugin init.
+        if getattr(self, "_is_sparse_mla", False):
             return self.forward_impl_sparse_plugin_mode(
                 layer=layer,
                 q=q,
@@ -947,6 +947,8 @@ def _mla_plugin_mode_init(self, *args, **kwargs):
             else:
                 # TODO: support other quant types for fallback path
                 assert False, "Unsupported quant type"
+
+        self._is_sparse_mla = False
 
 
 def MLAAttentionImplDecoratorForPluginMode(cls):
