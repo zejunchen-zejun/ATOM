@@ -2025,10 +2025,10 @@ class DeepseekV2MLAAttention(nn.Module):
                 _use_aiter_gfx95
                 and self.q_b_proj.weight.dtype == torch.float8_e4m3fn
             ):
-                q, _, _, _ = fused_rms_fp8_group_quant(
+                (q, q_scale), _, _, _ = fused_rms_fp8_group_quant(
                     q,
                     self.q_a_layernorm.weight,
-                    self.q_a_layernorm.variance_epsilon,
+                    self.q_a_layernorm.eps,
                     None,
                     None,
                     None,
@@ -2037,7 +2037,7 @@ class DeepseekV2MLAAttention(nn.Module):
                     res1=None,
                     output_unquantized_inp1=False,
                 )
-                q = self.q_b_proj(q).view(-1, self.num_local_heads, self.qk_head_dim)
+                q = self.q_b_proj(q, q_scale).view(-1, self.num_local_heads, self.qk_head_dim)
             else:
                 q = self.q_a_layernorm(q)
                 q = self.q_b_proj(q).view(-1, self.num_local_heads, self.qk_head_dim)
@@ -2050,10 +2050,10 @@ class DeepseekV2MLAAttention(nn.Module):
         latent_cache = latent_cache.unsqueeze(1)
 
         if _use_aiter_gfx95 and self.kv_b_proj.weight.dtype == torch.float8_e4m3fn:
-            kv_a_quanted, kv_a, _, _ = fused_rms_fp8_group_quant(
+            (kv_a_quanted, kv_a_quanted_scale), kv_a, _, _ = fused_rms_fp8_group_quant(
                 kv_a,
                 self.kv_a_layernorm.weight,
-                self.kv_a_layernorm.variance_epsilon,
+                self.kv_a_layernorm.eps,
                 None,
                 None,
                 None,
@@ -2074,7 +2074,7 @@ class DeepseekV2MLAAttention(nn.Module):
         self._set_mla_kv_buffer_for_mha(kv_a, k_pe, forward_batch)
 
         if kv_a_quanted is not None:
-            kv = self.kv_b_proj(kv_a_quanted)
+            kv = self.kv_b_proj(kv_a_quanted, kv_a_quanted_scale)
         else:
             kv = self.kv_b_proj(kv_a)
         kv = kv.view(-1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim)
