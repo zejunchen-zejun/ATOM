@@ -1075,7 +1075,16 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             kvc = kvc.to(dtype)
             k_pe = k_pe.to(dtype)
 
-        kvprefix = layer.kv_b_proj(kvc.contiguous())[0]
+        # The staged MHA-form MLA cache write keeps a singleton KV-head axis
+        # ([tokens, 1, kv_lora_rank]). Flatten it before kv_b_proj GEMM.
+        if kvc.ndim == 3:
+            assert kvc.shape[1] == 1, (
+                f"Unexpected prefix latent shape for kv_b_proj: {tuple(kvc.shape)}"
+            )
+        kvc_for_gemm = kvc.reshape(-1, kv_lora_rank).contiguous()
+        kvprefix = layer.kv_b_proj(kvc_for_gemm)
+        if isinstance(kvprefix, tuple):
+            kvprefix = kvprefix[0]
         kvprefix = kvprefix.view(
             -1, layer.tp_k_head_num, qk_nope_head_dim + layer.v_head_dim
         )

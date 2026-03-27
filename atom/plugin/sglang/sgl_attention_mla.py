@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 import torch
 from aiter.dist.parallel_state import get_tensor_model_parallel_world_size, get_tp_group
 from aiter.ops.triton.fused_kv_cache import fused_qk_rope_cat_and_cache_mla
+from aiter.ops.triton.fused_fp8_quant import fused_rms_fp8_group_quant
+from atom.model_ops.base_attention import Attention
+from atom.models.utils import maybe_prefix
 
 # sglang imports
 from sglang.srt.layers.communicator import AttentionInputs, get_attn_tp_context
@@ -88,19 +91,52 @@ class SglPrepareResult(NamedTuple):
     llama_4_scaling: Optional[Any]
 
 
+class SglMhaPrepareResult(NamedTuple):
+    q: torch.Tensor
+    k: torch.Tensor
+    v: torch.Tensor
+    forward_batch: Any
+
+
+def _unwrap_linear_output(output: Any) -> torch.Tensor:
+    """Normalize ATOM/public-SGLang linear outputs to a tensor."""
+    if isinstance(output, tuple):
+        return output[0]
+    return output
+
+
 # Init helpers
-def init_sgl_attrs(attn: DeepseekV2MLAAttention, config) -> None:
+def init_sgl_attrs(
+    attn: DeepseekV2MLAAttention,
+    config,
+    kv_cache_dtype: str,
+) -> None:
     """Initialise sglang-only attributes on DeepseekV2MLAAttention."""
     from sglang.srt.configs.model_config import is_deepseek_nsa
 
     attn.use_nsa = is_deepseek_nsa(config)
     attn.use_deep_gemm_bmm = False
     attn.alt_stream = None
+    attn.kv_cache_dtype = kv_cache_dtype
     attn.use_fused_qk_rope_concat_and_cache_mla = _use_aiter_gfx95
+    attn.current_sgl_plugin_attn_path = None
     attn.w_kc, attn.w_vc = None, None
     attn.w_scale = None
     attn.w_scale_k = None
     attn.w_scale_v = None
+    attn.attn_mha = Attention(
+        num_heads=attn.num_local_heads,
+        head_dim=attn.qk_head_dim,
+        scale=attn.scaling,
+        num_kv_heads=attn.num_local_heads,
+        kv_cache_dtype=kv_cache_dtype,
+        layer_num=attn.layer_num,
+        use_mla=False,
+        v_head_dim=attn.v_head_dim,
+        prefix=maybe_prefix(attn.prefix, "attn_mha"),
+    )
+    if hasattr(attn.attn_mha, "attn"):
+        attn.attn_mha.attn.kv_b_proj = None
 
 
 # Absorbed batched-matmul (shared by prepare and core)
@@ -280,8 +316,10 @@ def forward_sgl_prepare(
                     layer_id=attn.layer_num,
                 )
     else:
-        q = attn.q_proj(hidden_states).view(-1, attn.num_local_heads, attn.qk_head_dim)
-        latent_cache = attn.kv_a_proj_with_mqa(hidden_states)[0]
+        q = _unwrap_linear_output(attn.q_proj(hidden_states)).view(
+            -1, attn.num_local_heads, attn.qk_head_dim
+        )
+        latent_cache = _unwrap_linear_output(attn.kv_a_proj_with_mqa(hidden_states))
         k_nope = latent_cache[..., : attn.kv_lora_rank]
         k_nope = attn.kv_a_layernorm(k_nope).unsqueeze(1)
 
@@ -371,6 +409,210 @@ def forward_sgl_core(
     return attn.o_proj(attn_bmm_output)
 
 
+def _dispatch_sgl_plugin_attn_path(forward_batch) -> str:
+    if forward_batch.forward_mode.is_extend_without_speculative():
+        return "mha"
+    return "mla"
+
+
+def forward_sgl_plugin_mode_mla(
+    attn: DeepseekV2MLAAttention,
+    positions: torch.Tensor,
+    hidden_states: torch.Tensor,
+    **model_kwargs,
+) -> torch.Tensor:
+    prepared = forward_sgl_prepare(attn, positions, hidden_states, **model_kwargs)
+    return forward_sgl_core(attn, prepared)
+
+
+def _get_sglang_radix_attn(attn_module):
+    return attn_module.attn if hasattr(attn_module, "attn") else attn_module
+
+
+def _set_mla_kv_buffer_for_mha(
+    attn: DeepseekV2MLAAttention,
+    kv_a: torch.Tensor,
+    k_pe: torch.Tensor,
+    forward_batch,
+) -> None:
+    attn_mha = _get_sglang_radix_attn(attn.attn_mha)
+    cache_k = torch.cat([kv_a.unsqueeze(1), k_pe], dim=-1)
+    # Keep ATOM's staged packed-latent contract for now: the backend will
+    # split this cache tensor back into kv_a and k_pe when reconstructing
+    # has-prefix non-absorb prefill.
+    forward_batch.token_to_kv_pool.set_kv_buffer(
+        attn_mha,
+        forward_batch.out_cache_loc,
+        cache_k,
+        cache_k,
+    )
+
+
+def _can_run_sgl_mha_now(attn: DeepseekV2MLAAttention, forward_batch) -> bool:
+    del forward_batch
+    if attn.use_nsa:
+        return False
+    if attn.kv_b_proj.weight.dtype == torch.uint8:
+        return False
+    return True
+
+
+def forward_sgl_mha_prepare(
+    attn: DeepseekV2MLAAttention,
+    positions: torch.Tensor,
+    hidden_states: torch.Tensor,
+    **model_kwargs,
+) -> SglMhaPrepareResult:
+    forward_batch = model_kwargs.get("forward_batch", None)
+    if forward_batch is None:
+        raise RuntimeError("forward_batch is required in forward_sgl_mha_prepare")
+
+    hidden_states_scale = None
+    if isinstance(hidden_states, tuple):
+        hidden_states, hidden_states_scale = hidden_states
+
+    attn_mha = _get_sglang_radix_attn(attn.attn_mha)
+    if getattr(attn_mha, "kv_b_proj", None) is None:
+        attn_mha.kv_b_proj = attn.kv_b_proj
+
+    if attn.q_lora_rank is not None:
+        q, latent_cache = (
+            get_attn_tp_context()
+            .fetch_qkv_latent()
+            .split(
+                [attn.q_lora_rank, attn.kv_lora_rank + attn.qk_rope_head_dim],
+                dim=-1,
+            )
+        )
+
+        if (
+            q.shape[0] != positions.shape[0]
+            and get_tensor_model_parallel_world_size() > 1
+        ):
+            qkv_lora = torch.cat([q, latent_cache], dim=-1)
+            qkv_lora = get_tp_group().all_gather(qkv_lora, dim=0)
+            if qkv_lora.shape[0] < positions.shape[0]:
+                raise RuntimeError(
+                    f"qkv_lora gather mismatch: got {qkv_lora.shape[0]}, "
+                    f"expected {positions.shape[0]}"
+                )
+            qkv_lora = qkv_lora[: positions.shape[0]]
+            q, latent_cache = torch.split(
+                qkv_lora,
+                [attn.q_lora_rank, attn.kv_lora_rank + attn.qk_rope_head_dim],
+                dim=-1,
+            )
+
+        if (
+            _use_aiter_gfx95
+            and attn.q_b_proj.weight.dtype == torch.float8_e4m3fn
+        ):
+            (q, q_scale), _, _, _ = fused_rms_fp8_group_quant(
+                q,
+                attn.q_a_layernorm.weight,
+                attn.q_a_layernorm.eps,
+                None,
+                None,
+                None,
+                group_size=128,
+                dtype_quant=torch.float8_e4m3fn,
+                res1=None,
+                output_unquantized_inp1=False,
+            )
+            q = _unwrap_linear_output(attn.q_b_proj(q, q_scale)).view(
+                -1, attn.num_local_heads, attn.qk_head_dim
+            )
+        else:
+            q = attn.q_a_layernorm(q)
+            q = _unwrap_linear_output(attn.q_b_proj(q)).view(
+                -1, attn.num_local_heads, attn.qk_head_dim
+            )
+    else:
+        q = _unwrap_linear_output(attn.q_proj(hidden_states, hidden_states_scale)).view(
+            -1, attn.num_local_heads, attn.qk_head_dim
+        )
+        latent_cache = _unwrap_linear_output(
+            attn.kv_a_proj_with_mqa(hidden_states, hidden_states_scale)
+        )
+
+    _, q_pe = q.split([attn.qk_nope_head_dim, attn.qk_rope_head_dim], dim=-1)
+    kv_a, _ = latent_cache.split([attn.kv_lora_rank, attn.qk_rope_head_dim], dim=-1)
+    latent_cache = latent_cache.unsqueeze(1)
+
+    if _use_aiter_gfx95 and attn.kv_b_proj.weight.dtype == torch.float8_e4m3fn:
+        (kv_a_quanted, kv_a_quanted_scale), kv_a, _, _ = fused_rms_fp8_group_quant(
+            kv_a,
+            attn.kv_a_layernorm.weight,
+            attn.kv_a_layernorm.eps,
+            None,
+            None,
+            None,
+            group_size=128,
+            dtype_quant=torch.float8_e4m3fn,
+            res1=None,
+            output_unquantized_inp1=True,
+        )
+    else:
+        kv_a_quanted = None
+        kv_a = attn.kv_a_layernorm(kv_a)
+
+    k_pe = latent_cache[:, :, attn.kv_lora_rank :]
+    if attn.rotary_emb is not None:
+        q_pe, k_pe = attn.rotary_emb(positions, q_pe, k_pe)
+    q[..., attn.qk_nope_head_dim :] = q_pe
+
+    _set_mla_kv_buffer_for_mha(attn, kv_a, k_pe, forward_batch)
+
+    if kv_a_quanted is not None:
+        kv = _unwrap_linear_output(attn.kv_b_proj(kv_a_quanted, kv_a_quanted_scale))
+    else:
+        kv = _unwrap_linear_output(attn.kv_b_proj(kv_a))
+    kv = kv.view(-1, attn.num_local_heads, attn.qk_nope_head_dim + attn.v_head_dim)
+    k_nope = kv[..., : attn.qk_nope_head_dim]
+    v = kv[..., attn.qk_nope_head_dim :]
+    k = torch.cat(
+        [k_nope, k_pe.expand(-1, attn.num_local_heads, -1)],
+        dim=-1,
+    )
+    return SglMhaPrepareResult(q=q, k=k, v=v, forward_batch=forward_batch)
+
+
+def forward_sgl_mha_core(
+    attn: DeepseekV2MLAAttention,
+    prepared: SglMhaPrepareResult,
+) -> torch.Tensor:
+    attn_output = attn.attn_mha(
+        prepared.q,
+        prepared.k,
+        prepared.v,
+        forward_batch=prepared.forward_batch,
+        save_kv_cache=False,
+    )
+    attn_output = attn_output.reshape(-1, attn.num_local_heads * attn.v_head_dim)
+    return attn.o_proj(attn_output)
+
+
+def forward_sgl_plugin_mode_mha(
+    attn: DeepseekV2MLAAttention,
+    positions: torch.Tensor,
+    hidden_states: torch.Tensor,
+    **model_kwargs,
+) -> torch.Tensor:
+    forward_batch = model_kwargs.get("forward_batch", None)
+    if forward_batch is None:
+        raise RuntimeError("forward_batch is required in forward_sgl_plugin_mode_mha")
+    if not _can_run_sgl_mha_now(attn, forward_batch):
+        attn.current_sgl_plugin_attn_path = "mla_fallback"
+        return forward_sgl_plugin_mode_mla(
+            attn,
+            positions,
+            hidden_states,
+            **model_kwargs,
+        )
+    prepared = forward_sgl_mha_prepare(attn, positions, hidden_states, **model_kwargs)
+    return forward_sgl_mha_core(attn, prepared)
+
+
 def prepare_qkv_latent(
     attn: DeepseekV2MLAAttention,
     hidden_states: torch.Tensor,
@@ -429,8 +671,23 @@ def forward_sgl_plugin_mode(
                     lambda hs, fb: prepare_qkv_latent(attn, hs, fb),
                 )
             )
-        prepared = forward_sgl_prepare(attn, positions, hidden_states, **model_kwargs)
-        return forward_sgl_core(attn, prepared)
+        attn_path = _dispatch_sgl_plugin_attn_path(forward_batch)
+        attn.current_sgl_plugin_attn_path = attn_path
+        if attn_path == "mha":
+            return forward_sgl_plugin_mode_mha(
+                attn,
+                positions,
+                hidden_states,
+                **model_kwargs,
+            )
+        if attn_path == "mla":
+            return forward_sgl_plugin_mode_mla(
+                attn,
+                positions,
+                hidden_states,
+                **model_kwargs,
+            )
+        raise ValueError(f"Unsupported plugin attention path: {attn_path}")
 
 
 # Weight post-processing: decomposed into sub-functions
