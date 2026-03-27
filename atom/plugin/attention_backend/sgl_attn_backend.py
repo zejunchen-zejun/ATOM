@@ -229,6 +229,8 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             dtype=torch.int32,
             device=model_runner.device,
         )
+        self.cuda_graph_seq_lens = None
+        self.cuda_graph_page_table = None
         # Pre-compute strided indices for page_table construction (used in both CUDA Graph and non-CUDA Graph modes)
         self.strided_indices = torch.arange(
             0, self.max_context_len, self.page_size, device=model_runner.device
@@ -825,13 +827,15 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         else:
             self.cuda_graph_kv_indices = kv_indices_buf
 
-        # Always use preshuffle layout for pa_fwd_asm
-        self.page_table = torch.zeros(
+        # CUDA graph replay uses dedicated buffers sized to cuda_graph_max_bs.
+        self.cuda_graph_page_table = torch.zeros(
             (max_bs, self.max_context_len // self.page_size),
             dtype=torch.int32,
             device=self.device,
         )
-        self.seq_lens = torch.zeros((max_bs,), dtype=torch.int32, device=self.device)
+        self.cuda_graph_seq_lens = torch.zeros(
+            (max_bs,), dtype=torch.int32, device=self.device
+        )
         self.strided_indices = torch.arange(
             0, self.max_context_len, self.page_size, device=self.device
         )
@@ -967,9 +971,9 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     num_kv_splits=num_kv_splits,
                 )
             else:
-                page_table = self.page_table[:bs, :]
-                self.seq_lens[:bs].copy_(seq_lens, non_blocking=True)
-                seq_lens_persistent = self.seq_lens[:bs]
+                page_table = self.cuda_graph_page_table[:bs, :]
+                self.cuda_graph_seq_lens[:bs].copy_(seq_lens, non_blocking=True)
+                seq_lens_persistent = self.cuda_graph_seq_lens[:bs]
                 self.forward_metadata = ForwardMetadata(
                     None,
                     None,
@@ -1074,8 +1078,8 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                     num_kv_splits=num_kv_splits,
                 )
             else:
-                page_table_persistent = self.page_table
-                seq_lens_persistent = self.seq_lens
+                page_table_persistent = self.cuda_graph_page_table
+                seq_lens_persistent = self.cuda_graph_seq_lens
                 seq_lens_persistent.fill_(0)
                 page_table_persistent.fill_(0)
                 seq_lens_persistent[:bs].copy_(seq_lens, non_blocking=True)

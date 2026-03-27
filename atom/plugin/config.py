@@ -182,11 +182,17 @@ def _generate_atom_config_from_sglang_config(config: Any):
         sglang_port_args=PortArgs.init_new(server_args),
     )
 
-    # force max num batched tokens to 16K because sgl doesn't have
-    # concept for max num batched tokens
+    # SGLang does not expose a dedicated max_num_batched_tokens knob, but the
+    # effective per-forward token bound is controlled by prefill/decode limits.
+    max_num_batched_tokens = max(
+        server_args.max_prefill_tokens,
+        max(server_args.chunked_prefill_size or 0, 0),
+        server_args.max_running_requests or 0,
+    )
+
     return Config(
         model=None,
-        max_num_batched_tokens=16384,
+        max_num_batched_tokens=max_num_batched_tokens,
         max_num_seqs=server_args.max_running_requests,
         max_model_len=server_args.context_length,
         gpu_memory_utilization=server_args.mem_fraction_static,
