@@ -45,7 +45,10 @@ from aiter.ops.triton.fused_fp8_quant import (
     fused_reduce_rms_fp8_group_quant,
     fused_rms_fp8_group_quant,
 )
-from aiter import fused_qk_rmsnorm
+try:
+    from aiter import fused_qk_rmsnorm
+except ImportError:
+    fused_qk_rmsnorm = None
 from aiter.ops.triton.fused_mxfp4_quant import (
     fused_reduce_rms_mxfp4_quant,
     fused_rms_mxfp4_quant,
@@ -1476,7 +1479,7 @@ class DeepseekV2MLAAttention(nn.Module):
         self.quant_dtype = None
         self.fuse_qknorm_quant = False
         # always fuse qknorm
-        self.fuse_qknorm = ENABLE_DS_QKNORM_FUSION
+        self.fuse_qknorm = ENABLE_DS_QKNORM_FUSION and fused_qk_rmsnorm is not None
         if quant_config is not None and ENABLE_DS_QKNORM_QUANT_FUSION:
             if layer_quant_dtype == dtypes.fp8 or (
                 layer_quant_dtype == dtypes.fp4x2 and use_triton_gemm()
