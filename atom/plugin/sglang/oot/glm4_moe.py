@@ -1,4 +1,4 @@
-"""ATOM GLM-4.7 model wrapper for SGLang external model loading.
+"""ATOM GLM MoE wrappers for SGLang external model loading.
 
 Registers Glm4MoeForCausalLM and GlmMoeDsaForCausalLM as external
 model classes via SGLANG_EXTERNAL_MODEL_PACKAGE, replacing sglang's
@@ -51,8 +51,13 @@ def _patch_rope_in_attention_layers(atom_model):
     logger.info("Patched RoPE into %d Glm4MoeAttention layers", patched)
 
 
+def _needs_glm4_rope_patch(config) -> bool:
+    architectures = getattr(config, "architectures", None) or []
+    return bool(architectures and architectures[0] == "Glm4MoeForCausalLM")
+
+
 class Glm4MoeForCausalLM(nn.Module):
-    """ATOM-backed GLM-4.7 MoE model for SGLang.
+    """ATOM-backed GLM MoE model wrapper for SGLang.
 
     This wrapper delegates model creation and weight loading to ATOM's
     plugin system, while conforming to sglang's model interface
@@ -83,7 +88,8 @@ class Glm4MoeForCausalLM(nn.Module):
                 f"ATOM failed to create model for architecture {model_arch}"
             )
 
-        _patch_rope_in_attention_layers(self.model)
+        if _needs_glm4_rope_patch(config):
+            _patch_rope_in_attention_layers(self.model)
 
         self.logits_processor = LogitsProcessor(config)
 
@@ -125,7 +131,11 @@ class Glm4MoeForCausalLM(nn.Module):
 
 
 class GlmMoeDsaForCausalLM(Glm4MoeForCausalLM):
-    pass
+    """ATOM-backed GLM-5 wrapper for SGLang.
+
+    GLM-5 reuses ATOM's DeepSeekV2 implementation, so it only needs the
+    generic SGLang wrapper and must skip the GLM4-specific RoPE patch.
+    """
 
 
 EntryClass = [Glm4MoeForCausalLM, GlmMoeDsaForCausalLM]

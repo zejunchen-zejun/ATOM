@@ -33,7 +33,7 @@ from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
 from aiter.ops.triton.pa_mqa_logits import deepgemm_fp8_paged_mqa_logits
 
 from atom.config import get_current_atom_config
-from atom.plugin.prepare import is_vllm
+from atom.plugin.prepare import is_sglang, is_vllm
 from atom.utils import envs
 from atom.utils.custom_register import direct_register_custom_op
 
@@ -593,10 +593,11 @@ direct_register_custom_op(
 
 
 def IndexerDecoratorForPluginMode(cls):
-    if getattr(cls, "_atom_vllm_indexer_decorated", False):
+    if getattr(cls, "_atom_plugin_indexer_decorated", False):
         return cls
 
     orig_init = cls.__init__
+    orig_forward = cls.forward
 
     def new_init(self, *args, **kwargs):
         orig_init(self, *args, **kwargs)
@@ -604,9 +605,30 @@ def IndexerDecoratorForPluginMode(cls):
             self.sparse_attn_indexer_impl = (
                 torch.ops.aiter.sparse_attn_indexer_plugin_mode
             )
+        if is_sglang():
+            # Keep the attribute available for SGLang's native NSA-style call path.
+            # ATOM's SGLang backend currently falls back to dense MLA instead of
+            # consuming sparse indexer output, so no auxiliary stream is used here.
+            self.alt_stream = None
+
+    def new_forward(self, *args, **kwargs):
+        if is_sglang() and {"x", "q_lora", "positions", "forward_batch", "layer_id"} <= set(
+            kwargs
+        ):
+            if not getattr(cls, "_atom_sglang_sparse_fallback_warned", False):
+                logger.warning(
+                    "SGLang invoked ATOM's sparse indexer for %s, but the current "
+                    "plugin attention backend does not consume sparse index output. "
+                    "Falling back to dense MLA for this path.",
+                    getattr(self, "prefix", cls.__name__),
+                )
+                cls._atom_sglang_sparse_fallback_warned = True
+            return None
+        return orig_forward(self, *args, **kwargs)
 
     cls.__init__ = new_init
-    cls._atom_vllm_indexer_decorated = True
+    cls.forward = new_forward
+    cls._atom_plugin_indexer_decorated = True
     return cls
 
 

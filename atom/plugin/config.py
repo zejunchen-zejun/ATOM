@@ -182,12 +182,26 @@ def _generate_atom_config_from_sglang_config(config: Any):
         sglang_port_args=PortArgs.init_new(server_args),
     )
 
+    # SGLang derives max_running_requests later from the finalized token
+    # capacity, so it may still be None at wrapper construction time.
+    # ATOM's GLM-5 sparse indexer needs a concrete upper bound during model
+    # init, so fall back to a conservative plugin-local default.
+    max_num_seqs = server_args.max_running_requests
+    if max_num_seqs is None:
+        max_num_seqs = 48
+        logger.warning(
+            "SGLang did not provide max_running_requests during plugin config "
+            "translation; falling back to %d for ATOM model initialization. "
+            "Pass --max-running-requests to override this if needed.",
+            max_num_seqs,
+        )
+
     # force max num batched tokens to 16K because sgl doesn't have
     # concept for max num batched tokens
     return Config(
         model=None,
         max_num_batched_tokens=16384,
-        max_num_seqs=server_args.max_running_requests,
+        max_num_seqs=max_num_seqs,
         max_model_len=server_args.context_length,
         gpu_memory_utilization=server_args.mem_fraction_static,
         tensor_parallel_size=server_args.tp_size,

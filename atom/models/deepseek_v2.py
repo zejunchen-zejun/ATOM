@@ -98,6 +98,7 @@ from sglang.srt.model_executor.cuda_graph_runner import get_is_capture_mode
 from sglang.srt.configs.model_config import is_deepseek_nsa
 from sglang.srt.models.deepseek_common.utils import _use_aiter_gfx95,_use_aiter,_is_gfx95_supported
 from sglang.srt.layers.quantization.rocm_mxfp4_utils import batched_gemm_afp4wfp4_pre_quant
+from sglang.srt.utils import is_hip as sglang_is_hip
 from aiter.ops.triton.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant import (
         batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant,
 )
@@ -1216,6 +1217,692 @@ class Indexer(nn.Module):
 
         self.sparse_attn_indexer_impl = torch.ops.aiter.sparse_attn_indexer
 
+    def _sglang_empty_topk(self, num_tokens: int, device: torch.device) -> torch.Tensor:
+        return torch.full(
+            (num_tokens, self.topk_tokens),
+            -1,
+            dtype=torch.int32,
+            device=device,
+        )
+
+    def _sglang_project_head_gates(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return self.weights_proj(hidden_states).float() * self.n_head**-0.5
+
+    def _sglang_get_q_k_bf16(
+        self,
+        hidden_states: torch.Tensor,
+        q_lora: torch.Tensor,
+        positions: torch.Tensor,
+        rotary_emb,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        from sglang.srt.layers.attention.nsa.nsa_indexer import rotate_activation
+
+        query = self.wq_b(q_lora).view(-1, self.n_head, self.head_dim)
+        key = self.k_norm(self.wk(hidden_states))
+
+        q_pe, _ = torch.split(
+            query, [self.rope_dim, self.head_dim - self.rope_dim], dim=-1
+        )
+        k_pe, _ = torch.split(
+            key, [self.rope_dim, self.head_dim - self.rope_dim], dim=-1
+        )
+        q_pe, k_pe = rotary_emb(positions, q_pe, k_pe)
+        query[..., : self.rope_dim] = q_pe
+        key[..., : self.rope_dim] = k_pe
+
+        query = rotate_activation(query.contiguous())
+        key = rotate_activation(key.contiguous())
+        return query, key
+
+    def _sglang_store_index_k_cache(
+        self,
+        forward_batch,
+        layer_id: int,
+        key: torch.Tensor,
+    ) -> None:
+        if sglang_is_hip():
+            from sglang.srt.layers.attention.nsa.tilelang_kernel import act_quant
+        else:
+            from sglang.srt.layers.attention.nsa.triton_kernel import act_quant
+
+        out_loc = forward_batch.out_cache_loc
+        if not out_loc.is_contiguous():
+            out_loc = out_loc.contiguous()
+
+        k_fp8, k_scale = act_quant(
+            key.contiguous(), self.quant_block_size, self.scale_fmt
+        )
+        forward_batch.token_to_kv_pool.set_index_k_scale_buffer(
+            layer_id=layer_id,
+            loc=out_loc,
+            index_k=k_fp8,
+            index_k_scale=k_scale,
+        )
+
+    def _sglang_should_chunk_mqa_logits(
+        self,
+        num_q: int,
+        num_k: int,
+        device: torch.device,
+    ) -> tuple[bool, int]:
+        if num_q * num_k < 8_000_000:
+            return False, 0
+
+        free_mem, total_mem = torch.cuda.mem_get_info(device)
+        logits_bytes = num_q * num_k * 4
+        need_chunk = (logits_bytes * 2 > free_mem) or (logits_bytes > total_mem * 0.3)
+        return need_chunk, free_mem
+
+    def _sglang_atom_get_page_table(
+        self,
+        forward_batch,
+        max_seq_len: int,
+    ) -> torch.Tensor:
+        page_size = int(forward_batch.token_to_kv_pool.page_size)
+        max_entries = (max_seq_len + page_size - 1) // page_size
+        req_to_token = forward_batch.req_to_token_pool.req_to_token
+        req_pool_indices = forward_batch.req_pool_indices.to(torch.long)
+        page_positions = torch.arange(
+            0,
+            max_entries * page_size,
+            page_size,
+            dtype=torch.int64,
+            device=req_to_token.device,
+        )
+        page_table = req_to_token[req_pool_indices[:, None], page_positions[None, :]]
+        if page_size > 1:
+            page_table = page_table // page_size
+        return page_table.to(torch.int32)
+
+    def _sglang_atom_prefill_spans(
+        self,
+        qo_indptr: torch.Tensor,
+        seq_lens: torch.Tensor,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q = qo_indptr.to(dtype=torch.long)
+        seq_lens = seq_lens.to(dtype=torch.long)
+        counts = q[1:] - q[:-1]
+        num_tokens = int(q[-1].item())
+        if num_tokens == 0:
+            empty = torch.empty(0, dtype=torch.int32, device=device)
+            return empty, empty
+
+        kv_starts = torch.cumsum(seq_lens, dim=0) - seq_lens
+        batch_id = torch.repeat_interleave(
+            torch.arange(seq_lens.numel(), device=seq_lens.device),
+            counts,
+        )
+        start_tensor = kv_starts[batch_id]
+        seq_lens_expand = torch.repeat_interleave(seq_lens, counts)
+        counts_expand = torch.repeat_interleave(counts, counts)
+        pos_within = (
+            torch.arange(num_tokens, dtype=torch.long, device=seq_lens.device)
+            - torch.repeat_interleave(q[:-1], counts)
+            + 1
+        )
+        local_pos = seq_lens_expand - counts_expand + pos_within
+        end_tensor = start_tensor + local_pos
+        return start_tensor.to(dtype=torch.int32), end_tensor.to(dtype=torch.int32)
+
+    def _sglang_atom_full_topk_decode(
+        self,
+        seq_lens: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor:
+        seq_lens = seq_lens.to(device=device, dtype=torch.int32)
+        arange = torch.arange(
+            self.topk_tokens, dtype=torch.int32, device=device
+        ).unsqueeze(0)
+        topk = arange.expand(seq_lens.shape[0], -1).clone()
+        topk[topk >= seq_lens.unsqueeze(1)] = -1
+        return topk
+
+    def _sglang_atom_full_topk_prefill(
+        self,
+        ks: torch.Tensor,
+        ke: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor:
+        ks = ks.to(device=device, dtype=torch.int32)
+        ke = ke.to(device=device, dtype=torch.int32)
+        arange = torch.arange(
+            self.topk_tokens, dtype=torch.int32, device=device
+        ).unsqueeze(0)
+        topk = ks.unsqueeze(1) + arange
+        topk[topk >= ke.unsqueeze(1)] = -1
+        return topk
+
+    def _sglang_atom_get_topk_paged(
+        self,
+        forward_batch,
+        layer_id: int,
+        q_fp8: torch.Tensor,
+        weights: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_size = int(forward_batch.batch_size)
+        if batch_size <= 0:
+            return self._sglang_empty_topk(0, q_fp8.device)
+
+        seq_lens = forward_batch.seq_lens.to(torch.int32)
+        max_seq_len = int(seq_lens.max().item())
+        page_table = self._sglang_atom_get_page_table(forward_batch, max_seq_len)
+
+        num_tokens = q_fp8.shape[0]
+        assert num_tokens % batch_size == 0, (
+            f"Unexpected decode token shape for sparse indexer: "
+            f"{num_tokens=} is not divisible by {batch_size=}"
+        )
+        next_n = num_tokens // batch_size
+
+        kv_cache_fp8 = forward_batch.token_to_kv_pool.get_index_k_with_scale_buffer(
+            layer_id=layer_id
+        )
+        head_dim_with_scale = self.head_dim + 4
+        kv_cache_fp8 = kv_cache_fp8.view(
+            kv_cache_fp8.shape[0],
+            1,
+            1,
+            head_dim_with_scale,
+        )
+
+        logits = torch.full(
+            (num_tokens, max_seq_len),
+            float("-inf"),
+            dtype=torch.float32,
+            device=q_fp8.device,
+        )
+        deepgemm_fp8_paged_mqa_logits(
+            q_fp8.view(batch_size, next_n, *q_fp8.shape[1:]),
+            kv_cache_fp8,
+            weights.squeeze(-1),
+            logits,
+            seq_lens,
+            page_table,
+            max_seq_len,
+            Preshuffle=False,
+            KVBlockSize=1,
+            ChunkK=128,
+            TotalCuCount=256,
+            WavePerEU=5,
+        )
+
+        topk_result = self._sglang_empty_topk(num_tokens, q_fp8.device)
+        top_k_per_row_decode(
+            logits,
+            next_n,
+            seq_lens,
+            topk_result,
+            logits.shape[0],
+            logits.stride(0),
+            logits.stride(1),
+        )
+        return topk_result
+
+    def _sglang_atom_get_topk_prefill(
+        self,
+        forward_batch,
+        layer_id: int,
+        q_fp8: torch.Tensor,
+        weights: torch.Tensor,
+    ) -> torch.Tensor:
+        seq_lens = forward_batch.seq_lens.to(torch.int32)
+        extend_seq_lens = forward_batch.extend_seq_lens.to(torch.int32)
+        max_seq_len = int(seq_lens.max().item())
+        seq_len_sum = int(seq_lens.sum().item())
+        page_table = self._sglang_atom_get_page_table(forward_batch, max_seq_len)
+
+        qo_indptr = torch.zeros(
+            extend_seq_lens.shape[0] + 1, dtype=torch.int32, device=q_fp8.device
+        )
+        qo_indptr[1:] = torch.cumsum(extend_seq_lens, dim=0)
+        num_tokens = int(qo_indptr[-1].item())
+        if num_tokens == 0:
+            return self._sglang_empty_topk(0, q_fp8.device)
+
+        k_fp8, k_scale = forward_batch.token_to_kv_pool.get_index_k_scale_buffer(
+            layer_id,
+            seq_lens,
+            page_table,
+            seq_len_sum,
+            max_seq_len,
+        )
+        k_fp8 = k_fp8.view(dtypes.fp8)
+        k_scale = k_scale.view(torch.float32).squeeze(-1)
+
+        ks, ke = self._sglang_atom_prefill_spans(qo_indptr, seq_lens, q_fp8.device)
+        weights = weights.squeeze(-1)[:num_tokens]
+        topk_result = self._sglang_empty_topk(num_tokens, q_fp8.device)
+
+        need_chunk, free_mem = self._sglang_should_chunk_mqa_logits(
+            num_tokens, seq_len_sum, q_fp8.device
+        )
+        if not need_chunk:
+            logits = fp8_mqa_logits(
+                q_fp8[:num_tokens],
+                k_fp8,
+                k_scale,
+                weights,
+                ks,
+                ke,
+            )
+            top_k_per_row_prefill(
+                logits=logits,
+                rowStarts=ks,
+                rowEnds=ke,
+                indices=topk_result,
+                values=None,
+                numRows=logits.shape[0],
+                stride0=logits.stride(0),
+                stride1=logits.stride(1),
+            )
+            return topk_result
+
+        bytes_per_row = seq_len_sum * 4
+        max_rows = max(1, int((free_mem * 0.5) // max(bytes_per_row, 1)))
+        max_rows = min(max_rows, num_tokens)
+        start = 0
+        while start < num_tokens:
+            end = min(start + max_rows, num_tokens)
+            logits_chunk = fp8_mqa_logits(
+                q_fp8[start:end],
+                k_fp8,
+                k_scale,
+                weights[start:end],
+                ks[start:end],
+                ke[start:end],
+            )
+            top_k_per_row_prefill(
+                logits=logits_chunk,
+                rowStarts=ks[start:end],
+                rowEnds=ke[start:end],
+                indices=topk_result[start:end],
+                values=None,
+                numRows=logits_chunk.shape[0],
+                stride0=logits_chunk.stride(0),
+                stride1=logits_chunk.stride(1),
+            )
+            start = end
+        return topk_result
+
+    def forward_sglang_atom_plugin_mode(
+        self,
+        hidden_states: torch.Tensor,
+        q_lora: torch.Tensor,
+        positions: torch.Tensor,
+        rotary_emb,
+        forward_batch,
+        layer_id: int,
+    ) -> Optional[torch.Tensor]:
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        assert int(forward_batch.token_to_kv_pool.page_size) == 1, (
+            "ATOM sparse MLA bridge for SGLang currently requires page_size == 1."
+        )
+
+        if sglang_is_hip():
+            from sglang.srt.layers.attention.nsa.tilelang_kernel import act_quant
+        else:
+            from sglang.srt.layers.attention.nsa.triton_kernel import act_quant
+
+        query, key = self._sglang_get_q_k_bf16(
+            hidden_states, q_lora, positions, rotary_emb
+        )
+        q_fp8, q_scale = act_quant(
+            query.contiguous(), self.quant_block_size, self.scale_fmt
+        )
+        self._sglang_store_index_k_cache(forward_batch, layer_id, key)
+
+        seq_lens = getattr(forward_batch, "seq_lens", None)
+        if seq_lens is None or seq_lens.numel() == 0:
+            return None
+
+        weights = self._sglang_project_head_gates(hidden_states)
+        weights = weights.unsqueeze(-1) * q_scale * self.softmax_scale
+
+        if forward_batch.forward_mode.is_decode_or_idle():
+            if int(seq_lens.max().item()) <= self.topk_tokens:
+                return self._sglang_atom_full_topk_decode(
+                    seq_lens, hidden_states.device
+                )
+            return self._sglang_atom_get_topk_paged(
+                forward_batch, layer_id, q_fp8, weights
+            )
+        if forward_batch.forward_mode.is_extend_without_speculative():
+            if int(seq_lens.max().item()) <= self.topk_tokens:
+                extend_seq_lens = forward_batch.extend_seq_lens.to(torch.int32)
+                qo_indptr = torch.zeros(
+                    extend_seq_lens.shape[0] + 1,
+                    dtype=torch.int32,
+                    device=hidden_states.device,
+                )
+                qo_indptr[1:] = torch.cumsum(extend_seq_lens, dim=0)
+                ks, ke = self._sglang_atom_prefill_spans(
+                    qo_indptr, seq_lens, hidden_states.device
+                )
+                return self._sglang_atom_full_topk_prefill(
+                    ks, ke, hidden_states.device
+                )
+            return self._sglang_atom_get_topk_prefill(
+                forward_batch, layer_id, q_fp8, weights
+            )
+        return None
+
+    def _sglang_get_topk_paged(
+        self,
+        forward_batch,
+        layer_id: int,
+        q_fp8: torch.Tensor,
+        weights: torch.Tensor,
+        metadata,
+    ) -> torch.Tensor:
+        is_hip_backend = sglang_is_hip()
+        page_size = forward_batch.token_to_kv_pool.page_size
+        if is_hip_backend:
+            assert page_size == 1, "NSA paged top-k on ROCm requires page_size == 1"
+            block_tables = metadata.get_page_table_1()
+        else:
+            from sglang.srt.layers.attention.nsa.nsa_indexer import deep_gemm
+
+            assert page_size == 64, "NSA paged top-k on CUDA requires page_size == 64"
+            block_tables = metadata.get_page_table_64()
+
+        max_seq_len = block_tables.shape[1] * page_size
+        kv_cache_fp8 = forward_batch.token_to_kv_pool.get_index_k_with_scale_buffer(
+            layer_id=layer_id
+        )
+
+        if (
+            forward_batch.forward_mode.is_target_verify()
+            or forward_batch.forward_mode.is_draft_extend(include_v2=True)
+        ):
+            seqlens_32 = metadata.get_seqlens_expanded()
+        else:
+            seqlens_32 = metadata.get_seqlens_int32()
+
+        assert q_fp8.ndim == 3
+        q_fp8 = q_fp8.unsqueeze(1)
+        assert kv_cache_fp8.ndim == 2
+
+        block_kv = 1 if is_hip_backend else 64
+        head_dim_with_scale = self.head_dim + 4
+        if is_hip_backend:
+            kv_cache_fp8 = kv_cache_fp8.view(-1, block_kv, 1, head_dim_with_scale)
+        else:
+            kv_cache_fp8 = kv_cache_fp8.view(
+                kv_cache_fp8.shape[0], block_kv, 1, head_dim_with_scale
+            )
+
+        assert weights.ndim == 3
+        weights = weights.squeeze(2)
+
+        q_offset = sum(metadata.get_nsa_extend_len_cpu())
+        if is_hip_backend:
+            batch_size, next_n, _, _ = q_fp8.shape
+            logits = torch.full(
+                (batch_size * next_n, max_seq_len),
+                float("-inf"),
+                dtype=torch.float32,
+                device=q_fp8.device,
+            )
+            deepgemm_fp8_paged_mqa_logits(
+                q_fp8,
+                kv_cache_fp8,
+                weights,
+                logits,
+                seqlens_32,
+                block_tables,
+                max_seq_len,
+                Preshuffle=False,
+                KVBlockSize=block_kv,
+                ChunkK=128,
+                TotalCuCount=256,
+                WavePerEU=5,
+            )
+        else:
+            schedule_metadata = getattr(metadata, "paged_mqa_schedule_metadata", None)
+            if schedule_metadata is None:
+                schedule_metadata = deep_gemm.get_paged_mqa_logits_metadata(
+                    seqlens_32,
+                    block_kv,
+                    deep_gemm.get_num_sms(),
+                )
+            logits = deep_gemm.fp8_paged_mqa_logits(
+                q_fp8[:q_offset],
+                kv_cache_fp8,
+                weights[:q_offset],
+                seqlens_32,
+                block_tables,
+                schedule_metadata,
+                max_seq_len,
+                clean_logits=False,
+            )
+        topk_result = metadata.topk_transform(logits, self.topk_tokens)
+        if (not is_hip_backend) and q_offset < q_fp8.shape[0]:
+            pad_len = q_fp8.shape[0] - q_offset
+            padding = torch.full(
+                (pad_len, topk_result.shape[1]),
+                -1,
+                dtype=topk_result.dtype,
+                device=topk_result.device,
+            )
+            topk_result = torch.cat([topk_result, padding], dim=0)
+        return topk_result
+
+    def _sglang_get_topk_ragged(
+        self,
+        forward_batch,
+        layer_id: int,
+        q_fp8: torch.Tensor,
+        weights: torch.Tensor,
+        metadata,
+    ) -> torch.Tensor:
+        is_hip_backend = sglang_is_hip()
+        page_size = forward_batch.token_to_kv_pool.page_size
+        if is_hip_backend:
+            assert page_size == 1, "NSA ragged top-k on ROCm requires page_size == 1"
+            block_tables = metadata.get_page_table_1()
+        else:
+            from sglang.srt.layers.attention.nsa.nsa_indexer import deep_gemm
+
+            assert page_size == 64, "NSA ragged top-k on CUDA requires page_size == 64"
+            block_tables = metadata.get_page_table_64()
+
+        assert weights.ndim == 3
+        weights = weights.squeeze(-1)
+
+        batch_size = len(block_tables)
+        token_nums = q_fp8.shape[0]
+        topk_result = self._sglang_empty_topk(token_nums, q_fp8.device)
+        if batch_size == 0:
+            return topk_result
+
+        ks, ke = metadata.get_indexer_kvcache_range()
+        indexer_seq_lens_cpu = metadata.get_indexer_seq_len_cpu()
+        seq_len_sum = int(torch.sum(indexer_seq_lens_cpu).item())
+        max_seq_len = int(torch.max(indexer_seq_lens_cpu).item())
+        k_fp8, k_scale = forward_batch.token_to_kv_pool.get_index_k_scale_buffer(
+            layer_id,
+            metadata.get_indexer_seq_len(),
+            block_tables,
+            seq_len_sum,
+            max_seq_len,
+        )
+        k_fp8 = k_fp8.view(dtypes.fp8)
+        k_scale = k_scale.view(torch.float32).squeeze(-1)
+
+        seq_lens_expanded = metadata.get_seqlens_expanded()
+        token_to_batch_idx = metadata.get_token_to_batch_idx()
+        q_offset = ks.shape[0]
+        k_offset = k_fp8.shape[0]
+        need_chunk, free_mem = self._sglang_should_chunk_mqa_logits(
+            q_offset, k_offset, q_fp8.device
+        )
+
+        if not need_chunk:
+            if is_hip_backend:
+                logits = fp8_mqa_logits(
+                    q_fp8[:q_offset],
+                    k_fp8,
+                    k_scale,
+                    weights[:q_offset],
+                    ks,
+                    ke,
+                )
+            else:
+                logits = deep_gemm.fp8_mqa_logits(
+                    q_fp8[:q_offset],
+                    (k_fp8, k_scale),
+                    weights[:q_offset],
+                    ks,
+                    ke,
+                    clean_logits=False,
+                )
+            topk_result[:q_offset] = metadata.topk_transform(
+                logits, self.topk_tokens, ks=ks
+            )
+            return topk_result
+
+        bytes_per_row = k_offset * 4
+        max_rows = max(1, int((free_mem * 0.5) // max(bytes_per_row, 1)))
+        max_rows = min(max_rows, q_offset)
+        global_topk_offset = metadata.attn_metadata.topk_indices_offset
+
+        start = 0
+        while start < q_offset:
+            end = min(start + max_rows, q_offset)
+            if is_hip_backend:
+                logits_chunk = fp8_mqa_logits(
+                    q_fp8[start:end],
+                    k_fp8,
+                    k_scale,
+                    weights[start:end],
+                    ks[start:end],
+                    ke[start:end],
+                )
+            else:
+                logits_chunk = deep_gemm.fp8_mqa_logits(
+                    q_fp8[start:end],
+                    (k_fp8, k_scale),
+                    weights[start:end],
+                    ks[start:end],
+                    ke[start:end],
+                    clean_logits=False,
+                )
+
+            lengths_chunk = seq_lens_expanded[start:end]
+            if global_topk_offset is not None:
+                topk_offset_chunk = global_topk_offset[start:end]
+                cu_seqlens_q_chunk = None
+                batch_idx_chunk = None
+            else:
+                topk_offset_chunk = None
+                cu_seqlens_q_chunk = torch.ones(
+                    logits_chunk.shape[0], dtype=torch.int32, device=q_fp8.device
+                )
+                batch_idx_chunk = token_to_batch_idx[start:end]
+
+            topk_result[start:end] = metadata.topk_transform(
+                logits_chunk,
+                self.topk_tokens,
+                ks=ks[start:end],
+                cu_seqlens_q=cu_seqlens_q_chunk,
+                ke_offset=lengths_chunk,
+                batch_idx_list=batch_idx_chunk,
+                topk_indices_offset_override=topk_offset_chunk,
+            )
+            start = end
+
+        return topk_result
+
+    def forward_sglang_plugin_mode(
+        self,
+        hidden_states: torch.Tensor,
+        q_lora: torch.Tensor,
+        positions: torch.Tensor,
+        rotary_emb,
+        forward_batch,
+        layer_id: int,
+    ) -> Optional[torch.Tensor]:
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+
+        attn_backend = getattr(forward_batch, "attn_backend", None)
+        if (
+            attn_backend is not None
+            and getattr(attn_backend, "use_mla", False)
+            and hasattr(attn_backend, "forward_metadata")
+            and not hasattr(attn_backend, "get_indexer_metadata")
+        ):
+            return self.forward_sglang_atom_plugin_mode(
+                hidden_states,
+                q_lora,
+                positions,
+                rotary_emb,
+                forward_batch,
+                layer_id,
+            )
+
+        metadata = (
+            attn_backend.get_indexer_metadata(layer_id, forward_batch)
+            if attn_backend is not None and hasattr(attn_backend, "get_indexer_metadata")
+            else None
+        )
+        if metadata is None:
+            return None
+
+        if getattr(forward_batch, "nsa_cp_metadata", None) is not None:
+            raise NotImplementedError(
+                "ATOM SGLang sparse indexer does not yet support NSA prefill context parallel."
+            )
+
+        if sglang_is_hip():
+            from sglang.srt.layers.attention.nsa.tilelang_kernel import act_quant
+        else:
+            from sglang.srt.layers.attention.nsa.triton_kernel import act_quant
+
+        query, key = self._sglang_get_q_k_bf16(
+            hidden_states, q_lora, positions, rotary_emb
+        )
+        q_fp8, q_scale = act_quant(
+            query.contiguous(), self.quant_block_size, self.scale_fmt
+        )
+        self._sglang_store_index_k_cache(forward_batch, layer_id, key)
+
+        weights = self._sglang_project_head_gates(hidden_states)
+        weights = weights.unsqueeze(-1) * q_scale * self.softmax_scale
+
+        seq_lens_cpu = getattr(forward_batch, "seq_lens_cpu", None)
+        if seq_lens_cpu is not None and len(seq_lens_cpu) == 0:
+            return self._sglang_empty_topk(hidden_states.shape[0], hidden_states.device)
+
+        if (
+            forward_batch.forward_mode.is_extend_without_speculative()
+            and seq_lens_cpu is not None
+            and len(seq_lens_cpu) > 0
+            and int(seq_lens_cpu.max().item()) <= self.topk_tokens
+        ):
+            dummy_logits = torch.zeros(
+                metadata.get_seqlens_expanded().shape[0],
+                self.topk_tokens,
+                dtype=torch.float32,
+                device=hidden_states.device,
+            )
+            return metadata.topk_transform(dummy_logits, self.topk_tokens)
+
+        if (
+            forward_batch.forward_mode.is_decode_or_idle()
+            or forward_batch.forward_mode.is_target_verify()
+            or forward_batch.forward_mode.is_draft_extend(include_v2=True)
+        ):
+            return self._sglang_get_topk_paged(
+                forward_batch, layer_id, q_fp8, weights, metadata
+            )
+
+        return self._sglang_get_topk_ragged(
+            forward_batch, layer_id, q_fp8, weights, metadata
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1223,7 +1910,19 @@ class Indexer(nn.Module):
         qr_scale: Optional[torch.Tensor],
         positions,
         rotary_emb,
+        forward_batch=None,
+        layer_id: Optional[int] = None,
     ) -> torch.Tensor:
+        if is_sglang() and forward_batch is not None and layer_id is not None:
+            return self.forward_sglang_plugin_mode(
+                hidden_states,
+                qr,
+                positions,
+                rotary_emb,
+                forward_batch,
+                layer_id,
+            )
+
         q = self.wq_b(qr, qr_scale)
         q = q.view(-1, self.n_head, self.head_dim)
         q_pe, q_nope = torch.split(
@@ -1642,9 +2341,11 @@ class DeepseekV2MLAAttention(nn.Module):
                         -1, self.num_local_heads, self.qk_head_dim
                     )
                 topk_indices = self.indexer(
-                    x=hidden_states,
-                    q_lora=q_lora,
-                    positions=positions,
+                    hidden_states,
+                    q_lora,
+                    None,
+                    positions,
+                    self.indexer_rope_emb,
                     forward_batch=forward_batch,
                     layer_id=self.layer_num,
                 )
@@ -1654,9 +2355,11 @@ class DeepseekV2MLAAttention(nn.Module):
                 q = self.q_b_proj(q).view(-1, self.num_local_heads, self.qk_head_dim)
                 if q_lora is not None:
                     topk_indices = self.indexer(
-                        x=hidden_states,
-                        q_lora=q_lora,
-                        positions=positions,
+                        hidden_states,
+                        q_lora,
+                        None,
+                        positions,
+                        self.indexer_rope_emb,
                         forward_batch=forward_batch,
                         layer_id=self.layer_num,
                     )

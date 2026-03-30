@@ -948,7 +948,8 @@ def _convert_req_index_to_global_index_dsa_prefill_kernel(
     token_to_seq_idxs,  # int32 [num_tokens]
     topk_indices,  # int32 [num_tokens, NUM_TOPK_TOKENS]
     block_table,  # int32 [num_req, max_num_blocks_per_req]
-    cu_seqlens_q,  # int32 [num_tokens + 1]
+    cu_seqlens_q,  # int32 [num_req + 1]  (per-request KV start in batch-global space)
+    seq_lens_per_req,  # int32 [num_req]  (length of each request; bounds block_table col)
     out_kv_indices,  # int32
     # shapes (compile-time where possible)
     NUM_TOPK_TOKENS: tl.constexpr,
@@ -976,12 +977,19 @@ def _convert_req_index_to_global_index_dsa_prefill_kernel(
         topk_indices + token_id * ti_stride0 + col_id * ti_stride1
     )  # int32
     pre_seqlens_q = tl.load(cu_seqlens_q + req_id)
+    seq_len_r = tl.load(seq_lens_per_req + req_id)
+    local_idx = indice - pre_seqlens_q
 
-    # Guard block_table access
+    # Guard block_table access (global indice must map to a valid in-request position)
     store_mask = (col_id < kv_len) & (col_id < NUM_TOPK_TOKENS)
-    valid_mask = store_mask & (indice >= 0)
+    valid_mask = (
+        store_mask
+        & (indice >= 0)
+        & (local_idx >= 0)
+        & (local_idx < seq_len_r)
+    )
     out_val = tl.load(
-        block_table + req_id * bt_stride0 + (indice - pre_seqlens_q) * bt_stride1,
+        block_table + req_id * bt_stride0 + local_idx * bt_stride1,
         mask=valid_mask,
         other=-1,
     )
@@ -1027,6 +1035,10 @@ def triton_convert_req_index_to_global_index_dsa_prefill(
 
     grid = (num_tokens, tiles_per_row)
 
+    num_req = cu_seqlens_q.shape[0] - 1
+    seq_lens_per_req = (cu_seqlens_q[1:] - cu_seqlens_q[:-1]).to(torch.int32).contiguous()
+    assert seq_lens_per_req.numel() == num_req
+
     _convert_req_index_to_global_index_dsa_prefill_kernel[grid](
         dsa_qo_indptr,
         dsa_kv_indptr,
@@ -1034,6 +1046,7 @@ def triton_convert_req_index_to_global_index_dsa_prefill(
         topk_indices,
         block_table,
         cu_seqlens_q,
+        seq_lens_per_req,
         new_kv_indices,
         # shapes / constexprs
         NUM_TOPK_TOKENS,
