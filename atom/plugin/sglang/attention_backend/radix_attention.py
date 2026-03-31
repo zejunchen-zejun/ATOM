@@ -88,11 +88,15 @@ class RadixAttention(BaseAttention):
                     torch.tensor([1.0], dtype=torch.float32, device="cuda"),
                     requires_grad=False,
                 )
+            if self.attn.k_scale_float is None:
+                self.attn.k_scale_float = 1.0
             if self.attn.v_scale is None:
                 self.attn.v_scale = torch.nn.Parameter(
                     torch.tensor([1.0], dtype=torch.float32, device="cuda"),
                     requires_grad=False,
                 )
+            if self.attn.v_scale_float is None:
+                self.attn.v_scale_float = 1.0
         else:
             raise NotImplementedError(
                 "RadixAttention is only supported for plugin mode for sglang for now"
