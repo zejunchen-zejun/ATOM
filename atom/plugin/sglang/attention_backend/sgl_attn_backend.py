@@ -1009,7 +1009,6 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         K_Buffer = forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id)
 
         assert len(q.shape) == 3
-
         if (
             forward_batch.forward_mode.is_target_verify()
             or forward_batch.forward_mode.is_draft_extend()
@@ -1020,6 +1019,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 K_Buffer,
                 qo_indptr,
             )
+
         if not forward_batch.forward_mode.is_extend():
             raise ValueError(
                 f"Invalid forward mode for MLA extend: {forward_batch.forward_mode=}"

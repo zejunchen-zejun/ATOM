@@ -411,7 +411,7 @@ def forward_sgl_core(
             is_neox=attn.rotary_emb.is_neox_style,
             is_nope_first=True,
         )
-        # Decode/speculative MLA consumes q plus packed MLA cache directly.
+        # Decode/speculative MLA consumes q plus the packed MLA cache directly.
         k = None
         v = None
         save_kv_cache = False
