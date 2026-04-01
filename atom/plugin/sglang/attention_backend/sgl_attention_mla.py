@@ -989,6 +989,11 @@ def _patch_mla_attention_for_sglang(attn, config, kv_cache_dtype: str = "bf16") 
         hidden_states: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
+        from atom.plugin.sglang.models.base_model_wrapper import (
+            get_current_forward_batch,
+        )
+
+        kwargs["forward_batch"] = get_current_forward_batch()
         return forward_sgl_plugin_mode(attn, positions, hidden_states, **kwargs)
 
     attn.forward = patched_forward

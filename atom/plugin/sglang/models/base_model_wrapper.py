@@ -1,4 +1,4 @@
-"""ATOM model wrappers for SGLang external model loading (OOT).
+"""ATOM model wrappers for SGLang external model loading.
 
 Registers model architecture classes via SGLANG_EXTERNAL_MODEL_PACKAGE,
 replacing sglang's built-in implementations with ATOM-optimized versions.
@@ -17,7 +17,18 @@ from sglang.srt.layers.logits_processor import LogitsProcessor, LogitsProcessorO
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 
-logger = logging.getLogger("atom.plugin.sglang.model_wrapper")
+logger = logging.getLogger("atom.plugin.sglang.models")
+
+# Module-level context for passing forward_batch to patched attention layers
+# without threading **model_kwargs through every model layer. Set before each
+# self.model() call in the wrapper's forward() and read by the patched
+# attention forward in sgl_attention_mla.py.
+_current_forward_batch = None
+
+
+def get_current_forward_batch():
+    return _current_forward_batch
+
 
 _MODEL_NAMES = [
     "DeepseekV3ForCausalLM",
@@ -89,15 +100,13 @@ class _AtomCausalLMBaseForSglang(nn.Module):
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
         **model_kwargs,
     ) -> Union[LogitsProcessorOutput, PPProxyTensors]:
+        global _current_forward_batch
+        _current_forward_batch = forward_batch
         hidden_states = self.model(
             input_ids=input_ids,
             positions=positions,
             intermediate_tensors=None,
             inputs_embeds=input_embeds,
-            forward_batch=forward_batch,
-            get_embedding=get_embedding,
-            pp_proxy_tensors=pp_proxy_tensors,
-            **model_kwargs,
         )
 
         if self.pp_group.is_last_rank:
