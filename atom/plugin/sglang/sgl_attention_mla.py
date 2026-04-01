@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 
 import torch
 from aiter.dist.parallel_state import get_tensor_model_parallel_world_size, get_tp_group
-from aiter.ops.triton.fused_kv_cache import fused_qk_rope_cat_and_cache_mla
 from aiter.ops.triton.fused_fp8_quant import fused_rms_fp8_group_quant
 from atom.model_ops.base_attention import Attention
+from atom.model_ops.attention_mla import fused_qk_rope_concat_and_cache_mla
 from atom.models.utils import maybe_prefix
 
 # sglang imports
@@ -359,30 +359,48 @@ def forward_sgl_core(
     save_kv_cache = True
 
     if attn.use_fused_qk_rope_concat_and_cache_mla:
-        cos = attn.rotary_emb.cos_cache
-        sin = attn.rotary_emb.sin_cache
-        kv_cache = prepared.forward_batch.token_to_kv_pool.get_key_buffer(attn.layer_num)
-        k_scale = attn.mla_attn.attn.k_scale
+        mla_attn = _get_sglang_radix_attn(attn.mla_attn)
+        kv_cache = prepared.forward_batch.token_to_kv_pool.get_key_buffer(
+            mla_attn.layer_id
+        )
+        q_out_dtype = (
+            fp8_dtype if attn.kv_cache_dtype == "fp8_e4m3" else prepared.q_nope_out.dtype
+        )
+        q = torch.empty(
+            (
+                prepared.q_nope_out.shape[0],
+                attn.num_local_heads,
+                attn.kv_lora_rank + attn.qk_rope_head_dim,
+            ),
+            dtype=q_out_dtype,
+            device=prepared.q_nope_out.device,
+        )
 
-        q, _, k_pe_roped, _ = fused_qk_rope_cat_and_cache_mla(
+        fused_qk_rope_concat_and_cache_mla(
             prepared.q_nope_out,
             prepared.q_pe,
             prepared.k_nope,
             prepared.k_pe,
             kv_cache,
+            q,
             prepared.forward_batch.out_cache_loc,
+            mla_attn.k_scale,
+            mla_attn.k_scale,
             prepared.positions,
-            cos,
-            sin,
-            k_scale,
-            attn.rotary_emb.is_neox_style,
-            q_out_dtype=prepared.q_nope_out.dtype,
+            attn.rotary_emb.cos_cache,
+            attn.rotary_emb.sin_cache,
+            is_neox=attn.rotary_emb.is_neox_style,
+            is_nope_first=True,
         )
-        k = torch.cat([prepared.k_nope, k_pe_roped], dim=-1)
+        # For decode/speculative MLA, the backend consumes q plus the packed MLA cache
+        # directly, so we do not need to materialize a separate current-step k/v tensor.
+        k = None
+        v = None
         save_kv_cache = False
     else:
         q = torch.cat([prepared.q_nope_out, prepared.q_pe], dim=-1)
         k = torch.cat([prepared.k_nope, prepared.k_pe], dim=-1)
+        v = prepared.k_nope
 
     if prepared.llama_4_scaling is not None:
         q = q * prepared.llama_4_scaling
@@ -394,7 +412,7 @@ def forward_sgl_core(
     attn_output = attn.mla_attn(
         q,
         k,
-        prepared.k_nope,
+        v,
         forward_batch=prepared.forward_batch,
         save_kv_cache=save_kv_cache,
         **extra_kwargs,
@@ -518,6 +536,7 @@ def forward_sgl_mha_prepare(
                 dtype_quant=torch.float8_e4m3fn,
                 res1=None,
                 output_unquantized_inp1=False,
+                transpose_scale=True,
             )
             q = _unwrap_linear_output(attn.q_b_proj(q, q_scale)).view(
                 -1, attn.num_local_heads, attn.qk_head_dim
@@ -551,6 +570,7 @@ def forward_sgl_mha_prepare(
             dtype_quant=torch.float8_e4m3fn,
             res1=None,
             output_unquantized_inp1=True,
+            transpose_scale=True,
         )
     else:
         kv_a_quanted = None
