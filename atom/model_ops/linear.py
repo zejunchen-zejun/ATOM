@@ -21,7 +21,8 @@ from aiter.dist.parallel_state import get_tp_group
 from aiter.jit.utils.torch_guard import torch_compile_guard
 from aiter.tuned_gemm import tgemm
 from aiter.utility import fp4_utils
-from atom.config import QuantizationConfig, get_current_atom_config, LayerQuantConfig
+from atom.config import QuantizationConfig, get_current_atom_config
+from atom.quant_spec import LayerQuantConfig
 from atom.model_ops.utils import (
     normalize_e4m3fn_to_e4m3fnuz,
     requantize_with_max_scale,
@@ -218,8 +219,8 @@ class LinearBase(nn.Module):
             if quant_config is not None
             else LayerQuantConfig()
         )
-        quant_type = layer_quant_config["quant_type"]
-        params_dtype = layer_quant_config["quant_dtype"]
+        quant_type = layer_quant_config.quant_type
+        params_dtype = layer_quant_config.quant_dtype
         self.source_quant_dtype = source_quant_dtype
         self.layer_quant_config = layer_quant_config
         super().__init__()
@@ -275,7 +276,7 @@ class LinearBase(nn.Module):
                     torch.empty(len(self.output_partition_sizes), 1, dtype=dtypes.fp32),
                     requires_grad=False,
                 )
-                if not layer_quant_config["is_dynamic"]:
+                if not layer_quant_config.is_dynamic:
                     self.input_scale = nn.Parameter(
                         torch.empty(
                             len(self.output_partition_sizes), 1, dtype=dtypes.fp32
@@ -558,7 +559,7 @@ class MergedColumnParallelLinear(LinearBase):
         self,
         param: nn.Parameter,
         loaded_weight: torch.Tensor,
-        loaded_shard_id: int | tuple[int, ...],
+        loaded_shard_id: int | tuple[int, ...] | None = None,
     ):
         # Support loading multiple consecutive shards in a single tensor.
         # This mirrors vLLM's behavior for packed modules like QKV.
@@ -587,6 +588,33 @@ class MergedColumnParallelLinear(LinearBase):
                     self, "input_scale", None
                 ):
                     shard_size //= 128
+                shard = loaded_weight.narrow(self.tp_dim, current_offset, shard_size)
+                self.weight_loader(param, shard, shard_id)
+                current_offset += shard_size
+            return
+
+        if loaded_shard_id is None:
+            # Loaded weight is already fused on disk
+            # Split it and load each shard individually.
+            param_data = param.data
+            # Check if this is weight or weight_scale
+            is_scale_param = param is getattr(
+                self, "weight_scale", None
+            ) or param is getattr(self, "input_scale", None)
+
+            # For fused weight, need to match param shape
+            if param_data.shape == loaded_weight.shape:
+                # Shapes match - direct copy
+                param.weight_loader_process(param_data, loaded_weight)
+                return
+
+            # Otherwise, split the fused weight and load each output shard
+            current_offset = 0
+            for shard_id, output_size in enumerate(self.output_sizes):
+                shard_size = output_size
+                if is_scale_param and self.quant_type == QuantType.per_1x128:
+                    shard_size //= 128
+
                 shard = loaded_weight.narrow(self.tp_dim, current_offset, shard_size)
                 self.weight_loader(param, shard, shard_id)
                 current_offset += shard_size
