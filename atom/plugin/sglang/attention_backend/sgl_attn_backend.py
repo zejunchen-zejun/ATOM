@@ -1085,7 +1085,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 qo_indptr,
             )
         elif layer.qk_head_dim != (kv_lora_rank + qk_rope_head_dim):
-            # non-absorbed MLA: qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
+            # non-absorbed MLA: layer.qk_head_dim = qk_nope_head_dim + qk_rope_head_dim = 128 + 64 = 192
             return self._extend_mla_decompress_prefix(
                 q,
                 layer,
@@ -1101,7 +1101,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 qo_indptr,
             )
         else:
-            # absorbed MLA: qk_head_dim = kv_lora_rank + qk_rope_head_dim
+            # absorbed mla: layer.qk_head_dim = kv_lora_rank + qk_rope_head_dim = 512 + 64 = 576
             return self._extend_mla_absorbed_prefix(
                 q,
                 layer,
