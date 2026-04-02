@@ -12,6 +12,9 @@ ARG VLLM_REPO="https://github.com/vllm-project/vllm.git"
 ARG VLLM_COMMIT="b31e9326a7d9394aab8c767f8ebe225c65594b60"
 ARG INSTALL_LM_EVAL=1
 ARG INSTALL_FASTSAFETENSORS=1
+ARG ROCM_WHEEL_INDEX="https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/"
+ARG ROCM_TORCHVISION_VERSION="0.24.0+rocm7.2.1.gitb919bd0c"
+ARG ROCM_TORCHAUDIO_VERSION="2.9.0+rocm7.2.1.gite3c6ee2b"
 
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV MAX_JOBS=${MAX_JOBS}
@@ -31,7 +34,12 @@ RUN echo "========== [OOT 1/7] Prepare build tools ==========" && \
 RUN echo "========== [OOT 2/7] Verify base packages (atom/aiter/mori) ==========" && \
     "${VENV_PYTHON}" -m pip show atom || true && \
     "${VENV_PYTHON}" -m pip show amd-aiter || true && \
-    "${VENV_PYTHON}" -m pip show mori || true
+    "${VENV_PYTHON}" -m pip show mori || true && \
+    echo "========== [OOT 2/7] Back up base image triton ==========" && \
+    mkdir -p /tmp/triton-base-backup && \
+    cp -a /opt/venv/lib/python3.12/site-packages/triton /tmp/triton-base-backup/ && \
+    cp -a /opt/venv/lib/python3.12/site-packages/triton-*.dist-info /tmp/triton-base-backup/ && \
+    "${VENV_PYTHON}" -c "import triton; print(f'Base image triton backed up: {triton.__version__}')"
 
 RUN echo "========== [OOT 3/7] Clone vLLM ==========" && \
     rm -rf /app/vllm && \
@@ -49,7 +57,7 @@ RUN echo "========== [OOT 4/7] Install vLLM ROCm build dependencies ==========" 
     "${VENV_PYTHON}" -m pip install --no-deps xgrammar==0.1.29 compressed-tensors==0.13.0 loguru && \
     sed -i -e '/peft/d' -e '/tensorizer/d' -e '/runai/d' -e '/timm/d' requirements/rocm.txt && \
     "${VENV_PYTHON}" -m pip install --no-deps peft tensorizer==2.10.1 runai-model-streamer[s3,gcs]==0.15.3 timm>=1.0.17 && \
-    transformers==5.2.0 && "${VENV_PYTHON}" -m pip install -r requirements/rocm.txt
+    "${VENV_PYTHON}" -m pip install -r requirements/rocm.txt
 
 RUN echo "========== [OOT 5/7] Build and install amd-smi wheel ==========" && \
     cd /opt/rocm/share/amd_smi && \
@@ -71,6 +79,24 @@ RUN echo "========== [OOT 7/7] Install vLLM runtime dependencies ==========" && 
     if [ "${INSTALL_FASTSAFETENSORS}" = "1" ]; then "${VENV_PYTHON}" -m pip install "git+https://github.com/foundation-model-stack/fastsafetensors.git"; else echo "Skip fastsafetensors install"; fi && \
     "${VENV_PYTHON}" -c "import glob, os, torch; print(f'torch.version.hip: {torch.version.hip}'); print(f'torch.version.cuda: {torch.version.cuda}'); torch_lib_dir=os.path.join(os.path.dirname(torch.__file__), 'lib'); print(f'torch lib dir: {torch_lib_dir}'); print(f'libtorch_hip candidates: {glob.glob(os.path.join(torch_lib_dir, \"libtorch_hip.so*\"))}'); assert torch.version.hip is not None, 'Torch is not ROCm build (torch.version.hip is None).'" && \
     "${VENV_PYTHON}" -m pip show vllm torch triton torchvision torchaudio amdsmi amd-aiter atom mori || true
+
+RUN echo "FIXME: rocm/pytorch:latest currently resolves incompatible torchvision/torchaudio wheels; pin ROCm wheels here until the base image is fixed upstream." && \
+    "${VENV_PYTHON}" -m pip uninstall -y torchvision torchaudio || true && \
+    "${VENV_PYTHON}" -m pip install --no-index --find-links "${ROCM_WHEEL_INDEX}" \
+      "torchvision==${ROCM_TORCHVISION_VERSION}" \
+      "torchaudio==${ROCM_TORCHAUDIO_VERSION}" && \
+    "${VENV_PYTHON}" -c "import torch, torchvision, torchaudio; from torchvision.transforms import InterpolationMode; from transformers.models.auto.image_processing_auto import get_image_processor_config; print(f'torch: {torch.__version__}'); print(f'torchvision: {torchvision.__version__}'); print(f'torchaudio: {torchaudio.__version__}'); print(f'InterpolationMode: {InterpolationMode.BILINEAR}'); print(f'get_image_processor_config: {get_image_processor_config.__name__}')"
+
+RUN echo "========== [OOT] Restore base image triton ==========" && \
+    "${VENV_PYTHON}" -m pip uninstall -y triton 2>/dev/null || true && \
+    rm -rf /opt/venv/lib/python3.12/site-packages/triton \
+           /opt/venv/lib/python3.12/site-packages/triton-*.dist-info && \
+    cp -a /tmp/triton-base-backup/triton /opt/venv/lib/python3.12/site-packages/ && \
+    for f in /tmp/triton-base-backup/triton-*.dist-info; do \
+      cp -a "$f" /opt/venv/lib/python3.12/site-packages/; \
+    done && \
+    rm -rf /tmp/triton-base-backup && \
+    "${VENV_PYTHON}" -c "import triton; print(f'Restored base image triton: {triton.__version__}')"
 
 CMD ["/bin/bash"]
 
@@ -152,6 +178,7 @@ ARG AITER_COMMIT="HEAD"
 ARG PREBUILD_KERNELS=1
 ARG MAX_JOBS
 
+RUN pip install --upgrade "setuptools_scm<9"
 RUN echo "========== [Parallel] Building Aiter ==========" && \
     git clone --depth 1 $AITER_REPO /app/aiter-test && \
     cd /app/aiter-test && \

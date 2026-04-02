@@ -30,11 +30,13 @@ def _register_custom_attention_to_sglang() -> None:
     # here register the custom attention backend with the name "aiter"
     # as sglang defines the fixed attention backend choices, which must be
     # in-tree
-    logger.info("Register custom attention backend AiterBackend to SGLang")
+    logger.info("Register custom attention backend ATOMAttnBackendForSgl to SGLang")
 
     @register_attention_backend("aiter")
     def create_atom_backend(runner):
-        from atom.plugin.sglang.sgl_attn_backend import ATOMAttnBackendForSgl
+        from atom.plugin.sglang.attention_backend.sgl_attn_backend import (
+            ATOMAttnBackendForSgl,
+        )
 
         return ATOMAttnBackendForSgl(runner)
 

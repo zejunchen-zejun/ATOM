@@ -1,8 +1,17 @@
 """Sglang-specific MLA forward and weight processing for DeepseekV2/V3.
 
-This module is lazily imported from deepseek_v2.py only when running in sglang
-plugin mode (``is_sglang() == True``).  Keeping all sglang-dependent imports
-here avoids crashing when sglang is not installed.
+DeepSeek MLA (Multi-Latent Attention) forward logic for sglang plugin mode:
+absorbed BMM computation, MHA/MLA path dispatch (prefill -> MHA, decode -> MLA),
+kv_b_proj weight splitting (w_kc/w_vc), and monkey-patch setup via
+setup_deepseek_for_sglang().
+
+This module is lazily imported from base_model_wrapper.py only when running in
+sglang plugin mode (``is_sglang() == True``).  Keeping all sglang-dependent
+imports here avoids crashing when sglang is not installed.
+
+TODO: rewrite this file once sglang's attention flow is unified into ATOM's
+attention layer — the MLA absorbed path and MHA dispatch will then be handled
+natively by ATOM's attention ops, making this sglang-specific module unnecessary.
 """
 
 from __future__ import annotations
@@ -10,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 
 import torch
+from aiter import dtypes
 from aiter.dist.parallel_state import get_tensor_model_parallel_world_size, get_tp_group
 from aiter.ops.triton.fused_fp8_quant import fused_rms_fp8_group_quant
 from atom.model_ops.base_attention import Attention
@@ -37,7 +47,6 @@ from aiter.ops.triton.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched
     batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant,
 )
 from sglang.srt.layers.quantization.fp8_kernel import (
-    fp8_dtype,
     per_tensor_quant_mla_fp8,
     per_token_group_quant_mla_deep_gemm_masked_fp8,
 )
@@ -137,7 +146,7 @@ def _fuse_qk_rmsnorm_and_q_quant(
 def init_sgl_attrs(
     attn: DeepseekV2MLAAttention,
     config,
-    kv_cache_dtype: str,
+    kv_cache_dtype: str = "bf16",
 ) -> None:
     """Initialise sglang-only attributes on DeepseekV2MLAAttention."""
     from sglang.srt.configs.model_config import is_deepseek_nsa
@@ -220,21 +229,26 @@ def mla_absorbed_bmm(
         if (_use_aiter_gfx95 and weight.dtype == torch.float8_e4m3fn) or (
             get_is_capture_mode() and weight.dtype == torch.float8_e4m3fnuz
         ):
-            out = batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant(
-                X=inp,
-                WQ=weight.transpose(-1, -2),
-                w_scale=weight_scale,
-                group_size=128,
-                YQ=None,
-                transpose_bm=False,
-                transpose_bm_in=True,
-                dtype=torch.bfloat16,
+            out = (
+                batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant(
+                    X=inp,
+                    WQ=weight.transpose(-1, -2),
+                    w_scale=weight_scale,
+                    group_size=128,
+                    YQ=None,
+                    transpose_bm=False,
+                    transpose_bm_in=True,
+                    dtype=torch.bfloat16,
+                )
             )
             return out.transpose(0, 1)
 
+        w_bf16 = weight.to(torch.bfloat16)
+        if weight_scale is not None:
+            w_bf16 = w_bf16 * weight_scale
         out = torch.bmm(
             inp.to(torch.bfloat16).transpose(0, 1),
-            weight.to(torch.bfloat16) * weight_scale,
+            w_bf16,
         )
         return out.transpose(0, 1)
 
@@ -316,7 +330,10 @@ def forward_sgl_prepare(
             )
         )
 
-        if q.shape[0] != positions.shape[0] and get_tensor_model_parallel_world_size() > 1:
+        if (
+            q.shape[0] != positions.shape[0]
+            and get_tensor_model_parallel_world_size() > 1
+        ):
             qkv_lora = torch.cat([q, latent_cache], dim=-1)
             qkv_lora = get_tp_group().all_gather(qkv_lora, dim=0)
             if qkv_lora.shape[0] < positions.shape[0]:
@@ -447,7 +464,9 @@ def forward_sgl_core(
             mla_attn.layer_id
         )
         q_out_dtype = (
-            fp8_dtype if attn.kv_cache_dtype == "fp8_e4m3" else prepared.q_nope_out.dtype
+            dtypes.fp8
+            if attn.kv_cache_dtype == "fp8_e4m3"
+            else prepared.q_nope_out.dtype
         )
         q = torch.empty(
             (
@@ -511,6 +530,15 @@ def forward_sgl_core(
 
 
 def _dispatch_sgl_plugin_attn_path(forward_batch) -> str:
+    """Decide the attention algorithm for this batch based on forward_mode.
+
+    Returns "mha" for extend/prefill (uses standard Q×K×V with flash_attn)
+    or "mla" for decode (uses absorbed weights + mla_decode_fwd).
+
+    This is the per-batch *routing* decision, distinct from
+    ``_can_run_sgl_mha_now`` which is a *capability* gate checking whether
+    the model configuration supports the MHA path at all.
+    """
     if forward_batch.forward_mode.is_extend_without_speculative():
         return "mha"
     return "mla"
@@ -538,9 +566,6 @@ def _set_mla_kv_buffer_for_mha(
 ) -> None:
     attn_mha = _get_sglang_radix_attn(attn.attn_mha)
     cache_k = torch.cat([kv_a.unsqueeze(1), k_pe], dim=-1)
-    # Keep ATOM's staged packed-latent contract for now: the backend will
-    # split this cache tensor back into kv_a and k_pe when reconstructing
-    # has-prefix non-absorb prefill.
     forward_batch.token_to_kv_pool.set_kv_buffer(
         attn_mha,
         forward_batch.out_cache_loc,
@@ -550,6 +575,12 @@ def _set_mla_kv_buffer_for_mha(
 
 
 def _can_run_sgl_mha_now(attn: DeepseekV2MLAAttention, forward_batch) -> bool:
+    """Check if the model configuration supports the MHA attention path.
+
+    This is a *capability* gate — NSA models and MXFP4-quantised weights
+    (uint8) cannot use the MHA path. Distinct from
+    ``_dispatch_sgl_plugin_attn_path`` which routes each batch.
+    """
     del forward_batch
     if attn.use_nsa:
         return False
@@ -604,10 +635,7 @@ def forward_sgl_mha_prepare(
                 dim=-1,
             )
 
-        if (
-            _use_aiter_gfx95
-            and attn.q_b_proj.weight.dtype == torch.float8_e4m3fn
-        ):
+        if _use_aiter_gfx95 and attn.q_b_proj.weight.dtype == torch.float8_e4m3fn:
             (q, q_scale), _, _, _ = fused_rms_fp8_group_quant(
                 q,
                 attn.q_a_layernorm.weight,
@@ -799,7 +827,9 @@ def _read_kv_b_proj_weight(attn: DeepseekV2MLAAttention) -> torch.Tensor:
     if hasattr(attn.kv_b_proj, "qweight"):
         awq_dequant = awq_dequantize_func()
         if awq_dequant is None:
-            raise ValueError("AWQ dequantize function is not supported for current device")
+            raise ValueError(
+                "AWQ dequantize function is not supported for current device"
+            )
         w = awq_dequant(
             attn.kv_b_proj.qweight,
             attn.kv_b_proj.scales,
@@ -844,7 +874,10 @@ def _process_fp8_weight(
         channel_quant_to_tensor_quant,
         inverse_transform_scale_ue8m0,
     )
-    from sglang.srt.layers.deep_gemm_wrapper import ENABLE_JIT_DEEPGEMM, DEEPGEMM_BLACKWELL
+    from sglang.srt.layers.deep_gemm_wrapper import (
+        ENABLE_JIT_DEEPGEMM,
+        DEEPGEMM_BLACKWELL,
+    )
     from sglang.srt.model_loader.utils import should_deepgemm_weight_requant_ue8m0
 
     use_deep_gemm_bmm = False
@@ -867,10 +900,9 @@ def _process_fp8_weight(
         else:
             weight = w
 
-        if (
-            should_deepgemm_weight_requant_ue8m0(weight_block_size=weight_block_size)
-            and getattr(weight_scale, "format_ue8m0", False)
-        ):
+        if should_deepgemm_weight_requant_ue8m0(
+            weight_block_size=weight_block_size
+        ) and getattr(weight_scale, "format_ue8m0", False):
             weight_scale = inverse_transform_scale_ue8m0(
                 weight_scale, mn=weight.shape[-2]
             )
@@ -888,7 +920,9 @@ def _process_fp8_weight(
                     weight, weight_scale, weight_block_size, torch.bfloat16
                 )
         else:
-            w, scale = block_quant_to_tensor_quant(weight, weight_scale, weight_block_size)
+            w, scale = block_quant_to_tensor_quant(
+                weight, weight_scale, weight_block_size
+            )
             attn.w_scale = scale
     else:
         if w.dtype == torch.float8_e4m3fn and _is_fp8_fnuz:
@@ -911,7 +945,9 @@ def _process_int8_weight(
     weight_block_size: Optional[list[int]],
 ) -> torch.Tensor:
     """Process INT8 weights for kv_b_proj."""
-    from sglang.srt.layers.quantization.int8_utils import block_dequant as int8_block_dequant
+    from sglang.srt.layers.quantization.int8_utils import (
+        block_dequant as int8_block_dequant,
+    )
 
     if weight_block_size is not None:
         assert hasattr(attn.kv_b_proj, "weight_scale_inv")
@@ -932,9 +968,9 @@ def _split_and_assign_kc_vc(
     """Split weight into kc/vc and assign to attn."""
     from atom.model_ops.utils import quark_post_load_weights
 
-    w_kc, w_vc = w.unflatten(
-        0, (-1, attn.qk_nope_head_dim + attn.v_head_dim)
-    ).split([attn.qk_nope_head_dim, attn.v_head_dim], dim=1)
+    w_kc, w_vc = w.unflatten(0, (-1, attn.qk_nope_head_dim + attn.v_head_dim)).split(
+        [attn.qk_nope_head_dim, attn.v_head_dim], dim=1
+    )
 
     # quark fp4 special path
     quant_method = getattr(attn.kv_b_proj, "quant_method", None)
@@ -972,7 +1008,9 @@ def _split_and_assign_kc_vc(
             0, (-1, (num_tiles_k + num_tiles_n))
         ).split([num_tiles_k, num_tiles_n], dim=1)
 
-        attn.w_scale_k = bind_or_assign(attn.w_scale_k, ws_kc.transpose(1, 2).contiguous())
+        attn.w_scale_k = bind_or_assign(
+            attn.w_scale_k, ws_kc.transpose(1, 2).contiguous()
+        )
         attn.w_scale_v = bind_or_assign(attn.w_scale_v, ws_vc.contiguous())
         attn.w_kc = bind_or_assign(attn.w_kc, w_kc.transpose(1, 2).contiguous())
         attn.w_vc = bind_or_assign(attn.w_vc, w_vc.contiguous())
@@ -1003,3 +1041,66 @@ def process_mla_kv_b_proj_after_loading(attn: DeepseekV2MLAAttention) -> None:
 
     # split and assign kc/vc
     _split_and_assign_kc_vc(attn, w, use_deep_gemm_bmm, block_scale, weight_block_size)
+
+
+# One-time model setup (called from base_model_wrapper.py)
+def setup_deepseek_for_sglang(model) -> None:
+    """Patch a DeepseekV2/V3 model for sglang plugin mode.
+
+    - Initialises sglang TP context
+    - Patches each MLAAttention.forward to dispatch to the sglang MLA path
+    - Registers process_weights_after_loading hooks
+    - Stores atom_config on the model
+    """
+    config = model.config
+
+    # Store atom_config (needed by load_weights in the OOT wrapper)
+    if not hasattr(model, "atom_config"):
+        from atom.config import get_current_atom_config
+
+        model.atom_config = get_current_atom_config()
+
+    kv_cache_dtype = model.atom_config.kv_cache_dtype
+
+    # Initialise sglang TP context for MLA gather/scatter
+    from sglang.srt.configs.model_config import is_deepseek_nsa
+    from sglang.srt.layers.communicator import get_attn_tp_context
+
+    get_attn_tp_context().init_context(config.q_lora_rank, is_deepseek_nsa(config))
+
+    # Patch each MLAAttention instance
+    from atom.models.deepseek_v2 import DeepseekV2MLAAttention
+
+    for module in model.modules():
+        if isinstance(module, DeepseekV2MLAAttention):
+            _patch_mla_attention_for_sglang(module, config, kv_cache_dtype)
+
+
+def _patch_mla_attention_for_sglang(attn, config, kv_cache_dtype: str = "bf16") -> None:
+    """Patch a single DeepseekV2MLAAttention for sglang plugin mode.
+
+    We patch attn.forward (rather than relying solely on ops.Attention =
+    RadixAttention) because MLA's absorbed-weight forward path replaces the
+    *entire* forward method — including RoPE, and absorbed
+    BMM — not just the attention backend.  ops.Attention = RadixAttention
+    handles the backend layer (flash_attn / paged_attn dispatch) and is
+    already set via set_attn_cls(); this patch sits above that layer.
+    """
+    init_sgl_attrs(attn, config, kv_cache_dtype)
+
+    def patched_forward(
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        **kwargs,
+    ) -> torch.Tensor:
+        from atom.plugin.sglang.models.base_model_wrapper import (
+            get_current_forward_batch,
+        )
+
+        kwargs["forward_batch"] = get_current_forward_batch()
+        return forward_sgl_plugin_mode(attn, positions, hidden_states, **kwargs)
+
+    attn.forward = patched_forward
+    attn.process_weights_after_loading = lambda: process_mla_kv_b_proj_after_loading(
+        attn
+    )
