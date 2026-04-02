@@ -107,6 +107,7 @@ def _generate_atom_config_from_vllm_config(config: Any) -> PluginConfig:
 
 
 def _generate_atom_config_from_sglang_config(config: Any):
+    from sglang.srt.distributed import get_tensor_model_parallel_rank
     from sglang.srt.server_args import (
         get_global_server_args,
         PortArgs,
@@ -158,9 +159,18 @@ def _generate_atom_config_from_sglang_config(config: Any):
     # get rank number through the torch.distributed.get_rank()
     rank = torch.distributed.get_rank()
 
+    # Derive DP rank from SGLang's TP-local rank rather than the global
+    # distributed rank so PP/multi-stage layouts do not skew the result.
+    data_parallel_rank = 0
+    if server_args.dp_size > 1:
+        tp_rank = get_tensor_model_parallel_rank()
+        tp_group_size = max(1, server_args.tp_size // server_args.dp_size)
+        data_parallel_rank = tp_rank // tp_group_size
+
     # sglang uses the atom parallel config
     sgl_parallel_config = ParallelConfig(
         data_parallel_size=server_args.dp_size,
+        data_parallel_rank=data_parallel_rank,
     )
 
     # use sglang torch compile policy and cuda graph policy

@@ -95,6 +95,7 @@ def _reset_framework_state():
 
 def _make_sglang_sys_modules(
     mock_server_args_mod,
+    mock_distributed_mod=None,
     mock_model_config_mod=None,
     mock_modelopt_config_mod=None,
     mock_load_config_mod=None,
@@ -105,6 +106,8 @@ def _make_sglang_sys_modules(
         "sglang.srt": MagicMock(),
         "sglang.srt.server_args": mock_server_args_mod,
     }
+    if mock_distributed_mod is not None:
+        mods["sglang.srt.distributed"] = mock_distributed_mod
     if mock_model_config_mod is not None:
         mods["sglang.srt.configs"] = MagicMock()
         mods["sglang.srt.configs.model_config"] = mock_model_config_mod
@@ -143,6 +146,9 @@ def test_generate_sglang_config_translates_core_fields(monkeypatch):
     mock_port_args_cls.init_new.return_value = _Obj()
     mock_sglang_server_args.PortArgs = mock_port_args_cls
 
+    mock_sglang_distributed = MagicMock()
+    mock_sglang_distributed.get_tensor_model_parallel_rank.return_value = 0
+
     mock_sglang_model_config = MagicMock()
     fake_model_config = _Obj(hf_config=_Obj())
     mock_sglang_model_config.ModelConfig.from_server_args.return_value = (
@@ -157,6 +163,7 @@ def test_generate_sglang_config_translates_core_fields(monkeypatch):
 
     sgl_mods = _make_sglang_sys_modules(
         mock_sglang_server_args,
+        mock_sglang_distributed,
         mock_sglang_model_config,
         mock_sglang_modelopt_config,
         mock_sglang_load_config,
@@ -197,9 +204,14 @@ def test_generate_sglang_config_raises_on_none_server_args(monkeypatch):
     mock_sglang_server_args = MagicMock()
     mock_sglang_server_args.get_global_server_args.return_value = None
     mock_sglang_server_args.PortArgs = _Obj
+    mock_sglang_distributed = MagicMock()
 
     sgl_mods = _make_sglang_sys_modules(
-        mock_sglang_server_args, MagicMock(), MagicMock(), MagicMock()
+        mock_sglang_server_args,
+        mock_sglang_distributed,
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
     )
 
     with patch.dict(sys.modules, sgl_mods):
@@ -224,9 +236,14 @@ def test_generate_sglang_config_raises_on_server_args_exception(monkeypatch):
     mock_sglang_server_args = MagicMock()
     mock_sglang_server_args.get_global_server_args.side_effect = RuntimeError("boom")
     mock_sglang_server_args.PortArgs = _Obj
+    mock_sglang_distributed = MagicMock()
 
     sgl_mods = _make_sglang_sys_modules(
-        mock_sglang_server_args, MagicMock(), MagicMock(), MagicMock()
+        mock_sglang_server_args,
+        mock_sglang_distributed,
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
     )
 
     with patch.dict(sys.modules, sgl_mods):
@@ -241,7 +258,12 @@ def test_generate_sglang_config_raises_on_server_args_exception(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _run_sglang_config_test(monkeypatch, server_args_overrides=None):
+def _run_sglang_config_test(
+    monkeypatch,
+    server_args_overrides=None,
+    distributed_rank=0,
+    tp_rank=0,
+):
     """Helper: run _generate_atom_config_from_sglang_config with full mocks.
 
     Returns the resulting Config-like object for assertion.
@@ -265,6 +287,9 @@ def _run_sglang_config_test(monkeypatch, server_args_overrides=None):
     mock_port_args_cls.init_new.return_value = _Obj()
     mock_sglang_server_args.PortArgs = mock_port_args_cls
 
+    mock_sglang_distributed = MagicMock()
+    mock_sglang_distributed.get_tensor_model_parallel_rank.return_value = tp_rank
+
     mock_sglang_model_config = MagicMock()
     mock_sglang_model_config.ModelConfig.from_server_args.return_value = _Obj(
         hf_config=_Obj()
@@ -276,6 +301,7 @@ def _run_sglang_config_test(monkeypatch, server_args_overrides=None):
 
     sgl_mods = _make_sglang_sys_modules(
         mock_sglang_server_args,
+        mock_sglang_distributed,
         mock_sglang_model_config,
         mock_sglang_modelopt_config,
         mock_sglang_load_config,
@@ -283,7 +309,7 @@ def _run_sglang_config_test(monkeypatch, server_args_overrides=None):
 
     with (
         patch.dict(sys.modules, sgl_mods),
-        patch("torch.distributed.get_rank", return_value=0),
+        patch("torch.distributed.get_rank", return_value=distributed_rank),
     ):
         return plugin_config._generate_atom_config_from_sglang_config(
             config=_Obj(architectures=["DeepseekV3ForCausalLM"])
@@ -314,6 +340,32 @@ def test_sglang_config_dp_attention_disabled(monkeypatch):
     cfg = _run_sglang_config_test(monkeypatch, {"enable_dp_attention": False})
     assert cfg.enable_dp_attention is False
     assert cfg.plugin_config.sglang_enable_dp_attention is False
+
+
+def test_sglang_config_derives_data_parallel_rank(monkeypatch):
+    """dp_size > 1 should derive ATOM's data_parallel_rank from TP-local rank."""
+    cfg = _run_sglang_config_test(
+        monkeypatch,
+        {"tp_size": 8, "dp_size": 2},
+        distributed_rank=5,
+        tp_rank=1,
+    )
+    assert cfg.plugin_config.rank == 5
+    assert cfg.parallel_config.data_parallel_size == 2
+    assert cfg.parallel_config.data_parallel_rank == 0
+
+
+def test_sglang_config_derives_data_parallel_rank_with_higher_tp_rank(monkeypatch):
+    """Higher TP-local ranks should map into the correct DP shard."""
+    cfg = _run_sglang_config_test(
+        monkeypatch,
+        {"tp_size": 8, "dp_size": 2},
+        distributed_rank=13,
+        tp_rank=5,
+    )
+    assert cfg.plugin_config.rank == 13
+    assert cfg.parallel_config.data_parallel_size == 2
+    assert cfg.parallel_config.data_parallel_rank == 1
 
 
 def test_sglang_config_dist_init_addr_none(monkeypatch):

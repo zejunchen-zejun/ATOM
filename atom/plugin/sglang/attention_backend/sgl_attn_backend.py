@@ -1007,38 +1007,10 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         qo_indptr = self.forward_metadata.qo_indptr
 
         K_Buffer = forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id)
-        V_Buffer = forward_batch.token_to_kv_pool.get_value_buffer(layer.layer_id)
-        kv_lora_rank = V_Buffer.shape[-1]
-        qk_rope_head_dim = K_Buffer.shape[-1] - kv_lora_rank
-        qk_nope_head_dim = k.shape[-1] - qk_rope_head_dim
 
         assert len(q.shape) == 3
-        assert len(k.shape) == 3
-        assert len(v.shape) == 3
 
         if (
-            forward_batch.forward_mode.is_extend()
-            and not forward_batch.forward_mode.is_target_verify()
-            and not forward_batch.forward_mode.is_draft_extend()
-        ):
-            return self._forward_extend_mla_normal(
-                q,
-                k,
-                v,
-                layer,
-                forward_batch,
-                K_Buffer,
-                V_Buffer,
-                kv_lora_rank,
-                qk_rope_head_dim,
-                qk_nope_head_dim,
-                max_q_len,
-                max_kv_len,
-                kv_indptr,
-                kv_indices,
-                qo_indptr,
-            )
-        elif (
             forward_batch.forward_mode.is_target_verify()
             or forward_batch.forward_mode.is_draft_extend()
         ):
@@ -1048,10 +1020,37 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 K_Buffer,
                 qo_indptr,
             )
-        else:
+        if not forward_batch.forward_mode.is_extend():
             raise ValueError(
                 f"Invalid forward mode for MLA extend: {forward_batch.forward_mode=}"
             )
+        if k is None or v is None:
+            raise RuntimeError("MLA normal extend requires explicit k/v tensors")
+
+        V_Buffer = forward_batch.token_to_kv_pool.get_value_buffer(layer.layer_id)
+        kv_lora_rank = V_Buffer.shape[-1]
+        qk_rope_head_dim = K_Buffer.shape[-1] - kv_lora_rank
+        qk_nope_head_dim = k.shape[-1] - qk_rope_head_dim
+
+        assert len(k.shape) == 3
+        assert len(v.shape) == 3
+        return self._forward_extend_mla_normal(
+            q,
+            k,
+            v,
+            layer,
+            forward_batch,
+            K_Buffer,
+            V_Buffer,
+            kv_lora_rank,
+            qk_rope_head_dim,
+            qk_nope_head_dim,
+            max_q_len,
+            max_kv_len,
+            kv_indptr,
+            kv_indices,
+            qo_indptr,
+        )
 
     def _forward_extend_mla_normal(
         self,
@@ -1086,6 +1085,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 qo_indptr,
             )
         elif layer.qk_head_dim != (kv_lora_rank + qk_rope_head_dim):
+            # non-absorbed MLA: qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
             return self._extend_mla_decompress_prefix(
                 q,
                 layer,
@@ -1101,6 +1101,7 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
                 qo_indptr,
             )
         else:
+            # absorbed MLA: qk_head_dim = kv_lora_rank + qk_rope_head_dim
             return self._extend_mla_absorbed_prefix(
                 q,
                 layer,

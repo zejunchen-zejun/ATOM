@@ -7,7 +7,8 @@ To add a new model, append its architecture class name to _MODEL_NAMES.
 """
 
 import logging
-from typing import Iterable, Optional, Tuple, Union
+from contextvars import ContextVar
+from typing import Any, Iterable, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -19,15 +20,16 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTe
 
 logger = logging.getLogger("atom.plugin.sglang.models")
 
-# Module-level context for passing forward_batch to patched attention layers
-# without threading **model_kwargs through every model layer. Set before each
-# self.model() call in the wrapper's forward() and read by the patched
-# attention forward in sgl_attention_mla.py.
-_current_forward_batch = None
+# Context for patched DeepSeek attention layers that need wrapper state without
+# changing every intermediate forward signature. ContextVar keeps nested or
+# concurrent forwards isolated and lets us reliably restore the prior value.
+_current_forward_batch: ContextVar[Optional[ForwardBatch]] = ContextVar(
+    "atom_sglang_current_forward_batch", default=None
+)
 
 
 def get_current_forward_batch():
-    return _current_forward_batch
+    return _current_forward_batch.get()
 
 
 _MODEL_NAMES = [
@@ -82,6 +84,7 @@ class _AtomCausalLMBaseForSglang(nn.Module):
         # Apply ds model-specific sglang patches (attn dispatch, weight hooks, etc.)
         # TODO: will remove this after sglang supports atom attention backend
         arch = getattr(config, "architectures", [""])[0]
+        self._uses_forward_batch_context = arch in _DEEPSEEK_ARCHS
         if arch in _DEEPSEEK_ARCHS:
             from atom.plugin.sglang.attention_backend.sgl_attention_mla import (
                 setup_deepseek_for_sglang,
@@ -98,16 +101,28 @@ class _AtomCausalLMBaseForSglang(nn.Module):
         input_embeds: torch.Tensor = None,
         get_embedding: bool = False,
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
-        **model_kwargs,
+        **model_kwargs: Any,
     ) -> Union[LogitsProcessorOutput, PPProxyTensors]:
-        global _current_forward_batch
-        _current_forward_batch = forward_batch
-        hidden_states = self.model(
+        model_inputs = dict(
             input_ids=input_ids,
             positions=positions,
-            intermediate_tensors=None,
+            intermediate_tensors=pp_proxy_tensors,
             inputs_embeds=input_embeds,
         )
+        if self._uses_forward_batch_context:
+            token = _current_forward_batch.set(forward_batch)
+            try:
+                hidden_states = self.model(**model_inputs)
+            finally:
+                _current_forward_batch.reset(token)
+        else:
+            hidden_states = self.model(
+                **model_inputs,
+                forward_batch=forward_batch,
+                get_embedding=get_embedding,
+                pp_proxy_tensors=pp_proxy_tensors,
+                **model_kwargs,
+            )
 
         if self.pp_group.is_last_rank:
             return self.logits_processor(

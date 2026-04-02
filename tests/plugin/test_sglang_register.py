@@ -8,7 +8,9 @@ we patch the stub to add what the import chain needs, then import the modules
 under test.
 """
 
+import importlib
 import sys
+from types import ModuleType
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -279,40 +281,79 @@ def test_init_aiter_dist_vllm_fallback_path():
 
 
 def test_register_custom_attention_uses_aiter_name():
-    """Verify attention backend is registered under the 'aiter' name."""
-    # The function calls register_attention_backend("aiter") as a decorator.
-    # We verify, at the orchestration level, that register_ops_to_sglang
-    # is invoked for the sglang engine.
+    """Verify the real register module binds the backend under the 'aiter' name."""
 
-    # We need atom.plugin.register to be importable. Since module-level
-    # imports in register.py trigger the full model chain, we inject a fake
-    # register module and re-implement the test at the API level.
-    # Instead, test that prepare_model's register_ops_to_sglang correctly
-    # calls _register_custom_attention_to_sglang via the orchestration.
+    def _package(name: str) -> ModuleType:
+        module = ModuleType(name)
+        module.__path__ = []
+        return module
 
-    fake_register_mod = MagicMock()
-    fake_register_mod._ATOM_SUPPORTED_MODELS = {
-        "DeepseekV3ForCausalLM": MagicMock(return_value=MagicMock())
-    }
-    fake_register_mod.register_ops_to_sglang = MagicMock()
-    fake_register_mod.set_attn_cls = MagicMock()
-    fake_register_mod.init_aiter_dist = MagicMock()
+    recorded = {}
 
-    fake_config_mod = MagicMock()
-    fake_config_mod.generate_atom_config_for_plugin_mode = MagicMock(
-        return_value=_Obj(plugin_config=_Obj(is_plugin_mode=True))
+    def _fake_register_attention_backend(name):
+        recorded["backend_name"] = name
+
+        def _decorator(factory):
+            recorded["factory"] = factory
+            return factory
+
+        return _decorator
+
+    class _FakeBackend:
+        def __init__(self, runner):
+            self.runner = runner
+
+    fake_attention_registry = ModuleType(
+        "sglang.srt.layers.attention.attention_registry"
+    )
+    fake_attention_registry.register_attention_backend = (
+        _fake_register_attention_backend
     )
 
-    with patch.dict(
-        sys.modules,
-        {
-            "atom.plugin.register": fake_register_mod,
-            "atom.plugin.config": fake_config_mod,
-        },
-    ):
-        config = _Obj(architectures=["DeepseekV3ForCausalLM"])
-        plugin_prepare.prepare_model(config=config, engine="sglang")
+    fake_prepare_mod = ModuleType("atom.plugin.prepare")
+    fake_prepare_mod.is_vllm = lambda: False
+    fake_prepare_mod.is_sglang = lambda: True
 
-    # register_ops_to_sglang was called, which internally calls
-    # _register_custom_attention_to_sglang
-    fake_register_mod.register_ops_to_sglang.assert_called_once()
+    fake_modules = {
+        "sglang": _package("sglang"),
+        "sglang.srt": _package("sglang.srt"),
+        "sglang.srt.layers": _package("sglang.srt.layers"),
+        "sglang.srt.layers.attention": _package("sglang.srt.layers.attention"),
+        "sglang.srt.layers.attention.attention_registry": fake_attention_registry,
+        "atom.models.qwen3": ModuleType("atom.models.qwen3"),
+        "atom.models.qwen3_moe": ModuleType("atom.models.qwen3_moe"),
+        "atom.models.glm4_moe": ModuleType("atom.models.glm4_moe"),
+        "atom.models.deepseek_v2": ModuleType("atom.models.deepseek_v2"),
+        "atom.config": ModuleType("atom.config"),
+        "atom.plugin.prepare": fake_prepare_mod,
+        "atom.plugin.sglang.attention_backend.sgl_attn_backend": ModuleType(
+            "atom.plugin.sglang.attention_backend.sgl_attn_backend"
+        ),
+    }
+    fake_modules["atom.models.qwen3"].Qwen3ForCausalLM = type(
+        "Qwen3ForCausalLM", (), {}
+    )
+    fake_modules["atom.models.qwen3_moe"].Qwen3MoeForCausalLM = type(
+        "Qwen3MoeForCausalLM", (), {}
+    )
+    fake_modules["atom.models.glm4_moe"].Glm4MoeForCausalLM = type(
+        "Glm4MoeForCausalLM", (), {}
+    )
+    fake_modules["atom.models.deepseek_v2"].DeepseekV3ForCausalLM = type(
+        "DeepseekV3ForCausalLM", (), {}
+    )
+    fake_modules["atom.config"].Config = type("Config", (), {})
+    fake_modules[
+        "atom.plugin.sglang.attention_backend.sgl_attn_backend"
+    ].ATOMAttnBackendForSgl = _FakeBackend
+
+    with patch.dict(sys.modules, fake_modules):
+        sys.modules.pop("atom.plugin.register", None)
+        register_mod = importlib.import_module("atom.plugin.register")
+        register_mod = importlib.reload(register_mod)
+        register_mod._register_custom_attention_to_sglang()
+        backend = recorded["factory"]("runner")
+
+    assert recorded["backend_name"] == "aiter"
+    assert isinstance(backend, _FakeBackend)
+    assert backend.runner == "runner"
