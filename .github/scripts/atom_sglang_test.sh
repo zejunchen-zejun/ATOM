@@ -73,15 +73,9 @@ prepare_runtime_paths() {
 
 resolve_model_path() {
   local model_path="$1"
-  if [[ "${model_path}" = /models/* ]]; then
+  if [[ "${model_path}" = /* ]]; then
     echo "${model_path}"
-  elif [[ "${model_path}" = /shared/data/amd_int/models/* ]]; then
-    echo "/models/${model_path#/shared/data/amd_int/models/}"
-  elif [[ "${model_path}" = /it-share/models/* ]]; then
-    echo "/models/${model_path#/it-share/models/}"
-  elif [[ "${model_path}" = /data/models/* ]]; then
-    echo "/models/${model_path#/data/models/}"
-  elif [[ "${model_path}" != /* && -d /models/"${model_path}" ]]; then
+  elif [[ -f "/models/${model_path}/config.json" ]]; then
     echo "/models/${model_path}"
   else
     echo "${model_path}"
@@ -173,6 +167,8 @@ launch_server() {
     done <<< "$(printf '%b' "${MODEL_ENV_VARS}")"
   fi
 
+  rm -rf /root/.cache
+
   rm -f "${SGLANG_PID_FILE}" "${SGLANG_LOG_FILE}" || true
 
   echo ""
@@ -181,7 +177,7 @@ launch_server() {
   echo "Model path: ${resolved_model_path}"
   echo "Extra args: ${MODEL_EXTRA_ARGS}"
 
-  python3 -m sglang.launch_server \
+  nohup python3 -m sglang.launch_server \
     --model-path "${resolved_model_path}" \
     --host "${SGLANG_HOST}" \
     --port "${SGLANG_PORT}" \
@@ -222,7 +218,7 @@ run_accuracy() {
   echo "Model name: ${MODEL_NAME}"
 
   lm_eval --model local-completions \
-    --model_args model="${resolved_model_path}",base_url="http://127.0.0.1:${SGLANG_PORT}/v1/completions",num_concurrent="${LM_EVAL_NUM_CONCURRENT}",max_retries=1,tokenized_requests=False \
+    --model_args model="${resolved_model_path}",base_url="http://127.0.0.1:${SGLANG_PORT}/v1/completions",num_concurrent="${LM_EVAL_NUM_CONCURRENT}",max_retries=1,tokenized_requests=False,trust_remote_code=True \
     --tasks "${LM_EVAL_TASK}" \
     --num_fewshot "${LM_EVAL_NUM_FEWSHOT}" \
     --output_path "${output_path}" 2>&1 | tee -a "${ACCURACY_LOG_FILE}"
