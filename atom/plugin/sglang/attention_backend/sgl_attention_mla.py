@@ -161,6 +161,24 @@ def _fuse_qk_rmsnorm_and_q_quant(
     return q_quantized, q_scale, q_normed, k_nope_normed
 
 
+def _fuse_qk_rmsnorm(
+    attn: DeepseekV2MLAAttention,
+    q: torch.Tensor,
+    k_nope: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fuse q/k RMSNorm without quantizing q."""
+    from atom.models.deepseek_v2 import _fused_qk_rmsnorm
+
+    return _fused_qk_rmsnorm(
+        q,
+        attn.q_a_layernorm.weight,
+        attn.q_a_layernorm.eps,
+        k_nope,
+        attn.kv_a_layernorm.weight,
+        attn.kv_a_layernorm.eps,
+    )
+
+
 # Init helpers
 def init_sgl_attrs(
     attn: DeepseekV2MLAAttention,
@@ -380,8 +398,9 @@ def forward_sgl_prepare(
         k_nope = latent_cache[..., : attn.kv_lora_rank]
         q_scale = None
 
-        # Reuse native ATOM gating: attn.fuse_qknorm_quant is enabled only when
-        # ATOM_ENABLE_DS_QKNORM_QUANT_FUSION passes the same checks as DeepSeek-R1.
+        # Reuse native ATOM gating for q/k RMSNorm fusion. Quant fusion is used
+        # when DeepSeek enables qknorm-quant; otherwise keep the non-quant fused
+        # path aligned with native ATOM before falling back to plain layernorm.
         if getattr(attn, "fuse_qknorm_quant", False):
             q, q_scale, q_lora, k_nope = _fuse_qk_rmsnorm_and_q_quant(
                 attn,
@@ -389,6 +408,8 @@ def forward_sgl_prepare(
                 k_nope,
                 output_unquantized_q=attn.use_nsa,
             )
+        elif getattr(attn, "fuse_qknorm", False):
+            q, k_nope = _fuse_qk_rmsnorm(attn, q, k_nope)
         # Otherwise keep the original overlap path for unfused qk norm.
         elif attn.alt_stream is not None and get_is_capture_mode():
             current_stream = torch.cuda.current_stream()
