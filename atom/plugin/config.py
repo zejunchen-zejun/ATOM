@@ -213,7 +213,9 @@ def _generate_atom_config_from_sglang_config(config: Any):
     # sglang uses the atom parallel config
     sgl_parallel_config = ParallelConfig(
         data_parallel_size=atom_data_parallel_size,
+        data_parallel_size_local=atom_data_parallel_size,
         data_parallel_rank=atom_data_parallel_rank,
+        data_parallel_rank_local=atom_data_parallel_rank,
     )
 
     # use sglang torch compile policy and cuda graph policy
@@ -226,10 +228,14 @@ def _generate_atom_config_from_sglang_config(config: Any):
     )
 
     sglang_dist_init_addr = server_args.dist_init_addr
-    # In single-node DP attention, SGLang derives dist_init_addr from the HTTP
-    # port. Mirror that logic here so ATOM can reuse the same rendezvous
-    # endpoint without re-running PortArgs.init_new(), which would probe the
-    # fixed TCP port set again and conflict with SGLang's main allocation.
+    # In single-node DP attention, synthesize the same TCP base address that
+    # SGLang uses for its DP-attention TCP port family. The primary purpose is
+    # to avoid calling PortArgs.init_new() again in ATOM plugin mode, because a
+    # second call would probe that fixed TCP range again and conflict with
+    # SGLang's existing allocation. In the current plugin path, this value
+    # should be treated as a compatibility/fallback hint rather than a
+    # guaranteed representation of the runtime default torch.distributed world
+    # rendezvous endpoint.
     if (
         sglang_dist_init_addr is None
         and server_args.enable_dp_attention
