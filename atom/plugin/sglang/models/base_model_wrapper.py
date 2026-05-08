@@ -34,7 +34,8 @@ def get_current_forward_batch():
     return _current_forward_batch.get()
 
 
-def _is_idle_forward(forward_batch: ForwardBatch) -> bool:
+def _is_dummy_forward(forward_batch: ForwardBatch) -> bool:
+    # SGLang's IDLE batch is the plugin-side equivalent of ATOM dummy run.
     forward_mode = getattr(forward_batch, "forward_mode", None)
     return bool(
         forward_mode is not None
@@ -42,21 +43,6 @@ def _is_idle_forward(forward_batch: ForwardBatch) -> bool:
         and forward_mode.is_idle()
     )
 
-
-def _is_dummy_forward(forward_batch: ForwardBatch) -> bool:
-    # SGLang's IDLE batch is the plugin-side equivalent of ATOM dummy run.
-    return bool(getattr(forward_batch, "is_dummy_run", False) or _is_idle_forward(forward_batch))
-
-
-def _get_forward_num_tokens(
-    positions: Optional[torch.Tensor], forward_batch: ForwardBatch
-) -> int:
-    if positions is not None and hasattr(positions, "shape"):
-        return int(positions.shape[0])
-    batch_positions = getattr(forward_batch, "positions", None)
-    if batch_positions is not None and hasattr(batch_positions, "shape"):
-        return int(batch_positions.shape[0])
-    return int(getattr(forward_batch, "seq_lens_sum", 0) or 0)
 
 def _pad_dummy_like(
     tensor: Optional[torch.Tensor],
@@ -80,45 +66,20 @@ def _materialize_atom_dummy_forward(
     Optional[torch.Tensor],
     Optional[torch.Tensor],
     ForwardBatch,
-    bool,
 ]:
     """Convert an empty SGLang IDLE batch into ATOM-style dummy forward inputs."""
-    if not _is_dummy_forward(forward_batch) or _get_forward_num_tokens(positions, forward_batch) > 0:
-        return input_ids, positions, input_embeds, forward_batch, False
-
-    if positions is not None:
-        dummy_positions = positions.new_zeros((1,))
-    elif input_ids is not None:
-        dummy_positions = torch.zeros((1,), dtype=torch.int64, device=input_ids.device)
-    else:
-        raise RuntimeError("Cannot materialize ATOM dummy forward without positions or input_ids")
-
-    if input_ids is not None:
-        dummy_input_ids = input_ids.new_zeros((1,))
-    else:
-        dummy_input_ids = None
+    dummy_positions = positions.new_zeros((1,))
+    dummy_input_ids = input_ids.new_zeros((1,))
     dummy_input_embeds = _pad_dummy_like(input_embeds, length=1, fill_value=0)
 
     model_forward_batch = copy.copy(forward_batch)
     model_forward_batch.positions = dummy_positions
     model_forward_batch.batch_size = 1
     model_forward_batch.seq_lens_sum = 1
+    model_forward_batch.seq_lens = forward_batch.seq_lens.new_ones((1,))
+    model_forward_batch.seq_lens_cpu = forward_batch.seq_lens_cpu.new_ones((1,))
 
-    seq_lens = getattr(model_forward_batch, "seq_lens", None)
-    if seq_lens is not None:
-        if torch.is_tensor(seq_lens):
-            model_forward_batch.seq_lens = seq_lens.new_ones((1,))
-        else:
-            model_forward_batch.seq_lens = [1]
-
-    seq_lens_cpu = getattr(model_forward_batch, "seq_lens_cpu", None)
-    if seq_lens_cpu is not None:
-        if torch.is_tensor(seq_lens_cpu):
-            model_forward_batch.seq_lens_cpu = seq_lens_cpu.new_ones((1,))
-        else:
-            model_forward_batch.seq_lens_cpu = [1]
-
-    return dummy_input_ids, dummy_positions, dummy_input_embeds, model_forward_batch, True
+    return dummy_input_ids, dummy_positions, dummy_input_embeds, model_forward_batch
 
 
 def _trim_hidden_states_for_output(hidden_states, num_tokens: int):
@@ -132,75 +93,63 @@ def _trim_hidden_states_for_output(hidden_states, num_tokens: int):
     return hidden_states
 
 
-def _align_dummy_num_tokens_across_dp(
-    atom_config: Any,
-    num_tokens: Optional[int],
-    num_tokens_across_dp: Optional[torch.Tensor],
-    is_dummy_run: bool,
-):
-    if (
-        not is_dummy_run
-        or num_tokens is None
-        or num_tokens_across_dp is None
-        or not hasattr(num_tokens_across_dp, "clone")
-    ):
-        return num_tokens_across_dp
-
-    dp_rank = getattr(atom_config.parallel_config, "data_parallel_rank", None)
-    if dp_rank is None:
-        return num_tokens_across_dp
-    if dp_rank < 0 or dp_rank >= num_tokens_across_dp.shape[0]:
-        return num_tokens_across_dp
-    if int(num_tokens_across_dp[dp_rank]) == int(num_tokens):
-        return num_tokens_across_dp
-
-    aligned = num_tokens_across_dp.clone()
-    aligned[dp_rank] = int(num_tokens)
-    return aligned
-
-
 def _resolve_num_tokens_across_dp(
     atom_config: Any,
     forward_batch: ForwardBatch,
-    num_tokens: Optional[int],
-) -> Optional[torch.Tensor]:
+    num_tokens: int,
+    is_dummy_run: bool,
+) -> torch.Tensor:
+    """Resolve per-DP token counts for ATOM's CPU-side DPMetadata.
+
+    Real SGLang dp-attention batches carry ``global_num_tokens_cpu`` from the
+    scheduler.  That list is the source of truth for mixed prefill/decode/idle
+    batches, where token counts may look like [8, 1, 8, 8].
+
+    Some SGLang synthetic/static batches, especially CUDA graph capture batches,
+    only keep the global token buffer on GPU.  ATOM's DPMetadata is CPU-side and
+    needs a CPU tensor before model forward, so avoid reading the GPU buffer back
+    to CPU.  We only fallback when the batch advertises the same-shape DP buffer
+    layout (global_dp_buffer_len == local_num_tokens * dp_size), where the CPU
+    equivalent is exactly [local_num_tokens] * dp_size.
+
+    IDLE batches are reported by SGLang as 0 tokens on the current rank, but
+    this wrapper materializes them as one local dummy token before entering
+    ATOM.  Patch the current DP rank after resolving the distribution so
+    ``DPMetadata`` sees a local count that matches the actual ATOM input.
+    """
     global_num_tokens_cpu = getattr(forward_batch, "global_num_tokens_cpu", None)
     if global_num_tokens_cpu is not None:
-        return torch.tensor(global_num_tokens_cpu, dtype=torch.int32, device="cpu")
-
-    if num_tokens is not None:
-        dp_size = int(
-            getattr(atom_config.parallel_config, "data_parallel_size", 1) or 1
+        num_tokens_across_dp = torch.tensor(
+            global_num_tokens_cpu, dtype=torch.int32, device="cpu"
         )
-        return torch.full((dp_size,), int(num_tokens), dtype=torch.int32, device="cpu")
+    else:
+        dp_size = atom_config.parallel_config.data_parallel_size
+        global_num_tokens_gpu = getattr(forward_batch, "global_num_tokens_gpu", None)
+        global_dp_buffer_len = getattr(forward_batch, "global_dp_buffer_len", None)
+        is_static_same_shape_batch = (
+            global_num_tokens_gpu is not None
+            and global_dp_buffer_len == num_tokens * dp_size
+        )
+        if not is_static_same_shape_batch:
+            raise RuntimeError(
+                "[SGL+ATOM] SGLang dp-attention requires "
+                "forward_batch.global_num_tokens_cpu unless the batch uses static "
+                "same-shape DP metadata."
+            )
 
-    global_num_tokens_gpu = getattr(forward_batch, "global_num_tokens_gpu", None)
-    if global_num_tokens_gpu is not None:
-        return global_num_tokens_gpu.to(device="cpu", dtype=torch.int32)
+        # Static batches, such as CUDA graph capture batches, may only keep
+        # global token counts on GPU. Avoid GPU-to-CPU reads here and mirror
+        # their same-shape layout directly for ATOM's CPU DPMetadata.
+        num_tokens_across_dp = torch.full(
+            (dp_size,), num_tokens, dtype=torch.int32, device="cpu"
+        )
 
-    return None
-
-
-def _resolve_graph_bs(
-    forward_batch: ForwardBatch,
-    batch_size: int,
-    num_tokens: Optional[int],
-    num_tokens_across_dp: Optional[torch.Tensor],
-) -> int:
-    if num_tokens_across_dp is not None and getattr(num_tokens_across_dp, "numel", None):
-        if num_tokens_across_dp.numel() > 0:
-            return int(torch.max(num_tokens_across_dp).item())
-
-    forward_mode = getattr(forward_batch, "forward_mode", None)
-    is_prefill = bool(
-        forward_mode is not None
-        and hasattr(forward_mode, "is_prefill")
-        and forward_mode.is_prefill()
-    )
-    if is_prefill and num_tokens is not None:
-        return int(num_tokens)
-
-    return int(batch_size)
+    if is_dummy_run:
+        # SGLang reports idle ranks as 0 tokens, but ATOM materializes them
+        # as one local dummy token so collectives and DPMetadata stay aligned.
+        dp_rank = atom_config.parallel_config.data_parallel_rank
+        num_tokens_across_dp[dp_rank] = num_tokens
+    return num_tokens_across_dp
 
 
 def _set_sglang_forward_context(
@@ -211,36 +160,35 @@ def _set_sglang_forward_context(
     """Bridge SGLang batch metadata into ATOM's global forward context."""
     from atom.utils.forward_context import AttentionMetaData, Context, set_forward_context
 
-    forward_metadata = getattr(
-        getattr(forward_batch, "attn_backend", None), "forward_metadata", None
-    )
-    max_seqlen_q = int(getattr(forward_metadata, "max_q_len", 0) or 0)
-    if max_seqlen_q <= 0 and forward_batch.forward_mode.is_decode_or_idle():
-        max_seqlen_q = 1
-
+    forward_mode = forward_batch.forward_mode
+    # TODO: This max_seqlen_q is not the source of truth for prefill attention;
+    # SGLang plugin attention consumes forward_batch.attn_backend.forward_metadata
+    # directly.  In this wrapper it is only needed by ATOM MoE padding: under
+    # dp-attention + TP (non-EP all_gather/reduce_scatter), decode/idle batches
+    # must use 1 so pad_for_all_gather keeps fixed-shape collectives aligned.
+    # Leaving it as 0 there can make active and dummy ranks send different
+    # shapes to DP all_gather and hang.
+    max_seqlen_q = 1 if forward_mode.is_decode_or_idle() else 0
     attn_metadata = AttentionMetaData(max_seqlen_q=max_seqlen_q)
-    batch_size = int(getattr(forward_batch, "batch_size", 0) or 0)
+    batch_size = int(forward_batch.batch_size)
     is_dummy_run = _is_dummy_forward(forward_batch)
-    is_prefill = forward_batch.forward_mode.is_prefill()
+    is_prefill = forward_mode.is_prefill()
+    num_tokens = int(positions.shape[0])
 
-    num_tokens = None
-    if positions is not None:
-        num_tokens = int(positions.shape[0])
-    elif getattr(forward_batch, "seq_lens_sum", None) is not None:
-        num_tokens = int(forward_batch.seq_lens_sum)
-
-    num_tokens_across_dp = _resolve_num_tokens_across_dp(
-        atom_config, forward_batch, num_tokens
-    )
-    num_tokens_across_dp = _align_dummy_num_tokens_across_dp(
-        atom_config,
-        num_tokens,
-        num_tokens_across_dp,
-        is_dummy_run,
-    )
-    graph_bs = _resolve_graph_bs(
-        forward_batch, batch_size, num_tokens, num_tokens_across_dp
-    )
+    enable_dp_attention = bool(atom_config.enable_dp_attention)
+    if enable_dp_attention:
+        # SGLang owns the cross-DP token distribution under dp-attention; ATOM
+        # uses it to derive graph_bs and fixed-size MoE gather/scatter buffers.
+        num_tokens_across_dp = _resolve_num_tokens_across_dp(
+            atom_config, forward_batch, num_tokens, is_dummy_run
+        )
+        graph_bs = int(torch.max(num_tokens_across_dp).item())
+    else:
+        # Without dp-attention, ATOM runs with local-rank shapes only.  There is
+        # no cross-DP token distribution to pass into DPMetadata, so graph_bs
+        # follows the local prefill token count or decode batch size.
+        num_tokens_across_dp = None
+        graph_bs = num_tokens if is_prefill else batch_size
     context = Context(
         positions=positions,
         is_prefill=is_prefill,
@@ -317,18 +265,11 @@ class _AtomCausalLMBaseForSglang(nn.Module):
             atom_config = getattr(getattr(self.model, "model", None), "atom_config", None)
         if atom_config is None:
             from atom.config import get_current_atom_config
-
             atom_config = get_current_atom_config()
+
         if not hasattr(self.model, "atom_config"):
             self.model.atom_config = atom_config
-        plugin_config = getattr(atom_config, "plugin_config", None)
-        plugin_skip_all_gather = bool(
-            getattr(plugin_config, "is_sglang", False)
-            and (
-                getattr(plugin_config, "sglang_enable_dp_attention", False)
-                or getattr(atom_config, "enable_dp_attention", False)
-            )
-        )
+        plugin_skip_all_gather = bool(atom_config.enable_dp_attention)
         self.logits_processor = LogitsProcessor(
             config, skip_all_gather=plugin_skip_all_gather
         )
@@ -355,19 +296,30 @@ class _AtomCausalLMBaseForSglang(nn.Module):
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
         **model_kwargs: Any,
     ) -> Union[LogitsProcessorOutput, PPProxyTensors]:
-        original_num_tokens = _get_forward_num_tokens(positions, forward_batch)
-        (
-            model_input_ids,
-            model_positions,
-            model_input_embeds,
-            model_forward_batch,
-            used_atom_dummy_materialization,
-        ) = _materialize_atom_dummy_forward(
-            input_ids,
-            positions,
-            input_embeds,
-            forward_batch,
-        )
+        if _is_dummy_forward(forward_batch):
+            (
+                model_input_ids,
+                model_positions,
+                model_input_embeds,
+                model_forward_batch,
+            ) = _materialize_atom_dummy_forward(
+                input_ids,
+                positions,
+                input_embeds,
+                forward_batch,
+            )
+        else:
+            (
+                model_input_ids,
+                model_positions,
+                model_input_embeds,
+                model_forward_batch,
+            ) = (
+                input_ids,
+                positions,
+                input_embeds,
+                forward_batch,
+            )
         model_inputs = dict(
             input_ids=model_input_ids,
             positions=model_positions,
@@ -394,9 +346,13 @@ class _AtomCausalLMBaseForSglang(nn.Module):
             )
 
         if self.pp_group.is_last_rank:
-            if used_atom_dummy_materialization:
+            if _is_dummy_forward(forward_batch):
+                # TODO: Revisit if SGLang ever sends non-empty dummy batches.
+                # Today this path only runs when an empty IDLE batch is expanded
+                # to one ATOM dummy token, so the output boundary must trim back to
+                # the original SGLang-visible length: 0 tokens.
                 hidden_states = _trim_hidden_states_for_output(
-                    hidden_states, original_num_tokens
+                    hidden_states, 0
                 )
             return self.logits_processor(
                 input_ids,
