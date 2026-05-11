@@ -89,7 +89,7 @@ class RadixAttention(BaseAttention):
                     torch.tensor([1.0], dtype=torch.float32, device="cuda")
                 )
             elif not self.attn.k_scale.is_cuda:
-                self.attn.k_scale = torch.nn.Parameter(
+                self.attn.k_scale = atom_parameter(
                     self.attn.k_scale.detach().to(device="cuda"),
                     requires_grad=False,
                 )
@@ -98,7 +98,7 @@ class RadixAttention(BaseAttention):
                     torch.tensor([1.0], dtype=torch.float32, device="cuda")
                 )
             elif not self.attn.v_scale.is_cuda:
-                self.attn.v_scale = torch.nn.Parameter(
+                self.attn.v_scale = atom_parameter(
                     self.attn.v_scale.detach().to(device="cuda"),
                     requires_grad=False,
                 )
