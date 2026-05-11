@@ -12,6 +12,7 @@ from __future__ import annotations
 # unnecessary.
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -27,6 +28,9 @@ from sglang.srt.layers.attention.utils import (
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.srt.utils import get_bool_env_var
+from atom.model_ops.attention_mha import PagedAttentionImpl
+from atom.model_ops.attention_mla import MLAAttention
+from atom.utils.forward_context import AttentionMetaData, ForwardContext
 
 if TYPE_CHECKING:
     from sglang.srt.layers.radix_attention import RadixAttention
@@ -203,6 +207,89 @@ class ForwardMetadata:
     pa_metadata_kv_indices: Optional[torch.Tensor] = None
     pa_metadata_context_lens: Optional[torch.Tensor] = None
     pa_metadata_max_qlen: Optional[int] = None
+
+
+def _make_atom_forward_context(attn_metadata: AttentionMetaData) -> ForwardContext:
+    return ForwardContext(attn_metadata=attn_metadata)
+
+
+def _make_atom_mha_decode_shim(scale: float) -> SimpleNamespace:
+    return SimpleNamespace(scale=scale)
+
+
+def _infer_atom_kv_cache_dtype(
+    kv_cache_dtype: object, kv_buffer: torch.Tensor
+) -> str:
+    if isinstance(kv_cache_dtype, str):
+        return kv_cache_dtype
+    if kv_buffer.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz):
+        return "fp8"
+    return "bf16"
+
+
+def _build_atom_attn_metadata_for_mla_decode(
+    md: ForwardMetadata,
+) -> AttentionMetaData:
+    return AttentionMetaData(
+        cu_seqlens_q=md.qo_indptr,
+        kv_indptr=md.kv_indptr,
+        kv_indices=md.kv_indices,
+        kv_last_page_lens=md.kv_last_page_len,
+        max_seqlen_q=md.max_q_len,
+        work_meta_data=md.work_metadata,
+        work_indptr=md.work_indptr,
+        work_info_set=md.work_info_set,
+        reduce_indptr=md.reduce_indptr,
+        reduce_final_map=md.reduce_final_map,
+        reduce_partial_map=md.reduce_partial_map,
+    )
+
+
+def _build_atom_attn_metadata_for_mha_asm(md: ForwardMetadata) -> AttentionMetaData:
+    return AttentionMetaData(
+        block_tables=md.page_table,
+        context_lens=md.kv_lens,
+        max_seqlen_q=1,
+    )
+
+
+def _build_atom_attn_metadata_for_mha_persistent(
+    md: ForwardMetadata, pa_metadata_buffers: dict[str, torch.Tensor]
+) -> AttentionMetaData:
+    return AttentionMetaData(
+        cu_seqlens_q=md.pa_metadata_qo_indptr,
+        kv_indptr=md.pa_metadata_pages_kv_indptr,
+        kv_indices=md.pa_metadata_kv_indices,
+        context_lens=md.pa_metadata_context_lens,
+        max_seqlen_q=md.pa_metadata_max_qlen,
+        work_indptr=pa_metadata_buffers["work_indptr"],
+        work_info_set=pa_metadata_buffers["work_info"],
+        reduce_indptr=pa_metadata_buffers["reduce_indptr"],
+        reduce_final_map=pa_metadata_buffers["reduce_final_map"],
+        reduce_partial_map=pa_metadata_buffers["reduce_partial_map"],
+    )
+
+
+def _build_atom_mla_decode_shim(
+    input_dtype: torch.dtype,
+    kv_cache_dtype: object,
+    layer,
+    kv_buffer: torch.Tensor,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        head_repeat_factor=1,
+        padded_num_heads=layer.tp_q_head_num,
+        kv_lora_rank=layer.v_head_dim,
+        dtype=input_dtype,
+        topk_indices_buffer=None,
+        kv_cache_dtype=_infer_atom_kv_cache_dtype(kv_cache_dtype, kv_buffer),
+        scale=layer.scaling,
+        _q_scale=layer.k_scale,
+        _k_scale=layer.k_scale,
+        _v_up_proj_and_o_proj=lambda x: x.reshape(
+            -1, layer.tp_q_head_num * layer.v_head_dim
+        ),
+    )
 
 
 class ATOMAttnBackendForSgl(AiterAttnBackend):
@@ -2073,28 +2160,17 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
     def _call_mla_decode_fwd(self, q, k_buffer, o, layer):
         """Common mla_decode_fwd invocation shared across decode/extend paths."""
         md = self.forward_metadata
-        mla_decode_fwd(
-            q,
-            k_buffer.view(-1, 1, 1, layer.qk_head_dim),
-            o,
-            md.qo_indptr,
-            md.kv_indptr,
-            md.kv_indices,
-            md.kv_last_page_len,
-            md.max_q_len,
-            sm_scale=layer.scaling,
-            logit_cap=layer.logit_cap,
-            work_meta_data=md.work_metadata,
-            work_indptr=md.work_indptr,
-            work_info_set=md.work_info_set,
-            reduce_indptr=md.reduce_indptr,
-            reduce_final_map=md.reduce_final_map,
-            reduce_partial_map=md.reduce_partial_map,
-            q_scale=layer.k_scale,
-            kv_scale=layer.k_scale,
-            intra_batch_mode=_sglang_aiter.intra_batch_mode,
-            num_kv_splits=md.num_kv_splits,
+        atom_attn_metadata = _build_atom_attn_metadata_for_mla_decode(md)
+        atom_impl = _build_atom_mla_decode_shim(
+            self.input_dtype, self.kv_cache_dtype, layer, k_buffer
         )
+        atom_output = MLAAttention._forward_decode(
+            atom_impl,
+            q,
+            k_buffer.view(-1, 1, layer.qk_head_dim),
+            atom_attn_metadata,
+        )
+        o.copy_(atom_output.view_as(o))
 
     def _forward_extend_mla_speculative(
         self, q, layer, K_Buffer, qo_indptr, forward_batch
@@ -2226,38 +2302,39 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         if self.decode_using_pa_ps:
             total_tokens = num_blocks * block_size
             q_3d = q.view(batch_size, layer.tp_q_head_num, layer.head_dim)
-            pa_persistent_fwd(
-                Q=q_3d,
-                K=new_key_cache,
-                V=new_value_cache,
-                output=o,
-                max_qlen=self.forward_metadata.pa_metadata_max_qlen,
-                qo_indptr=self.forward_metadata.pa_metadata_qo_indptr,
-                kv_indptr=self.forward_metadata.pa_metadata_pages_kv_indptr,
-                kv_indices=self.forward_metadata.pa_metadata_kv_indices,
-                context_lens=self.forward_metadata.pa_metadata_context_lens,
-                work_indptr=self.pa_metadata_buffers["work_indptr"],
-                work_info=self.pa_metadata_buffers["work_info"],
-                reduce_indptr=self.pa_metadata_buffers["reduce_indptr"],
-                reduce_final_map=self.pa_metadata_buffers["reduce_final_map"],
-                reduce_partial_map=self.pa_metadata_buffers["reduce_partial_map"],
-                K_QScale=self.k_qscale[:, :total_tokens],
-                V_QScale=self.v_qscale[:, :total_tokens],
-                softmax_scale=layer.scaling,
-                mask=1,
+            atom_attn_metadata = _build_atom_attn_metadata_for_mha_persistent(
+                self.forward_metadata, self.pa_metadata_buffers
+            )
+            atom_ctx = _make_atom_forward_context(atom_attn_metadata)
+            atom_impl = _make_atom_mha_decode_shim(layer.scaling)
+            o = PagedAttentionImpl.paged_attention_persistent_asm(
+                atom_impl,
+                q_3d,
+                None,
+                None,
+                new_key_cache,
+                new_value_cache,
+                self.k_qscale[:, :total_tokens],
+                self.v_qscale[:, :total_tokens],
+                atom_ctx,
             )
         else:
             q_3d = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
-            pa_fwd_asm(
-                Q=q_3d,
-                K=new_key_cache,
-                V=new_value_cache,
-                block_tables=self.forward_metadata.page_table,
-                context_lens=self.forward_metadata.kv_lens,
-                block_tables_stride0=self.forward_metadata.page_table.stride(0),
-                K_QScale=self.k_scale,
-                V_QScale=self.v_scale,
-                out_=o,
+            atom_attn_metadata = _build_atom_attn_metadata_for_mha_asm(
+                self.forward_metadata
+            )
+            atom_ctx = _make_atom_forward_context(atom_attn_metadata)
+            atom_impl = _make_atom_mha_decode_shim(layer.scaling)
+            o = PagedAttentionImpl.paged_attention_asm(
+                atom_impl,
+                q_3d,
+                None,
+                None,
+                new_key_cache,
+                new_value_cache,
+                self.k_scale,
+                self.v_scale,
+                atom_ctx,
             )
 
         return o.view(-1, layer.tp_q_head_num * head_dim_out)
