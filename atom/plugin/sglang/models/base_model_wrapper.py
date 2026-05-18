@@ -390,9 +390,7 @@ class _AtomCausalLMBaseForSglang(nn.Module):
                 setup_deepseek_for_sglang,
             )
 
-            with plugin_runtime_scope(
-                framework="sglang", atom_config=self.atom_config
-            ):
+            with plugin_runtime_scope(framework="sglang", atom_config=self.atom_config):
                 setup_deepseek_for_sglang(self.model)
 
     def get_embed_and_head(self):
@@ -401,7 +399,8 @@ class _AtomCausalLMBaseForSglang(nn.Module):
 
         embed_owner = (
             self.model.model
-            if hasattr(self.model, "model") and hasattr(self.model.model, "embed_tokens")
+            if hasattr(self.model, "model")
+            and hasattr(self.model.model, "embed_tokens")
             else self.model
         )
         return embed_owner.embed_tokens.weight, self.model.lm_head.weight
@@ -412,7 +411,8 @@ class _AtomCausalLMBaseForSglang(nn.Module):
 
         embed_owner = (
             self.model.model
-            if hasattr(self.model, "model") and hasattr(self.model.model, "embed_tokens")
+            if hasattr(self.model, "model")
+            and hasattr(self.model.model, "embed_tokens")
             else self.model
         )
         del embed_owner.embed_tokens.weight
@@ -428,7 +428,8 @@ class _AtomCausalLMBaseForSglang(nn.Module):
 
         embed_owner = (
             self.model.model
-            if hasattr(self.model, "model") and hasattr(self.model.model, "embed_tokens")
+            if hasattr(self.model, "model")
+            and hasattr(self.model.model, "embed_tokens")
             else self.model
         )
         del embed_owner.embed_tokens.weight

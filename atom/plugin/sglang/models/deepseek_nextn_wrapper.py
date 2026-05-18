@@ -199,4 +199,5 @@ class DeepseekV3ForCausalLMNextN(nn.Module):
                 spec_decode=True,
             )
 
+
 EntryClass = [DeepseekV3ForCausalLMNextN]
