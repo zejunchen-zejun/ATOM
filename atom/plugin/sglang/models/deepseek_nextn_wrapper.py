@@ -24,6 +24,8 @@ from atom.plugin.sglang.attention_backend.sgl_attention_mla import (
 )
 from atom.plugin.sglang.models.base_model_wrapper import (
     _current_forward_batch,
+    _reset_sglang_forward_context,
+    _set_sglang_forward_context,
     plugin_runtime_scope,
 )
 
@@ -159,6 +161,7 @@ class DeepseekV3ForCausalLMNextN(nn.Module):
         with plugin_runtime_scope(framework="sglang", atom_config=self.atom_config):
             token = _current_forward_batch.set(forward_batch)
             try:
+                _set_sglang_forward_context(self.atom_config, forward_batch, positions)
                 hidden_states = self.model(
                     input_ids=input_ids,
                     positions=positions,
@@ -166,6 +169,7 @@ class DeepseekV3ForCausalLMNextN(nn.Module):
                     inputs_embeds=input_embeds,
                 )
             finally:
+                _reset_sglang_forward_context()
                 _current_forward_batch.reset(token)
 
             if self.pp_group.is_last_rank:
