@@ -37,7 +37,7 @@ from atom.models.utils import IntermediateTensors
 from atom.plugin.sglang.attention_backend.attention_gdn import (
     SGLangGDNForwardContext,
 )
-from atom.plugin.sglang.models.base_model_wrapper import (
+from atom.plugin.sglang.runtime import (
     SGLangForwardBatchMetadata,
 )
 
@@ -448,5 +448,5 @@ class Qwen3_5MoeForConditionalGeneration(
 
 # SGLang discovers these multimodal wrappers from this module's `EntryClass`.
 # They are not covered by `base_model_wrapper.py`, whose generated entries only
-# handle the plain causal-LM architectures in `_MODEL_ARCH_SPECS`.
+# handle the plain causal-LM architectures in `MODEL_ARCH_SPECS`.
 EntryClass = [Qwen3_5ForConditionalGeneration, Qwen3_5MoeForConditionalGeneration]
