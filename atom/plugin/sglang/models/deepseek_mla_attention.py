@@ -38,7 +38,7 @@ class SGLangDeepseekMLAAttention(nn.Module):
     def _get_forward_batch(self, kwargs: dict[str, Any]):
         forward_batch = kwargs.get("forward_batch", None)
         if forward_batch is None:
-            from atom.plugin.sglang.models.base_model_wrapper import (
+            from atom.plugin.sglang.runtime import (
                 get_current_forward_batch,
             )
 

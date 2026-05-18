@@ -19,13 +19,11 @@ from sglang.srt.server_args import get_global_server_args
 
 from atom.config import SpeculativeConfig
 from atom.plugin.config import generate_atom_config_for_plugin_mode
-from atom.plugin.sglang.attention_backend.sgl_attention_mla import (
+from atom.plugin.sglang.models.deepseek_mla import (
     setup_deepseek_for_sglang,
 )
-from atom.plugin.sglang.models.base_model_wrapper import (
-    _current_forward_batch,
-    _reset_sglang_forward_context,
-    _set_sglang_forward_context,
+from atom.plugin.sglang.runtime import (
+    SGLangPluginRuntime,
     plugin_runtime_scope,
 )
 
@@ -159,18 +157,19 @@ class DeepseekV3ForCausalLMNextN(nn.Module):
             raise ValueError("DeepSeek MTP draft forward requires speculative info")
 
         with plugin_runtime_scope(framework="sglang", atom_config=self.atom_config):
-            token = _current_forward_batch.set(forward_batch)
-            try:
-                _set_sglang_forward_context(self.atom_config, forward_batch, positions)
+            with SGLangPluginRuntime(
+                atom_config=self.atom_config,
+                forward_batch=forward_batch,
+                positions=positions,
+                input_ids=input_ids,
+                input_embeds=input_embeds,
+            ):
                 hidden_states = self.model(
                     input_ids=input_ids,
                     positions=positions,
                     hidden_states=forward_batch.spec_info.hidden_states,
                     inputs_embeds=input_embeds,
                 )
-            finally:
-                _reset_sglang_forward_context()
-                _current_forward_batch.reset(token)
 
             if self.pp_group.is_last_rank:
                 return self.logits_processor(
