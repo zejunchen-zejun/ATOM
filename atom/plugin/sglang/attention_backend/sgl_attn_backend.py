@@ -1268,7 +1268,6 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
         else:
             raise ValueError(f"Invalid mode: {forward_mode=}")
 
-
     def init_forward_metadata_replay_cuda_graph(
         self,
         bs: int,
