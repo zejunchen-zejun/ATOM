@@ -1292,22 +1292,36 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             if self.use_mla:
                 self._init_mla_cuda_graph_metadata(bs, req_pool_indices, seq_lens)
             else:
+                kv_indptr = self.kv_indptr
+                kv_indptr[1 : bs + 1] = torch.cumsum(seq_lens, dim=0)
+                kv_indptr = kv_indptr[: bs + 1]
+                kv_indices = self.cuda_graph_kv_indices
+                create_flashinfer_kv_indices_triton[(bs,)](
+                    self.req_to_token,
+                    req_pool_indices,
+                    seq_lens,
+                    kv_indptr,
+                    None,
+                    kv_indices,
+                    self.req_to_token.stride(0),
+                )
                 page_table, seq_lens_persistent = self._update_decode_page_table(
                     bs,
                     req_pool_indices,
                     seq_lens,
                     seq_lens_cpu=seq_lens_cpu,
+                    static_columns=True,
                 )
 
                 self.forward_metadata = ForwardMetadata(
-                    None,
-                    None,
+                    kv_indptr,
+                    kv_indices,
                     None,
                     None,
                     1,
                     None,
                     page_table,
-                    seq_lens_persistent,
+                    seq_lens_persistent[:bs],
                 )
                 if self.decode_using_pa_ps:
                     self._build_pa_metadata_for_decode(bs, tp_q_head_num=self.num_head)
