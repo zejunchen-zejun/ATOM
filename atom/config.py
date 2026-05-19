@@ -723,10 +723,14 @@ class SpeculativeConfig:
     model: Optional[str] = None
     num_speculative_tokens: Optional[int] = None
     draft_model_hf_config: Optional[PretrainedConfig] = None
+    use_aux_hidden_state: bool = False
+    eagle3_aux_layer_ids: list[int] = field(default_factory=list)
 
     # model_type → mtp_model_type mapping
     _MTP_TYPE_MAP: ClassVar[dict[str, str]] = {
         "deepseek_v3": "deepseek_mtp",
+        "deepseek_v32": "deepseek_mtp",
+        "deepseek_v4": "deepseek_v4_mtp",
         "glm_moe_dsa": "deepseek_mtp",
         "qwen3_next": "qwen3_next_mtp",
         "qwen3_5": "qwen3_5_mtp",
@@ -739,22 +743,51 @@ class SpeculativeConfig:
     # mtp_model_type → (n_predict_attr, architecture)
     _MTP_CONFIG: ClassVar[dict[str, tuple[str, str]]] = {
         "deepseek_mtp": ("num_nextn_predict_layers", "DeepSeekMTPModel"),
+        "deepseek_v4_mtp": ("num_nextn_predict_layers", "DeepseekV4MTPModel"),
         "qwen3_next_mtp": ("num_nextn_predict_layers", "Qwen3NextMTPModel"),
         "qwen3_5_mtp": ("mtp_num_hidden_layers", "Qwen3_5MTPModel"),
     }
 
     def __post_init__(self):
         if self.draft_model_hf_config is None:
-            self.draft_model_hf_config = AutoConfig.from_pretrained(
+            self.draft_model_hf_config = get_hf_config(
                 self.model, trust_remote_code=True
             )
         # For multimodal models, extract text_config
         if hasattr(self.draft_model_hf_config, "text_config"):
             self.draft_model_hf_config = self.draft_model_hf_config.text_config
-        self.hf_config_override(self.draft_model_hf_config)
+        self.hf_config_override(self.draft_model_hf_config, self.model)
+
+        if self.method == "eagle3":
+            if getattr(self.draft_model_hf_config, "kv_lora_rank", None):
+                raise NotImplementedError(
+                    "Eagle3 draft model with MLA attention is not supported"
+                )
+            # Aux hidden state layers: prefer the draft checkpoint's
+            # eagle_config; if absent or the list is empty, ModelRunner
+            # falls back to model.get_eagle3_aux_hidden_state_layers(),
+            # which defaults to 3 layers — early / middle / late
+            # (see DeepseekV2ForCausalLM.get_eagle3_aux_hidden_state_layers,
+            # returns `(2, num_layers // 2, num_layers - 3)`, aligned with vLLM).
+            eagle_cfg = getattr(self.draft_model_hf_config, "eagle_config", None)
+            if eagle_cfg:
+                self.use_aux_hidden_state = eagle_cfg.get("use_aux_hidden_state", False)
+                if self.use_aux_hidden_state and not self.eagle3_aux_layer_ids:
+                    self.eagle3_aux_layer_ids = eagle_cfg.get(
+                        "eagle_aux_hidden_state_layer_ids", []
+                    )
+            else:
+                self.use_aux_hidden_state = True
 
     @staticmethod
-    def hf_config_override(hf_config: PretrainedConfig) -> None:
+    def hf_config_override(
+        hf_config: PretrainedConfig, model_path: Optional[str] = None
+    ) -> None:
+        # Eagle3 architecture mapping (architecture-level, not model_type)
+        arch = (getattr(hf_config, "architectures", None) or [""])[0]
+        if arch == "LlamaForCausalLMEagle3":
+            hf_config.architectures = ["Eagle3LlamaModel"]
+
         # Step 1: resolve model_type → mtp model_type
         mtp_type = SpeculativeConfig._MTP_TYPE_MAP.get(hf_config.model_type)
         if mtp_type is not None:
@@ -777,10 +810,33 @@ class SpeculativeConfig:
                 "num_nextn_predict_layers": n_predict,
                 "architectures": [arch],
             }
-            # Qwen3.5 MTP needs expert counts for MoE layer construction
-            if hf_config.model_type == "qwen3_5_mtp":
-                updates["n_shared_experts"] = 1
-                updates["n_routed_experts"] = getattr(hf_config, "num_experts", 0)
+            # Naming differs across families:
+            #   DeepSeek / GLM       → already have `n_routed_experts`
+            #   Qwen3.5 / Qwen3-Next → only carry `num_experts`
+            #   non-MoE / unknown    → leave unset (no MoE = no field)
+            n_routed = getattr(
+                hf_config,
+                "n_routed_experts",
+                getattr(hf_config, "num_experts", None),
+            )
+            if n_routed is not None:
+                updates["n_routed_experts"] = n_routed
+            # n_shared_experts: prefer the field's own value if it exists
+            # (DeepSeek / GLM ship it natively); else scan the checkpoint
+            # for `shared_expert` weights and use the parsed count (1 for
+            # the flat-block layout every released model uses). Leaving
+            # the field unset for ckpts without shared experts avoids
+            # fabricating a phantom shared block (e.g. R1 MTP eh_proj
+            # would otherwise pull a stale BF16 weight_scale).
+            existing_n_shared = getattr(hf_config, "n_shared_experts", None)
+            if existing_n_shared is not None:
+                updates["n_shared_experts"] = existing_n_shared
+            else:
+                from atom.models.utils import ckpt_shared_expert_count
+
+                n_shared = ckpt_shared_expert_count(model_path)
+                if n_shared > 0:
+                    updates["n_shared_experts"] = n_shared
 
             hf_config.update(updates)
 
@@ -824,7 +880,7 @@ class Config:
     kv_cache_block_size: int = 16
     num_kvcache_blocks: int = -1
     kv_cache_dtype: str = "bf16"
-    enable_prefix_caching: bool = False
+    enable_prefix_caching: bool = True
     port: int = 8006
     torch_profiler_dir: str | None = field(
         default_factory=lambda: envs.ATOM_TORCH_PROFILER_DIR
@@ -963,10 +1019,26 @@ class Config:
         # tokens. ATOM's BlockManager + slot_mapping math assume one global
         # block_size, so we override `kv_cache_block_size` here when V4 is
         # detected; the V4 attention builder enforces the same value.
-        if getattr(self.hf_config, "model_type", None) == "deepseek_v4":
+        #
+        # NOTE: cannot use `hf_config.model_type` for detection — `_CONFIG_REGISTRY`
+        # maps "deepseek_v4" → "deepseek_v3" so model_type reads as "deepseek_v3".
+        # Use the preserved `architectures` field (re-injected by get_hf_config,
+        # line 567) which keeps the original "DeepseekV4ForCausalLM[NextN]" name.
+        arches = getattr(self.hf_config, "architectures", None) or []
+        if any("DeepseekV4" in str(a) for a in arches):
             v4_block_size = 128
             if self.kv_cache_block_size != v4_block_size:
                 self.kv_cache_block_size = v4_block_size
+            # TODO: V4's per-request SWA buffer cannot be restored from the classical
+            # KV pool on prefix cache hit, so disable prefix caching silently.
+            if self.enable_prefix_caching:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "DeepSeek-V4 does not support prefix caching "
+                    "(SWA buffer is not cacheable); disabling automatically."
+                )
+                self.enable_prefix_caching = False
 
     def compute_hash(self) -> str:
         """
@@ -1011,6 +1083,30 @@ def set_current_atom_config(atom_config: Config):
     _current_atom_config = atom_config
 
 
+def _get_current_atom_config_from_vllm_forward_context() -> Optional[Config]:
+    # In vLLM plugin mode (especially speculative decode), main/draft models
+    # can coexist in one process. Resolve per-forward config first to avoid
+    # reading a stale global singleton.
+    try:
+        from vllm.forward_context import (
+            get_forward_context as get_vllm_forward_context,
+            is_forward_context_available,
+        )
+    except Exception:
+        return None
+    if not is_forward_context_available():
+        return None
+    try:
+        return get_vllm_forward_context().additional_kwargs.get("atom_config")
+    except Exception:
+        return None
+
+
 def get_current_atom_config() -> Config:
+    # Try to get the atom config from forward context first in vLLM plugin mode.
+    if is_vllm():
+        forward_atom_config = _get_current_atom_config_from_vllm_forward_context()
+        if forward_atom_config is not None:
+            return forward_atom_config
     assert _current_atom_config is not None, "Current atom config is not set"
     return _current_atom_config

@@ -16,7 +16,9 @@ from atom.utils.block_convert import (
 import atom.model_ops as ops
 from atom.model_ops.paged_attention import PagedAttention
 from atom.model_ops.attention_mha import PagedAttentionImpl
-from atom.plugin.sglang.attention_backend.radix_attention import RadixAttention
+from atom.plugin.sglang.attention_backend.full_attention.radix_attention import (
+    RadixAttention,
+)
 from atom.utils.forward_context import AttentionMetaData, Context
 
 from .backends import AttentionBackend, CommonAttentionBuilder
@@ -71,9 +73,7 @@ class AiterAttentionMetadataBuilder:
         CommonAttentionBuilder.__init__(self, model_runner)
         config = model_runner.config
         hf_config = config.hf_config
-        self.num_attention_heads = (
-            hf_config.num_attention_heads // get_tp_group().world_size
-        )
+        # `self.num_attention_heads` set by CommonAttentionBuilder.__init__.
         # For speculative decode (MTP), max_qlen = num_speculative_tokens + 1
         if (
             config.speculative_config is not None

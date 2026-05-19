@@ -196,6 +196,8 @@ def load_model_in_plugin_mode(
     prefix: str = "",
     weights_mapper: WeightsMapper | None = None,
     load_fused_expert_weights_fn=None,
+    spec_decode: bool = False,
+    hf_config_override: AutoConfig | None = None,
 ) -> set[str]:
 
     # during loading model, the outplace operation may consume more
@@ -216,17 +218,24 @@ def load_model_in_plugin_mode(
         model_name_or_path = config.plugin_config.model_config.model_path
 
     _empty_cache()
-    config_for_loading = (
-        config.hf_config.text_config
-        if hasattr(config.hf_config, "text_config")
-        else config.hf_config
-    )
+    if hf_config_override is not None:
+        config_for_loading = getattr(
+            hf_config_override, "hf_config", hf_config_override
+        )
+        if hasattr(config_for_loading, "text_config"):
+            config_for_loading = config_for_loading.text_config
+    else:
+        config_for_loading = (
+            config.hf_config.text_config
+            if hasattr(config.hf_config, "text_config")
+            else config.hf_config
+        )
     loaded_weights_record = load_model(
         model=model,
         model_name_or_path=model_name_or_path,
         hf_config=config_for_loading,
         load_dummy=config.load_dummy,
-        spec_decode=False,
+        spec_decode=spec_decode,
         prefix=prefix,
         is_plugin_mode=True,
         weights_mapper=weights_mapper,
@@ -287,6 +296,12 @@ def load_model(
     if weights_mapper is None:
         weights_mapper = getattr(model, "weights_mapper", None)
     params_dict = dict(model.named_parameters())
+    # Load `mtp.*` ckpt entries only when this is a spec-decode draft model
+    # AND it actually carries `mtp.*` params. The two-condition gate handles
+    # both directions: target loads (spec_decode=False) skip mtp regardless,
+    # and spec drafts that don't use the standard `mtp.*` param naming
+    # (e.g. Eagle3 with its own arch) also skip cleanly.
+    need_load_mtp: bool = spec_decode and any("mtp" in n for n in params_dict)
 
     # Pre-index expert_mapping by weight_name_part for O(1) lookup.
     # Original code does O(N) scan of expert_mapping (768 entries) per tensor,
@@ -318,6 +333,20 @@ def load_model(
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
+    use_threadpool = envs.ATOM_LOADER_USE_THREADPOOL
+    if use_threadpool:
+        executor = concurrent.futures.ThreadPoolExecutor()
+    else:
+        executor = None
+    futures = []
+
+    def _submit(fn, *args):
+        if executor is not None:
+            futures.append(executor.submit(fn, *args))
+        else:
+            fn(*args)
+
+    try:
         disable_mmap = envs.ATOM_DISABLE_MMAP
         for name, weight_tensor in safetensors_weights_iterator(
             model_name_or_path, disable_mmap=disable_mmap
@@ -330,7 +359,7 @@ def load_model(
                 name = mapped_name
             if load_dummy:
                 continue
-            if "mtp" in name and not spec_decode:
+            if "mtp" in name and not need_load_mtp:
                 continue
             if name.endswith("kv_scale") or "inv_freq" in name:
                 continue
@@ -389,11 +418,7 @@ def load_model(
                                     )
                                     continue
                                 weight_loader = getattr(param, "weight_loader")
-                                futures.append(
-                                    executor.submit(
-                                        weight_loader, param, weight_tensor, shard_idx
-                                    )
-                                )
+                                _submit(weight_loader, param, weight_tensor, shard_idx)
                                 loaded_weights_record.add(prefix + param_name)
                     else:
                         # Checkpoint has separate weights, load into fused param
@@ -407,12 +432,7 @@ def load_model(
                                 dropped_ckpt_keys.append((_orig_ckpt_name, param_name))
                                 break
                             weight_loader = getattr(param, "weight_loader")
-                            # weight_loader(param, weight_tensor, shard_id)
-                            futures.append(
-                                executor.submit(
-                                    weight_loader, param, weight_tensor, shard_id
-                                )
-                            )
+                            _submit(weight_loader, param, weight_tensor, shard_id)
                             loaded_weights_record.add(prefix + param_name)
                     break
             else:
@@ -471,7 +491,7 @@ def load_model(
                         ) and name not in params_dict:
                             matched = True
                             break
-                        if "mtp" in name and not spec_decode:
+                        if "mtp" in name and not need_load_mtp:
                             matched = True
                             break
                         try:
@@ -482,21 +502,19 @@ def load_model(
                             matched = True
                             break
                         weight_loader = getattr(param, "weight_loader")
-                        futures.append(
-                            executor.submit(
-                                weight_loader,
-                                param,
-                                weight_tensor,
-                                name,
-                                shard_id,
-                                expert_id,
-                            )
+                        _submit(
+                            weight_loader,
+                            param,
+                            weight_tensor,
+                            name,
+                            shard_id,
+                            expert_id,
                         )
                         loaded_weights_record.add(prefix + name)
                         matched = True
                         break
                     if not matched:
-                        if "mtp" in name and not spec_decode:
+                        if "mtp" in name and not need_load_mtp:
                             continue
                         if merged_target := extract_expert_target_and_id(name):
                             fused_name, expert_id = merged_target
@@ -508,15 +526,13 @@ def load_model(
                             weight_loader = getattr(
                                 param, "weight_loader", default_weight_loader
                             )
-                            futures.append(
-                                executor.submit(
-                                    weight_loader,
-                                    param,
-                                    weight_tensor,
-                                    "",  # use merged moe loader
-                                    "",
-                                    expert_id,
-                                )
+                            _submit(
+                                weight_loader,
+                                param,
+                                weight_tensor,
+                                "",  # use merged moe loader
+                                "",
+                                expert_id,
                             )
                             loaded_weights_record.add(prefix + name)
                         try:
@@ -527,9 +543,7 @@ def load_model(
                         weight_loader = getattr(
                             param, "weight_loader", default_weight_loader
                         )
-                        futures.append(
-                            executor.submit(weight_loader, param, weight_tensor)
-                        )
+                        _submit(weight_loader, param, weight_tensor)
                         loaded_weights_record.add(prefix + name)
                 else:
                     # Model doesn't have expert mapping, use generic loading
@@ -541,12 +555,12 @@ def load_model(
                     weight_loader = getattr(
                         param, "weight_loader", default_weight_loader
                     )
-                    # weight_loader(param, weight_tensor)
-                    futures.append(executor.submit(weight_loader, param, weight_tensor))
+                    _submit(weight_loader, param, weight_tensor)
                     loaded_weights_record.add(prefix + name)
-        # Wait for all tasks to complete and raise any exceptions.
-        for future in concurrent.futures.as_completed(futures):
-            future.result()
+    finally:
+        if executor is not None:
+            concurrent.futures.wait(futures)
+            executor.shutdown(wait=True)
 
     # Verify every model parameter actually got loaded from the checkpoint.
     # Without this check, weights_mapping bugs (e.g. a substring rule
