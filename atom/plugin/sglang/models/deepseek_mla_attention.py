@@ -28,7 +28,10 @@ class SGLangDeepseekMLAAttention(nn.Module):
         base_attn: nn.Module,
     ) -> None:
         super().__init__()
-        self.owner_attn = owner_attn
+        # Keep a non-module back reference. Registering owner_attn as a child
+        # module would create owner_attn -> mla_attn(wrapper) -> owner_attn and
+        # make nn.Module.train/eval recurse forever.
+        object.__setattr__(self, "owner_attn", owner_attn)
         self.base_attn = base_attn
 
     @property
