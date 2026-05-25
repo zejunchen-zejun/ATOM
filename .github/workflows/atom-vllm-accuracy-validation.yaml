@@ -596,7 +596,7 @@ jobs:
                   "toggle_env": "RUN_DSV32_FP8_TP8",
                   "model_name": "DeepSeek-V3.2-FP8 TP8",
                   "model_path": "deepseek-ai/DeepSeek-V3.2",
-                  "extra_args": "--tensor-parallel-size 8 --block-size 1",
+                  "extra_args": "--tensor-parallel-size 8",
                   "lm_eval_num_fewshot": 20,
                   "accuracy_test_threshold": 0.93,
                   "env_vars": "",
@@ -1190,11 +1190,21 @@ jobs:
               "AITER_LOG_MORE=0"
           } | sed '/^[[:space:]]*$/d; s/^[[:space:]]*//' > /tmp/oot_env_file.txt
 
+          GROUP_ADD_FLAGS="--group-add video"
+          if [ "${CONTAINER_ENGINE:-docker}" = "podman" ]; then
+            GROUP_ADD_FLAGS="$GROUP_ADD_FLAGS --group-add keep-groups"
+          else
+            for gid in $(id -G); do
+              GROUP_ADD_FLAGS="$GROUP_ADD_FLAGS --group-add $gid"
+            done
+          fi
+          echo "Container group flags: $GROUP_ADD_FLAGS"
+
           $CONTAINER_ENGINE run -dt --device=/dev/kfd $DEVICE_FLAG \
             -v "${GITHUB_WORKSPACE:-$PWD}":/workspace \
             $MODEL_MOUNT \
             -w /workspace \
-            --ipc=host --group-add video \
+            --ipc=host $GROUP_ADD_FLAGS \
             --privileged \
             --cap-add=SYS_PTRACE \
             --security-opt seccomp=unconfined \
