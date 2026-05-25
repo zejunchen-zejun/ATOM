@@ -89,6 +89,44 @@ python3 -m sglang.launch_server \
     --disable-radix-cache
 ```
 
+### DeepSeek with MXFP4 + MTP (TP=8)
+
+The `amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4` checkpoint includes MTP weights. To enable MTP decoding, launch SGLang with the `NEXTN` speculative decoding options. The example below follows `launch_deepseek_mtp_fp4.sh` and uses one draft step by default.
+
+```bash
+export AITER_QUICK_REDUCE_QUANTIZATION=INT4
+export ATOM_ENABLE_DS_INPUT_RMSNORM_QUANT_FUSION=0
+export ATOM_ENABLE_DS_QKNORM_QUANT_FUSION=1
+export SGLANG_AITER_FP8_PREFILL_ATTN=0
+export SGLANG_USE_AITER=1
+export SGLANG_EXTERNAL_MODEL_PACKAGE=atom.plugin.sglang.models
+
+export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
+TP_SIZE=8
+MTP=${MTP:-1}
+SPECULATIVE_NUM_DRAFT_TOKENS=${SPECULATIVE_NUM_DRAFT_TOKENS:-$((MTP + 1))}
+
+TORCHINDUCTOR_COMPILE_THREADS=128 \
+python3 -m sglang.launch_server \
+    --model-path amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 \
+    --host localhost \
+    --port 8000 \
+    --trust-remote-code \
+    --tensor-parallel-size "${TP_SIZE}" \
+    --kv-cache-dtype fp8_e4m3 \
+    --mem-fraction-static 0.8 \
+    --page-size 1 \
+    --disable-radix-cache \
+    --speculative-algorithm NEXTN \
+    --speculative-num-steps "${MTP}" \
+    --speculative-eagle-topk 1 \
+    --speculative-num-draft-tokens "${SPECULATIVE_NUM_DRAFT_TOKENS}" \
+    --max-running-requests 128 \
+    --cuda-graph-bs $(seq -s ' ' 1 128)
+```
+
+For a 4-GPU run, set `CUDA_VISIBLE_DEVICES` to the target devices and change `TP_SIZE=4`.
+
 ## Step 3: Performance Benchmark
 
 The SGLang benchmark workflow uses the `bench_serving` client for performance benchmarking. The following example matches the workflow command pattern for an MXFP4 TP4 case.
