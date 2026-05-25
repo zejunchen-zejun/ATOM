@@ -122,7 +122,7 @@ python3 -m sglang.launch_server \
     --speculative-eagle-topk 1 \
     --speculative-num-draft-tokens "${SPECULATIVE_NUM_DRAFT_TOKENS}" \
     --max-running-requests 128 \
-    --cuda-graph-bs $(seq -s ' ' 1 128)
+    --cuda-graph-bs $(seq -s ' ' 1 256)
 ```
 
 For a 4-GPU run, set `CUDA_VISIBLE_DEVICES` to the target devices and change `TP_SIZE=4`.
