@@ -196,8 +196,7 @@ def init_sgl_attrs(
         v_head_dim=attn.v_head_dim,
         prefix=maybe_prefix(attn.prefix, "attn_non_absorbed"),
     )
-    if hasattr(attn.attn_non_absorbed, "attn"):
-        attn.attn_non_absorbed.attn.kv_b_proj = None
+    _bind_non_absorbed_kv_b_proj(attn)
 
 
 def mla_absorbed_bmm(
@@ -350,6 +349,15 @@ def mla_v_up_proj(
 
 def _get_sglang_radix_attn(attn_module):
     return attn_module.attn if hasattr(attn_module, "attn") else attn_module
+
+
+def _bind_non_absorbed_kv_b_proj(attn: DeepseekV2MLAAttention) -> None:
+    """Expose DeepSeek's latent-KV projection on the non-absorbed SGLang layer."""
+
+    if not hasattr(attn, "attn_non_absorbed"):
+        return
+    attn_non_absorbed = _get_sglang_radix_attn(attn.attn_non_absorbed)
+    attn_non_absorbed.kv_b_proj = attn.kv_b_proj
 
 
 def _concat_mha_k_for_non_absorbed(
@@ -673,6 +681,7 @@ def process_mla_kv_b_proj_after_loading(attn: DeepseekV2MLAAttention) -> None:
     Orchestrates reading, quantization handling, and splitting of
     kv_b_proj into absorbed w_kc / w_vc weights.
     """
+    _bind_non_absorbed_kv_b_proj(attn)
     if not getattr(attn.kv_b_proj, "_sgl_mxfp4_process_done", False):
         attn.kv_b_proj.process_weights_after_loading()
 
