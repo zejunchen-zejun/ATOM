@@ -1,0 +1,3 @@
+from atom.plugin.sglang.models.tbo_decode_patch import apply_tbo_decode_metadata_patch
+
+apply_tbo_decode_metadata_patch()

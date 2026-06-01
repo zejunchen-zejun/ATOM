@@ -501,13 +501,28 @@ class _AtomCausalLMBaseForSglang(nn.Module):
                     with SGLangGDNForwardContext.bind(metadata):
                         hidden_states = self.model(**model_inputs)
                 elif uses_context_only_forward:
-                    try:
-                        _set_sglang_forward_context(
-                            self.atom_config, model_forward_batch, model_positions
+                    if self.model_arch_spec.apply_deepseek_patch:
+                        from atom.plugin.sglang.models.tbo_deepseek import (
+                            run_deepseek_tbo_if_available,
                         )
-                        hidden_states = self.model(**model_inputs)
-                    finally:
-                        _reset_sglang_forward_context()
+
+                        tbo_handled, hidden_states = run_deepseek_tbo_if_available(
+                            model=self.model,
+                            model_inputs=model_inputs,
+                            atom_config=self.atom_config,
+                            forward_batch=model_forward_batch,
+                            pp_proxy_tensors=pp_proxy_tensors,
+                        )
+                    else:
+                        tbo_handled = False
+                    if not tbo_handled:
+                        try:
+                            _set_sglang_forward_context(
+                                self.atom_config, model_forward_batch, model_positions
+                            )
+                            hidden_states = self.model(**model_inputs)
+                        finally:
+                            _reset_sglang_forward_context()
                 else:
                     try:
                         _set_sglang_forward_context(
