@@ -19,7 +19,6 @@ import sglang.srt.layers.attention.aiter_backend as _sglang_aiter
 from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
 from sglang.srt.layers.attention.utils import (
     create_flashinfer_kv_indices_triton,
-    launch_reshape_and_cache_flash,
     pad_sequence_with_mask,
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
@@ -1578,16 +1577,15 @@ class ATOMAttnBackendForSgl(AiterAttnBackend):
             k_cache, v_cache = forward_batch.token_to_kv_pool.get_kv_buffer(
                 layer.layer_id
             )
-            launch_reshape_and_cache_flash(
+            self.set_kv_buffer_with_layout_shuffle(
+                cache_loc,
                 k.view(-1, layer.tp_k_head_num, layer.qk_head_dim),
                 v.view(-1, layer.tp_v_head_num, layer.v_head_dim),
-                k_cache.view(
-                    -1, self.page_size, layer.tp_k_head_num, layer.qk_head_dim
-                ),
-                v_cache.view(-1, self.page_size, layer.tp_v_head_num, layer.v_head_dim),
-                cache_loc,
-                k_scale=k_descale,
-                v_scale=v_descale,
+                k_cache,
+                v_cache,
+                k_descale,
+                v_descale,
+                self.page_size,
             )
             return
 
