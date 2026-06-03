@@ -647,7 +647,12 @@
 <td><p>0 (false)</p></td>
 <td><p>If set to <code class="docutils literal notranslate"><span class="pre">1</span></code>, use AITER Triton FP4 weight preshuffled GEMM. Otherwise use AITER ASM FP4 weight preshuffled GEMM.</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>ATOM_USE_TRITON_MXFP4_BMM</strong></p></td>
+<tr class="row-odd"><td><p><strong>ATOM_USE_FP4_NON_SHUFFLE_TRITON_GEMM</strong></p></td>
+<td><p>bool</p></td>
+<td><p>0 (false)</p></td>
+<td><p>If set to <code class="docutils literal notranslate"><span class="pre">1</span></code>, use AITER Triton FP4 GEMM with non-shuffled weights. Takes precedence over the FP4 preshuffled GEMM path selected by <code class="docutils literal notranslate"><span class="pre">ATOM_USE_TRITON_GEMM</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>ATOM_USE_TRITON_MXFP4_BMM</strong></p></td>
 <td><p>bool</p></td>
 <td><p>0 (false)</p></td>
 <td><p>If set to <code class="docutils literal notranslate"><span class="pre">1</span></code>, use FP4 BMM in MLA attention module.</p></td>
