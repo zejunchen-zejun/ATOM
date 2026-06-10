@@ -110,7 +110,9 @@ def _unwrap_linear_output(output: Any) -> torch.Tensor:
 
 
 def use_sglang_fp8_prefill_attn() -> bool:
-    return get_bool_env_var("SGLANG_AITER_FP8_PREFILL_ATTN", "True") and _use_aiter_gfx95
+    return (
+        get_bool_env_var("SGLANG_AITER_FP8_PREFILL_ATTN", "True") and _use_aiter_gfx95
+    )
 
 
 def try_fused_mxfp4_kv_b_proj_fp8(
