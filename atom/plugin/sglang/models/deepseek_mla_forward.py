@@ -236,12 +236,11 @@ def init_sgl_attrs(
     attn.use_deep_gemm_bmm = False
     attn.alt_stream = None
     attn.kv_cache_dtype = kv_cache_dtype
-    overlap_plan_stream = os.getenv("SGLANG_ENABLE_OVERLAP_PLAN_STREAM", "0") == "1"
-    force_fused_qk_rope_cache = (
-        os.getenv("ATOM_SGLANG_FORCE_FUSED_QK_ROPE_CACHE_MLA", "0") == "1"
+    disable_fused_qk_rope_cache = (
+        os.getenv("ATOM_SGLANG_DISABLE_FUSED_QK_ROPE_CACHE_MLA", "0") == "1"
     )
-    attn.use_fused_qk_rope_concat_and_cache_mla = _use_aiter_gfx95 and (
-        force_fused_qk_rope_cache or not overlap_plan_stream
+    attn.use_fused_qk_rope_concat_and_cache_mla = (
+        _use_aiter_gfx95 and not disable_fused_qk_rope_cache
     )
     attn.current_sgl_plugin_attn_path = None
     attn.w_kc, attn.w_vc = None, None
