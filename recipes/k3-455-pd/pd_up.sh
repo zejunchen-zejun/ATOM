@@ -18,7 +18,10 @@ on() { ssh -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR "$1" "$2"; }
 # drafter only to write the draft layers' KV (5 MLA layers in the target's pool, moved with the rest) and never
 # speculates; the consumer speculates. P and D must agree on k: without ReplaySSM (moriio cannot move its records) the
 # KDA state is 1 + k slots a request and the conv state k columns wider, on both ends of the transfer.
-ENV="-e K3_MODE=agentx -e K3_DSPARK=${DSPARK:-0} -e K3_BLOCK_SIZE=128 -e K3_DRAFT=/draft"
+# BLOCK_SIZE (environment, default 128 as the image's start_point.sh): KV block size on BOTH instances (moriio moves
+# blocks, so P and D must agree). Under DCP8 the prefix cache indexes block_size x 8 tokens at a time, and each turn
+# recomputes the previous prompt's last partial unit on P (28% of P's prefill at 128, R13; p_reuse.py --hb).
+ENV="-e K3_MODE=agentx -e K3_DSPARK=${DSPARK:-0} -e K3_BLOCK_SIZE=${BLOCK_SIZE:-128} -e K3_DRAFT=/draft"
 ENV="$ENV -e ATOM_USE_ASM_FP8_PREFILL_ATTN=1"
 ENV="$ENV -e ATOM_TOKEN_GRAPH_SIZES=256,512,1024,1536,2048,3072,4096,5120,6144,7168,8192,10240,12288,14336,16384"
 ENV="$ENV -e AITER_CUSTOM_AR_MAX_SIZE=8388608 -e ATOM_FP4_MXSCALE_USE_32X4_SCALE_SHUFFLE=1"

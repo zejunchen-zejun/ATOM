@@ -18,7 +18,7 @@
 
 第三个 commit（修复）：`get_num_new_matched_tokens` 原来只在第一次被问时回答"需要远端 KV"，D 满载时请求被挡回 waiting，再问就变成本地 prefill。R7 里 41% 的请求因此在 D 上被重算（见 ISSUES.md）。
 
-单测：容器内 147 passed（加上修复的两个用例后 149 passed）。实机情况：P 和 D 都单独完整起来过，fabric MemPool 分配和注册都正常（R4 的 P、R5 的 D），**但 P 和 D 还没同时在线过，真正的端到端 KV 传输还没跑过**（原因见 `ISSUES.md`：几次都是硬件 MCE 把一侧打掉）。
+单测：容器内 147 passed（加上修复的两个用例后 149 passed）。实机：11-17 起 P 和 D 同时在线、端到端跑通（gate 通过，c1024 的 10 分钟窗口 0 失败）。
 
 ### 2. Launcher：镜像 kit 的 `k3_server_dspark.sh` → `k3pd_server.sh`（`make_pd_launcher.py` 自动改）
 
@@ -32,8 +32,10 @@
 - 必须用 write 模式：K3 的 KDA per-request state，moriio 只能 push
 - `ATOM_ENABLE_REPLAYSSM=0`：moriio 不搬 ReplaySSM buffer
 - `ATOM_DISABLE_MMAP=true`、`ATOM_LOADER_PREFETCH=false`，启动前 drop_caches，再加上 `memguard.sh`：0.5 TB 内存的 tray 上 page cache 会打满，引发 KFD userptr 驱逐风暴（R1）
-- `K3_DSPARK=0`；其余沿用镜像 recipe：agentx、16384 batched tokens、FP8 KV block 128、MoE TP8、custom AR 8 MiB
+- `K3_DSPARK=0`；其余沿用镜像 recipe：agentx、16384 batched tokens、FP8 KV block 128（`BLOCK_SIZE=` 可改，P 和 D 必须一致）、MoE TP8、custom AR 8 MiB
 - P 的 max-num-seqs 64，D 的 512
+- 开关（环境变量）：`DSPARK=k`（P 和 D 用同一个 k）、`P_MOE` / `D_MOE`（tp 或 ep）、`P_BATCHED_TOKENS` / `D_BATCHED_TOKENS`、`BLOCK_SIZE`（P 和 D 一起）；`recover.sh` 的 `RUN_ENV`、`RECOVER_DELAY_S`
+- DCP8 下 prefix cache 按 `block_size × 8` 个 token 复用：block 128 时是 1024，每轮 prompt 最后不满 1024 的部分不进 cache，下一轮在 P 上重算（实测约占 P prefill 的 28%，`p_reuse.py`）
 - Router：`atomesh --pd-disaggregation --backend atom`，P 用 `dp_sticky`（按 X-Session-ID），D 用 `round_robin`
 
 ### 4. 机器和运维（不是代码改动，但跑通离不开）
@@ -57,3 +59,6 @@
 | `clean_caches.sh` | 清掉容器内的 JIT 和编译缓存 |
 | `recover.sh <tag>` | 在不参与服务的机器上执行：四台一起冷启动（BMC 地址格式和用户名在 config.env）、一起加载驱动，两两跑 UALink 测试，然后自动起一轮测试 |
 | `py/sitecustomize.py`、`py/pd_steps.py` | 每步的 step log 及其分析 |
+| `bootstrap_node.sh`、`pull_image.sh` | 新 tray 的一次性准备：镜像、模型（从空闲的 tray 拷）、kit、容器 |
+| `profile_pd.sh`、`trace_top.py` | 抓 P 或 D 的 torch profile，按 kernel 类别汇总 GPU 时间 |
+| `p_reuse.py` | P 的 prefill 花在哪：按 turn 对上 P 日志和 client 事件，拆成重算上一轮的尾巴、新内容、低于上限的命中 |

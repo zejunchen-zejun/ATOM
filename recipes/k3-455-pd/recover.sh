@@ -13,6 +13,8 @@
 #   3. Pairwise mori FABRIC tests (fabric_pairs.sh): P0->P1 and D0->D1 (TP inside each instance), then P0->D0 and
 #      P1->D1 (KV). Stops at the first failure.
 #   4. All passed: KEEP=1 ./run_pd.sh <tag> on the router tray. Progress in ~/k3pd_recover.log here.
+# RUN_ENV ("VAR=value ..."): the run's knobs, e.g. RUN_ENV="P_MOE=ep BLOCK_SIZE=64". RECOVER_DELAY_S (default 120): set 0
+# when this host is not one of the four (a router tray that serves nothing can run this; then its session survives).
 # The BMC credentials come from ~/.k3pd_secret (askpass.sh, bmc_known_hosts) and are deleted at the end.
 set -u
 TAG=${1:?usage: recover.sh <tag>}
@@ -72,5 +74,5 @@ for t in ${CLEAN:-}; do host "$t" "$KIT/clean_caches.sh" 120 >> "$LOG" 2>&1; don
 ok=$?
 while read -r l; do say "$l"; done < "$HOME/k3pd_fab_$TAG.log"
 [ $ok = 0 ] || finish "FAIL: fabric tests (logs in ~/k3pd_fab)" 1
-host "$ROUTER" "setsid -f bash -c 'cd $KIT && KEEP=1 ./run_pd.sh $TAG >> $RESULTS/run_pd.log 2>&1' > /dev/null 2>&1 < /dev/null"
+host "$ROUTER" "setsid -f bash -c 'cd $KIT && ${RUN_ENV:-} KEEP=1 ./run_pd.sh $TAG >> $RESULTS/run_pd.log 2>&1' > /dev/null 2>&1 < /dev/null"
 finish "DONE: $TAG launched on $ROUTER (KEEP=1); progress in $RESULTS/run_pd.log there"
