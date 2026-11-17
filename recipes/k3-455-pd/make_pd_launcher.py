@@ -4,6 +4,7 @@
 with K3_KV_TRANSFER_CONFIG set, passes it as --kv-transfer-config. Unset, it is the original command apart from the
 ATOM tree."""
 import pathlib
+import re
 import sys
 
 src, dst, commit = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
@@ -13,13 +14,16 @@ KV_ARGS=()
 [ -z "${K3_KV_TRANSFER_CONFIG:-}" ] || KV_ARGS=(--kv-transfer-config "$K3_KV_TRANSFER_CONFIG")
 
 # Online FP8 for the checkpoint's BF16 layers'''
+# The image's launcher pins its own /app/ATOM commit (746624d4 in 1113, c7a0003c in 1116)
+pins = re.findall(r"^ATOM_COMMIT=[0-9a-f]{40}\n", s, flags=re.M)
+if len(pins) != 1:
+    sys.exit(f"{src}: expected one ATOM_COMMIT=<sha> line, found {len(pins)}")
 edits = [
-    ("ATOM_COMMIT=746624d4c3c2b2593f8ff832ff01f1118f1bd177\n", f"ATOM_COMMIT={commit}\n"),
+    (pins[0], f"ATOM_COMMIT={commit}\n"),
     ("ATOM_DIR=${K3_ATOM_DIR:-/root/.cache/atom-gyu-k3-455-tp8}\n",
      "ATOM_DIR=/root/.cache/atom-pd   # k3pd: always the PD tree (make_pd_launcher.sh)\n"),
     ("# Online FP8 for the checkpoint's BF16 layers", kv_block),
-    ('"${MODE_ARGS[@]}" "${SPEC_ARGS[@]}" "${BLOCK_ARGS[@]}"',
-     '"${MODE_ARGS[@]}" "${SPEC_ARGS[@]}" "${BLOCK_ARGS[@]}" "${KV_ARGS[@]}"'),
+    ('"${SPEC_ARGS[@]}" "${BLOCK_ARGS[@]}"', '"${SPEC_ARGS[@]}" "${BLOCK_ARGS[@]}" "${KV_ARGS[@]}"'),
     ('max-num-seqs $MAX_SEQS block-size ${K3_BLOCK_SIZE:-16}"',
      'max-num-seqs $MAX_SEQS block-size ${K3_BLOCK_SIZE:-16} kv ${K3_KV_TRANSFER_CONFIG:-none}"'),
 ]

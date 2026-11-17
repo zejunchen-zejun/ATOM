@@ -21,8 +21,15 @@ ENV="$ENV -e AITER_CUSTOM_AR_MAX_SIZE=8388608 -e ATOM_FP4_MXSCALE_USE_32X4_SCALE
 ENV="$ENV -e RCCL_DDA_LL_ONESHOT_THRESHOLD=2097152 -e RCCL_DDA_LL_TWOSHOT_THRESHOLD=134217728"
 ENV="$ENV -e NCCL_GRAPH_REGISTER=0 -e AITER_FLYDSL_USE_HERD=1 -e ATOM_MONO_ENABLE=0 -e ATOM_ENABLE_REPLAYSSM=0"
 ENV="$ENV -e PYTHONPATH=/kit/py -e ATOM_LOADER_PREFETCH=false -e ATOM_DISABLE_MMAP=true"
-ENV_P="$ENV -e K3_MAX_SEQS=$P_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_P"
-ENV_D="$ENV -e K3_MAX_SEQS=$D_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_D"
+# 1116 image (its kit's start_point.sh, every point): Lamport one-shot all-reduce up to 1 MiB, Lamport two-shot to
+# 8 MiB, INT4-coded Lamport two-shot (lossy, as the MI355 recipe's quick-reduce) 8-256 MiB; DCP prefill chunk 131072.
+# Not its prefill delayer (ATOM_PREFILL_DECODE_INTERVAL / _DELAYER_MAX_QUEUE_MS, c16 up): it paces prefills between the
+# decodes of one instance, and here P only prefills and D only decodes.
+ENV="$ENV -e AITER_CUSTOM_AR_LAMPORT_RMS_MAX_SIZE=1048576 -e AITER_CUSTOM_AR_LAMPORT_AR_MAX_SIZE=1048576"
+ENV="$ENV -e AITER_CUSTOM_AR_Q4_2S_MIN_SIZE=8388608 -e AITER_CUSTOM_AR_Q4_2S_MAX_SIZE=268435456 -e K3_PREFILL_CHUNK=131072"
+# P_EXTRA / D_EXTRA (environment, "-e VAR=value ..."): per-role additions for one run, recorded in pd_up.txt
+ENV_P="$ENV -e K3_MAX_SEQS=$P_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_P ${P_EXTRA:-}"
+ENV_D="$ENV -e K3_MAX_SEQS=$D_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_D ${D_EXTRA:-}"
 ./preflight.sh || { echo "preflight failed; not starting" >&2; exit 1; }
 for t in $P_NODE0 $P_NODE1 $D_NODE0 $D_NODE1; do
   on "$t" 'sync; echo 1 | sudo -n tee /proc/sys/vm/drop_caches > /dev/null'

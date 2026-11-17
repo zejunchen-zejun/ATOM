@@ -7,14 +7,14 @@
 set -euo pipefail
 NIC=$1 COMMIT=$2
 mkdir -p /root/.cache/k3repro /root/.cache/logs /root/.cache/k3pd/steplog
-cp -f /opt/k3/k3-mlperf-repro/add_block_size_knob.py /opt/k3/k3-mlperf-repro/add_batched_tokens_knob.py /root/.cache/k3repro/
+cp -f /opt/k3/k3-mlperf-repro/add_*_knob.py /root/.cache/k3repro/   # 1116 adds add_prefill_chunk_knob.py
 bash /opt/k3/k3-mlperf-repro/make_launcher.sh "$NIC"
 D=/root/.cache/atom-pd
 g() { git -c safe.directory='*' -C "$D" "$@"; }
 if [ "$(g rev-parse HEAD 2> /dev/null)" != "$COMMIT" ]; then
   rm -rf "$D"
   git -c safe.directory='*' clone -q --no-checkout /app/ATOM "$D"
-  g fetch -q /kit/atom-k3pd-pd.bundle k3pd-multinode-pd
+  g fetch -q /kit/atom-k3pd-pd.bundle 'refs/heads/*:refs/remotes/k3pd/*'
   g -c advice.detachedHead=false checkout -q --detach "$COMMIT"
 fi
 [ "$(g rev-parse HEAD)" = "$COMMIT" ] || { echo "$D is not at $COMMIT" >&2; exit 2; }

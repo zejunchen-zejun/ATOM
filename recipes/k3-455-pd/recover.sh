@@ -1,17 +1,17 @@
 #!/bin/bash
-# recover.sh <tag>: run on a host that serves nothing (not one of the four trays), detached, with config.env next to
-# it. Brings the four serving trays of config.env up as one UALink generation and starts run <tag>. UALink only
-# connects trays activated together: a tray from another generation (warm-rebooted, or never cycled with the rest)
-# crashes importing from them (IMPORT: connection setup failed -> oops -> panic), and every set of trays power-cycled
-# and loaded together has connected. The router tray carries the operator's session, so this runs where its power
-# cycle cannot stop it.
+# recover.sh <tag>: run on a host that serves nothing (not one of the four trays), detached, with config.env and
+# fabric_pairs.sh next to it. Brings the four serving trays of config.env up as one UALink generation and starts run
+# <tag>. UALink only connects trays activated together: a tray from another generation (warm-rebooted, or never cycled
+# with the rest) crashes importing from them (IMPORT: connection setup failed -> oops -> panic), and every set of trays
+# power-cycled and loaded together has connected. The router tray carries the operator's session, so this runs where
+# its power cycle cannot stop it.
 #   1. sync; DC power-off of the four through their BMCs (ipmitool on the BMC, as a DC power-off on Helios-R); wait
 #      until every BMC reports off; power-on.
 #   2. The Startup steps on all four at once: amdgpu loaded in parallel (no flags: the BKC for this driver);
 #      wait for 4 ACTIVE AIFM devices, the full station mask and 4 active accelerators; NUMA balancing off; k3pd up;
 #      the runtime caches of the trays in CLEAN (default: none) wiped, as after a crash.
-#   3. Pairwise mori FABRIC tests: P0->P1 and D0->D1 (TP inside each instance), then P0->D0 and P1->D1 (KV). Stops at
-#      the first failure.
+#   3. Pairwise mori FABRIC tests (fabric_pairs.sh): P0->P1 and D0->D1 (TP inside each instance), then P0->D0 and
+#      P1->D1 (KV). Stops at the first failure.
 #   4. All passed: KEEP=1 ./run_pd.sh <tag> on the router tray. Progress in ~/k3pd_recover.log here.
 # The BMC credentials come from ~/.k3pd_secret (askpass.sh, bmc_known_hosts) and are deleted at the end.
 set -u
@@ -67,28 +67,10 @@ for n in $NODES; do
 done
 for t in ${CLEAN:-}; do host "$t" "$KIT/clean_caches.sh" 120 >> "$LOG" 2>&1; done
 
-ARGS="--op-type write --all --enable-sess --enable-batch-transfer --transfer-batch-size 1"
-ARGS="$ARGS --sweep-start-size 16777216 --sweep-max-size 268435456 --iters 16"
-for n in $NODES; do scp -q "$HOME/fabric_test.sh" "$n:/tmp/fabric_test.sh"; done
-ft() {  # ft <initiator> <initiator IP> <target> <port> <tag>: one write test, its log in ~/fab_<tag>.log
-  (host "$3" "PORT=$4 bash /tmp/fabric_test.sh 1 $2 $ARGS" 400 > "$HOME/fab_$5_t.log" 2>&1 &)
-  host "$1" "PORT=$4 bash /tmp/fabric_test.sh 0 $2 $ARGS" 400 > "$HOME/fab_$5.log" 2>&1
-}
-p0=$P_NODE0 p1=$P_NODE1 d0=$D_NODE0 d1=$D_NODE1
-# Two disjoint pairs at a time: inside P and inside D, then the two KV paths
-for pair in "$p0 $P_NODE0_IP $p1 29591 ${p0}to$p1|$d0 $D_NODE0_IP $d1 29592 ${d0}to$d1" \
-            "$p0 $P_NODE0_IP $d0 29593 ${p0}to$d0|$p1 $P_NODE1_IP $d1 29594 ${p1}to$d1"; do
-  a=${pair%%|*} b=${pair##*|}
-  ft $a &
-  ft $b
-  wait
-  res=""
-  for t in $(echo "$a" | awk '{print $5}') $(echo "$b" | awk '{print $5}'); do
-    bw=$(grep -E '^\|\s+268435456' "$HOME/fab_$t.log" | awk -F'|' '{print $6}' | tr -d ' ')
-    [ -n "$bw" ] || finish "FAIL: fabric test $t did not complete (see ~/fab_$t.log)" 1
-    res="$res $t $bw GB/s;"
-  done
-  say "fabric:$res"
-done
+# Pairwise UALink tests (fabric_pairs.sh, next to this script): inside P and inside D, then the two KV paths
+./fabric_pairs.sh > "$HOME/k3pd_fab_$TAG.log" 2>&1
+ok=$?
+while read -r l; do say "$l"; done < "$HOME/k3pd_fab_$TAG.log"
+[ $ok = 0 ] || finish "FAIL: fabric tests (logs in ~/k3pd_fab)" 1
 host "$ROUTER" "setsid -f bash -c 'cd $KIT && KEEP=1 ./run_pd.sh $TAG >> $RESULTS/run_pd.log 2>&1' > /dev/null 2>&1 < /dev/null"
 finish "DONE: $TAG launched on $ROUTER (KEEP=1); progress in $RESULTS/run_pd.log there"
