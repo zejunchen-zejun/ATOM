@@ -11,7 +11,8 @@ Only full hash blocks are indexed (block_size x dcp = 128 x 8 = 1024 tokens on K
 output, so a turn hits at most the previous turn's prompt rounded down to the hash block. An exact pair is one that
 hits exactly that; its computed tokens split into
   tail    the previous prompt's last partial hash block, recomputed (L_prev - floor(L_prev / hb) * hb)
-  fresh   the previous turn's output plus the new message (L - L_prev)
+  fresh   the recorded assistant turn plus the new message (L - L_prev). The client replays the dataset's
+          trajectories, so the model's own output never reaches the next prompt and its KV cannot be reused
 A pair that hits less is "below cap": eviction, a declined checkpoint, or a pair the mapping still gets wrong.
 """
 import argparse
