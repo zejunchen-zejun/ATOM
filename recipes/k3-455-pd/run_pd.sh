@@ -137,7 +137,7 @@ for y in "$WN" "$MN"; do
   (cd "$EP" && UV_FROZEN=1 uv run inference-endpoint validate-yaml -c "$RES/$y.yaml" > /dev/null 2>&1) \
     || { say "invalid $RES/$y.yaml"; exit 1; }
 done
-say "1P1D c$C (P $P_NODE0+$P_NODE1 max-num-seqs $P_SEQS, D $D_NODE0+$D_NODE1 max-num-seqs $D_SEQS, KV over UALink);" \
+say "1P1D c$C (P $P_NODE0+$P_NODE1 max-num-seqs $P_SEQS, D $D_NODE0+$D_NODE1 max-num-seqs $D_SEQS, KV over UALink, DSpark ${DSPARK:-0}, MoE P ${P_MOE:-tp} D ${D_MOE:-tp}${P_EXTRA:+, P_EXTRA $P_EXTRA}${D_EXTRA:+, D_EXTRA $D_EXTRA});" \
   "warmup $NW trajectories cap $WCAP, measured $N trajectories cap $CAP"
 if [ "${SKIP_UP:-0}" != 1 ]; then
   ./pd_up.sh "$TAG" > "$RES/logs/pd_up.txt" 2>&1 || fail "pd_up.sh: $(tail -1 "$RES/logs/pd_up.txt")"

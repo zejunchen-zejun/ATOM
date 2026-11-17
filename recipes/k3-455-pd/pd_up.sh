@@ -14,7 +14,11 @@ set -euo pipefail
 cd "$(dirname "$0")" && . ./config.env
 TAG=${1:?usage: pd_up.sh <tag>}
 on() { ssh -o BatchMode=yes -o ConnectTimeout=10 -o LogLevel=ERROR "$1" "$2"; }
-ENV="-e K3_MODE=agentx -e K3_MAX_BATCHED_TOKENS=16384 -e K3_MOE=tp -e K3_DSPARK=0 -e K3_BLOCK_SIZE=128 -e K3_DRAFT=/draft"
+# DSPARK=k (environment): DSpark with k draft tokens on BOTH instances. ATOM's P/D design: the producer loads the
+# drafter only to write the draft layers' KV (5 MLA layers in the target's pool, moved with the rest) and never
+# speculates; the consumer speculates. P and D must agree on k: without ReplaySSM (moriio cannot move its records) the
+# KDA state is 1 + k slots a request and the conv state k columns wider, on both ends of the transfer.
+ENV="-e K3_MODE=agentx -e K3_MAX_BATCHED_TOKENS=16384 -e K3_DSPARK=${DSPARK:-0} -e K3_BLOCK_SIZE=128 -e K3_DRAFT=/draft"
 ENV="$ENV -e ATOM_USE_ASM_FP8_PREFILL_ATTN=1"
 ENV="$ENV -e ATOM_TOKEN_GRAPH_SIZES=256,512,1024,1536,2048,3072,4096,5120,6144,7168,8192,10240,12288,14336,16384"
 ENV="$ENV -e AITER_CUSTOM_AR_MAX_SIZE=8388608 -e ATOM_FP4_MXSCALE_USE_32X4_SCALE_SHUFFLE=1"
@@ -27,9 +31,11 @@ ENV="$ENV -e PYTHONPATH=/kit/py -e ATOM_LOADER_PREFETCH=false -e ATOM_DISABLE_MM
 # decodes of one instance, and here P only prefills and D only decodes.
 ENV="$ENV -e AITER_CUSTOM_AR_LAMPORT_RMS_MAX_SIZE=1048576 -e AITER_CUSTOM_AR_LAMPORT_AR_MAX_SIZE=1048576"
 ENV="$ENV -e AITER_CUSTOM_AR_Q4_2S_MIN_SIZE=8388608 -e AITER_CUSTOM_AR_Q4_2S_MAX_SIZE=268435456 -e K3_PREFILL_CHUNK=131072"
-# P_EXTRA / D_EXTRA (environment, "-e VAR=value ..."): per-role additions for one run, recorded in pd_up.txt
-ENV_P="$ENV -e K3_MAX_SEQS=$P_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_P ${P_EXTRA:-}"
-ENV_D="$ENV -e K3_MAX_SEQS=$D_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_D ${D_EXTRA:-}"
+# P_MOE / D_MOE (environment, tp | ep, default tp): MoE TP8 or EP8 per instance; EP keeps attention TP8 + DCP8, so the
+# P->D transfer is unchanged. P_EXTRA / D_EXTRA ("-e VAR=value ..."): other per-role additions, recorded in pd_up.txt;
+# not for variables set here (a repeated -e is resolved by whoever reads the environment).
+ENV_P="$ENV -e K3_MOE=${P_MOE:-tp} -e K3_MAX_SEQS=$P_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_P ${P_EXTRA:-}"
+ENV_D="$ENV -e K3_MOE=${D_MOE:-tp} -e K3_MAX_SEQS=$D_SEQS -e K3_STEPLOG=/root/.cache/k3pd/steplog/${TAG}_D ${D_EXTRA:-}"
 ./preflight.sh || { echo "preflight failed; not starting" >&2; exit 1; }
 for t in $P_NODE0 $P_NODE1 $D_NODE0 $D_NODE1; do
   on "$t" 'sync; echo 1 | sudo -n tee /proc/sys/vm/drop_caches > /dev/null'
