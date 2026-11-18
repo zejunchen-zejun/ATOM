@@ -8,7 +8,8 @@ set -euo pipefail
 cd "$(dirname "$0")" && . ./config.env
 ROLE=$1 RANK0=$2 LOG=$3
 shift 3
-KV='"kv_connector": "moriio", "backend": "fabric", "moriio_mode": "write", "handshake_port": '$HANDSHAKE_PORT
+# "moriio_backend" is the fabric switch of the current tree (Yuechao's moriio fabric); "backend" that of k3pd-pd-1116
+KV='"kv_connector": "moriio", "moriio_backend": "fabric", "backend": "fabric", "moriio_mode": "write", "handshake_port": '$HANDSHAKE_PORT
 case $ROLE in
   P) MASTER=$P_NODE0_IP KV="{\"kv_role\": \"kv_producer\", $KV}" ;;
   D) MASTER=$D_NODE0_IP
