@@ -81,6 +81,11 @@ class KVCacheTensor:
     replay_buf_k: torch.Tensor = None
     replay_buf_u: torch.Tensor = None
     replay_buf_g: torch.Tensor = None
+    # ReplaySSM's record cursor, ``(num_slots,)`` int32 and shared by every
+    # linear-attention layer (not a per-layer slice). A P/D mover carries a
+    # slot's cursor with its checkpoint: a prefill parks it at -1, which is
+    # what tells the decode side to fold none of the slot's stale records.
+    replay_write_pos: torch.Tensor = None
     # True when the tensors above are a hybrid's PER-REQUEST state (GDN/KDA
     # recurrent state) rather than paged KV. Only the GDN and KDA linear-attn
     # forwards set it (`gdn_attn.py`, `kimi_mla_gdn_attn.py`, and the rtpllm/

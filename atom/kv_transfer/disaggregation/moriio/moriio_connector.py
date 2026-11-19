@@ -83,6 +83,10 @@ if _MORIIO_AVAILABLE:
 
 logger = logging.getLogger("atom")
 
+# Handshake name of ReplaySSM's record cursor: one tensor for every layer, so
+# not keyed by a layer as the conv and SSM state are.
+REPLAYSSM_CURSOR = "replayssm_write_pos"
+
 
 # ===================================================================
 # MoRIIOConnector — worker-side connector (runs inside each TP rank)
@@ -509,10 +513,10 @@ class MoRIIOConnector(KVConnectorBase):
         handshake. mori maps a peer's whole allocation per registered
         descriptor, so one descriptor keeps it to one mapping per peer.
 
-        Per-request state (a KDA layer's conv and SSM state) lives outside the
-        pool, in fabric memory of its own (`per_request_state_pool`), and is
-        registered per tensor as on RDMA: a request's slot then moves with its
-        PAGE batch (`_write_blocks`).
+        Per-request state (a KDA layer's conv and SSM state, and ReplaySSM's
+        record cursor) lives outside the pool, in fabric memory of its own
+        (`per_request_state_pool`), and is registered per tensor as on RDMA: a
+        request's slot then moves with its PAGE batch (`_write_blocks`).
         """
         pages = list(getattr(transfer_tensors, "pages", None) or ())
         if not pages:
@@ -594,9 +598,7 @@ class MoRIIOConnector(KVConnectorBase):
             page_desc=desc,
             page_regions=[list(region) for region in self._page_regions],
             state_descs={n: d for n, (d, _, _) in self._state_tensors.items()} or None,
-            state_slot_bytes={
-                n: b for n, (_, b, _) in self._state_tensors.items()
-            }
+            state_slot_bytes={n: b for n, (_, b, _) in self._state_tensors.items()}
             or None,
             num_state_slots=self._num_state_slots,
         )
@@ -668,21 +670,30 @@ class MoRIIOConnector(KVConnectorBase):
         The KDA forward binds its conv state as ``k_cache`` and its SSM state as
         ``v_cache``, each ``(num_slots, ...)`` and contiguous, so a slot is one
         run of ``stride(0)`` elements and moves as a single write.
+
+        Under ReplaySSM a slot also has a record cursor (``replay_write_pos``,
+        one int32 per slot that every layer shares), registered once. The
+        records themselves (``replay_buf_*``) stay: a prefill writes none and
+        parks the cursor at -1, and that pushed -1 is what keeps the decode
+        side from folding the stale records of the slot's previous tenant.
         """
-        if any(
+        parts = [("k", kv_cache.k_cache), ("v", kv_cache.v_cache)]
+        cursor = getattr(kv_cache, "replay_write_pos", None)
+        if cursor is None and any(
             getattr(kv_cache, name, None) is not None
             for name in ("replay_buf_k", "replay_buf_u", "replay_buf_g")
         ):
-            # Under ReplaySSM the records and the cursor are part of the state,
-            # and this connector moves neither.
             raise NotImplementedError(
-                f"{layer_name}: ReplaySSM record buffers are per-request state "
-                "MoRIIO does not move; serve P/D with ATOM_ENABLE_REPLAYSSM=0"
+                f"{layer_name}: ReplaySSM records without their cursor "
+                "(`replay_write_pos`), so the decode side would fold another "
+                "request's records; serve P/D with ATOM_ENABLE_REPLAYSSM=0"
             )
-        for part, tensor in (("k", kv_cache.k_cache), ("v", kv_cache.v_cache)):
+        if cursor is not None and REPLAYSSM_CURSOR not in self._state_tensors:
+            parts.append((None, cursor))
+        for part, tensor in parts:
             if tensor is None or tensor.numel() == 0:
                 continue
-            name = f"{layer_name}.{part}"
+            name = REPLAYSSM_CURSOR if part is None else f"{layer_name}.{part}"
             if not tensor.is_contiguous():
                 raise ValueError(
                     f"{name}: state shaped {tuple(tensor.shape)} with strides "

@@ -851,7 +851,7 @@ class WritePathTest(unittest.TestCase):
         conn.request_id_to_transfer_id = {"d1": 77}
         meta = self.recv_meta([4, 5], [10, 11, 12])
         conn._request_write("d1", meta)
-        ((frames, host, port),) = conn.sent
+        ((_frames, host, port),) = conn.sent
         self.assertEqual((host, port), ("10.0.0.9", 7306))
         conn._notify_producer("d1", meta)
         self.assertEqual(conn.notified, [(77, "10.0.0.9", 7306)])
@@ -1593,13 +1593,68 @@ class WritePathTest(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             self.register(conn, self.hybrid_caches())
 
-    def test_replayssm_buffers_are_refused(self):
+    def replayssm_layer(self, cursor, slots: int = 6):
+        """A KDA layer's state under ReplaySSM: records beside the checkpoint."""
+        import types
+
+        records = {
+            "replay_buf_k": self.torch.zeros(
+                (slots, 2, 4, 4), dtype=self.torch.bfloat16
+            ),
+            "replay_buf_u": self.torch.zeros(
+                (slots, 2, 4, 4), dtype=self.torch.bfloat16
+            ),
+            "replay_buf_g": self.torch.zeros(
+                (slots, 2, 4, 4), dtype=self.torch.float32
+            ),
+        }
+        return types.SimpleNamespace(
+            k_cache=self.torch.zeros((slots, 3, 8), dtype=self.torch.bfloat16),
+            v_cache=self.torch.zeros((slots, 2, 4, 4), dtype=self.torch.float32),
+            replay_write_pos=cursor,
+            per_request_state=True,
+            **records,
+        )
+
+    def test_replayssm_moves_its_cursor_once_and_not_its_records(self):
         conn = self.make(producer=True)
-        state = self.hybrid_caches()["layer_0"]
-        state.replay_buf_k = self.torch.zeros(1)
+        conn.transfer_mode = "write"
+        cursor = self.torch.full((6,), -1, dtype=self.torch.int32)
+        caches = self.hybrid_caches()
+        # Every KDA layer holds the same cursor; the records are per layer.
+        caches["layer_0"] = self.replayssm_layer(cursor)
+        caches["layer_3"] = self.replayssm_layer(cursor)
+
+        advertised = self.register(conn, caches)
+
+        self.assertEqual(
+            list(conn._state_tensors),
+            [
+                "layer_0.k",
+                "layer_0.v",
+                "replayssm_write_pos",
+                "layer_3.k",
+                "layer_3.v",
+            ],
+        )
+        self.assertIs(conn._state_tensors["replayssm_write_pos"][2], cursor)
+        self.assertEqual(advertised.state_slot_bytes["replayssm_write_pos"], 4)
+        self.assertEqual(advertised.num_state_slots, 6)
+
+    def test_replayssm_records_without_their_cursor_are_refused(self):
+        # A builder that predates `replay_write_pos`: pushing the checkpoint
+        # alone would let the decode side fold the slot's previous records.
+        conn = self.make(producer=True)
+        state = self.replayssm_layer(cursor=None)
         with self.assertRaises(NotImplementedError):
             conn._register_state("layer_0", state)
         self.assertEqual(conn._state_tensors, {})
+
+    def test_replayssm_cursor_must_cover_every_slot(self):
+        conn = self.make(producer=True)
+        state = self.replayssm_layer(self.torch.zeros((5,), dtype=self.torch.int32))
+        with self.assertRaises(ValueError):
+            conn._register_state("layer_0", state)
 
     def test_a_state_slot_that_is_not_one_run_is_refused(self):
         conn = self.make(producer=True)
@@ -1741,6 +1796,19 @@ class WritePathTest(unittest.TestCase):
         # Built once per consumer.
         conn.moriio_wrapper.build_session = None
         self.assertIs(conn._get_or_build_state_sessions("engine"), sessions)
+
+    def test_state_sessions_refuse_a_peer_without_the_replayssm_cursor(self):
+        # ReplaySSM on one side only: its slot carries a cursor the other side
+        # neither sends nor resets, so the pair is refused before any write.
+        conn = self.stateful_peer(
+            self.make(producer=True),
+            state_slot_bytes={"kda.k": 24, "kda.v": 128},
+            state_descs={"kda.k": b"k-theirs", "kda.v": b"v-theirs"},
+        )
+        conn._state_tensors["replayssm_write_pos"] = (b"c-ours", 4, None)
+        with self.assertRaises(ValueError):
+            conn._get_or_build_state_sessions("engine")
+        self.assertEqual(conn._built_state_sessions, {})
 
     def test_state_sessions_refuse_a_peer_with_different_state(self):
         descs = {"kda.k": b"k-theirs", "kda.v": b"v-theirs"}

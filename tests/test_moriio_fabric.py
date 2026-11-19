@@ -233,10 +233,12 @@ class StatePoolTest(unittest.TestCase):
         mori_io.make_fabric_mem_pool = lambda: made.append(object()) or made[-1]
         mori = types.ModuleType("mori")
         mori.io = mori_io
-        with mock.patch.dict(sys.modules, {"mori": mori, "mori.io": mori_io}):
-            with mock.patch.object(torch.cuda, "use_mem_pool", side_effect=lambda p: p):
-                first = fabric.fabric_state_pool()
-                second = fabric.fabric_state_pool()
+        with (
+            mock.patch.dict(sys.modules, {"mori": mori, "mori.io": mori_io}),
+            mock.patch.object(torch.cuda, "use_mem_pool", side_effect=lambda p: p),
+        ):
+            first = fabric.fabric_state_pool()
+            second = fabric.fabric_state_pool()
         self.assertEqual(len(made), 1)
         self.assertIs(first, made[0])
         self.assertIs(second, made[0])
@@ -276,6 +278,23 @@ class StateWiringTest(unittest.TestCase):
             "for session, size, local_offset, remote_offset in state_writes",
             fabric_branch,
         )
+
+    def test_both_linear_attention_builders_hand_over_the_replayssm_cursor(self):
+        import re
+
+        for path in (
+            "atom/model_ops/attentions/kimi_mla_gdn_attn.py",
+            "atom/model_ops/attentions/gdn_attn.py",
+        ):
+            source = (ROOT / path).read_text()
+            self.assertRegex(
+                source,
+                re.compile(
+                    r"replay_write_pos=\(\s*runner\.replayssm_write_pos"
+                    r" if self\.replayssm else None\s*\)"
+                ),
+                path,
+            )
 
     def test_the_state_pool_hook_reaches_the_model_runner(self):
         runner = (ROOT / "atom/model_engine/model_runner.py").read_text()
