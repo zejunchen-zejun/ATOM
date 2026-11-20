@@ -278,3 +278,38 @@ def test_change_log_names_the_hashes_behind_each_generation():
     assert 202 not in c.store.changed_since(middle)
     c.store.clear()
     assert c.store.changed_since(middle) is None
+
+
+def test_cold_first_offers_the_tier_the_colder_half_coldest_first(monkeypatch):
+    """ATOM_STATE_OFFLOAD_COLD_FIRST: nothing is queued at READY; each pass
+    offers the oldest READY images of the LRU's colder half, each once."""
+    monkeypatch.setenv("ATOM_STATE_OFFLOAD_COLD_FIRST", "1")
+    c = coordinator(num_units=12)
+    c.store._offload_sink = True
+    for h in (101, 202, 303, 404):
+        ready(c, h)
+    assert not c.store.store_backlog
+    stores = c.take_offload_stores(max_inflight=8)
+    assert [op.prefix_hash for op, _ in stores] == [101, 202]
+    for op, _ in stores:
+        c.release_offload_store_source(op)
+        c.settle_offload_store(op)
+    assert c.take_offload_stores(max_inflight=8) == []
+    # Two more READY images push 303 and 404 into the colder half.
+    c.unindex(101)
+    c.unindex(202)
+    ready(c, 505)
+    ready(c, 606)
+    stores = c.take_offload_stores(max_inflight=1)
+    assert [op.prefix_hash for op, _ in stores] == [303]
+
+
+def test_without_cold_first_every_ready_image_is_queued_in_order(monkeypatch):
+    monkeypatch.delenv("ATOM_STATE_OFFLOAD_COLD_FIRST", raising=False)
+    c = coordinator(num_units=12)
+    c.store._offload_sink = True
+    for h in (101, 202, 303, 404):
+        ready(c, h)
+    assert len(c.store.store_backlog) == 4
+    stores = c.take_offload_stores(max_inflight=8)
+    assert [op.prefix_hash for op, _ in stores] == [101, 202, 303, 404]
