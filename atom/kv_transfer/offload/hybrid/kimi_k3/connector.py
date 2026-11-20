@@ -271,14 +271,19 @@ class KimiK3OffloadConnector(DenseOffloadConnector):
         codec.bind_storage_manager(self._engine.storage_manager)
         # No index here: StateOffloadIndex lives in the engine process; both
         # directions report and the engine applies.
-        self._state_tier = StateOffloadTier(codec)
+        workers = max(1, envs.OFFLOAD_STATE_WORKERS)
+        self._state_tier = StateOffloadTier(
+            codec, max_workers=workers, staging_lanes=2 * workers
+        )
         logger.info(
             "kimi_k3 offload: state tier up, entry=%.2f MiB rank=%d, "
-            "sharing the paged-KV CPU pool, max_state_entries=%d, layout=%s",
+            "sharing the paged-KV CPU pool, max_state_entries=%d, layout=%s, "
+            "workers=%d",
             entry_bytes / (1 << 20),
             rank,
             codec._max_entries,
             layout_id,
+            workers,
         )
 
     # -- per-step ----------------------------------------------------------

@@ -1500,6 +1500,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # OFFLOAD_LOAD_WORKERS: its SLOT load path needs a serial load executor.
     "OFFLOAD_COPY_WORKERS": lambda: _int_env("OFFLOAD_COPY_WORKERS", 1),
     "OFFLOAD_LOAD_WORKERS": lambda: _int_env("OFFLOAD_LOAD_WORKERS", 1),
+    # Kimi-K3's state tier: threads in each of its store and load lanes, each
+    # with its own one-image GPU staging buffer, and twice as many staging
+    # slots shared by the two lanes. One store at a time per rank (the default)
+    # moves ~25 images a second; a PP8 prefill at c512 files ~50.
+    "OFFLOAD_STATE_WORKERS": lambda: _int_env("OFFLOAD_STATE_WORKERS", 1),
     # Running-plus-queued save bound. None means unset: the connector then
     # derives max(2, 2 * OFFLOAD_COPY_WORKERS) and the scheduler's state tier
     # uses 2. A kv_connector_extra_config "max_pending_saves" takes precedence.
