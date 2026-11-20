@@ -418,6 +418,7 @@ def test_offload_env_vars_are_documented():
         ("OFFLOAD_PUBLICATION_POLL_INTERVAL_S", 0.01),
         ("OFFLOAD_COPY_WORKERS", 1),
         ("OFFLOAD_LOAD_WORKERS", 1),
+        ("OFFLOAD_STATE_WORKERS", 1),
         ("OFFLOAD_MIN_SAVE_TOKENS", 8192),
     ],
 )
@@ -427,7 +428,9 @@ def test_empty_offload_knob_reads_as_its_default(monkeypatch, name, default):
     assert getattr(_get_envs(), name) == default
 
 
-@pytest.mark.parametrize("name", ["OFFLOAD_COPY_WORKERS", "OFFLOAD_LOAD_WORKERS"])
+@pytest.mark.parametrize(
+    "name", ["OFFLOAD_COPY_WORKERS", "OFFLOAD_LOAD_WORKERS", "OFFLOAD_STATE_WORKERS"]
+)
 def test_malformed_offload_worker_width_names_the_variable(monkeypatch, name):
     monkeypatch.setenv(name, "two")
     with pytest.raises(ValueError, match=f"{name} must be an integer"):
