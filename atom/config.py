@@ -2674,30 +2674,53 @@ class Config:
             )
 
     def _check_multinode_pp_offload(self) -> None:
-        """Refuse a KV offload tier when the pipeline spans nodes.
+        """Refuse a KV offload tier when the pipeline spans nodes, unless it
+        reaches everything it asks.
 
-        Each assumes that every stage runs on the head's host. An LMCache
+        Each tier assumes that every stage runs on the head's host. An LMCache
         tier's scheduler asks every worker's lookup server, which listens on
         an ipc:// path of its own host. A store-backed tier times a save from
         the head's CLOCK_MONOTONIC, which a worker on another host cannot
-        read, so that worker's saves read nothing. Called once
-        `kv_transfer_config` is parsed.
+        read, so that worker's saves read nothing.
+
+        In-process LMCache (`lmcache_offload`) runs when its lookup servers are
+        the head host's workers (`LMCACHE_LOOKUP_SERVER_WORKER_IDS`, or
+        `lmcache.lookup_server_worker_ids` in the connector's extra config).
+        Every stage still stores and loads its own layers in its own process
+        and on its own host's DRAM; a load any stage misses fails across the
+        pipeline (`PPKVAggregator`) and is recomputed, so a stage on another
+        host evicting a chunk the head's still holds costs a recompute, never
+        a wrong load. Kimi-K3's state tier keeps its index in the engine and
+        asks no lookup server. Called once `kv_transfer_config` is parsed.
         """
         if not self.is_multinode_pp:
             return
+        leaves = KVConnectorFactory.leaf_connectors(self) or ()
         offload = sorted(
-            {
-                name
-                for name, _ in KVConnectorFactory.leaf_connectors(self) or ()
-                if KVConnectorFactory.is_offload_backend(name)
-            }
+            {name for name, _ in leaves if KVConnectorFactory.is_offload_backend(name)}
         )
-        if offload:
+        if not offload:
+            return
+        if offload == ["lmcache_offload"]:
+            # Worker ids are `pp_aware_rank_and_world`'s, stage-major: the head
+            # host runs the first pp_size_local stages.
+            head = self.pp_size_local * max(1, int(self.tensor_parallel_size or 1))
+            sub = next(cfg for name, cfg in leaves if name == "lmcache_offload")
+            ids = _lmcache_lookup_worker_ids(getattr(sub, "kv_transfer_config", None))
+            if ids and all(0 <= i < head for i in ids):
+                return
             raise ValueError(
-                "pipeline parallelism across nodes does not support a KV offload "
-                f"tier ({', '.join(offload)}): its lookups and saves assume every "
-                "stage runs on the head's host"
+                "pipeline parallelism across nodes runs lmcache_offload only with "
+                "its lookup servers on the head's host: set "
+                f"LMCACHE_LOOKUP_SERVER_WORKER_IDS to worker ids in [0, {head}), "
+                f"e.g. {','.join(str(i) for i in range(head))} (got "
+                f"{ids if ids else 'every worker'})"
             )
+        raise ValueError(
+            "pipeline parallelism across nodes does not support a KV offload "
+            f"tier ({', '.join(offload)}): its lookups and saves assume every "
+            "stage runs on the head's host"
+        )
 
     @property
     def capture_sizes(self) -> list[int]:
@@ -4052,3 +4075,23 @@ def use_custom_atom_config(custom_atom_config: Config):
         yield custom_atom_config
     finally:
         _current_atom_config = prev
+
+
+def _lmcache_lookup_worker_ids(kv_transfer_config: Any) -> list[int]:
+    """The LMCache lookup-server worker ids an offload connector will run with:
+    its extra config's ``lmcache.lookup_server_worker_ids``, else
+    ``LMCACHE_LOOKUP_SERVER_WORKER_IDS`` (comma-separated, as LMCache parses
+    it); empty for LMCache's default, every worker."""
+    extra = {}
+    if isinstance(kv_transfer_config, dict):
+        extra = kv_transfer_config.get("kv_connector_extra_config") or {}
+    value = extra.get("lmcache.lookup_server_worker_ids")
+    if value is None:
+        value = os.getenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS")
+    if value is None:
+        return []
+    if isinstance(value, int):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [int(v) for v in value]
+    return [int(p) for p in str(value).strip("[] ").split(",") if p.strip()]
