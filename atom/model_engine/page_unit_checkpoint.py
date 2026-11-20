@@ -303,6 +303,8 @@ class CheckpointRecord:
     pin_count: int = 0
     # Restores begun from this image; see `PageUnitCheckpointStore.begin_restore`.
     restores: int = 0
+    # Handed to the CPU tier by the cold-first nomination; it is not offered again.
+    offered: bool = False
 
 
 @dataclass(frozen=True)
@@ -365,6 +367,9 @@ class PageUnitCheckpointStore:
         # Whether an image's first restore refreshes its LRU place, or only a
         # later one does (ATOM_STATE_CHECKPOINT_REFRESH_FIRST_RESTORE).
         self._refresh_first_restore = envs.ATOM_STATE_CHECKPOINT_REFRESH_FIRST_RESTORE
+        # Offer the CPU tier the coldest images rather than each new one
+        # (ATOM_STATE_OFFLOAD_COLD_FIRST); see `_take_cold_offload_stores`.
+        self._offload_cold_first = envs.ATOM_STATE_OFFLOAD_COLD_FIRST
         self._inflight_stores: list[int] = []
         self._queued_restores: list[tuple[int, CheckpointRestoreOp]] = []
         self._inflight_restores: list[int] = []
@@ -722,7 +727,7 @@ class PageUnitCheckpointStore:
         `_next_victim` may still spend it. The pool never waits on the CPU tier.
         Dedup is free -- `begin_store` refuses a hash it already holds.
         """
-        if not self._offload_sink:
+        if not self._offload_sink or self._offload_cold_first:
             return
         self._offload_ready.append(checkpoint_id)
         # Bound the backlog (see `_offload_backlog_cap`). popleft-on-overflow
@@ -768,6 +773,8 @@ class PageUnitCheckpointStore:
         `_hash_in_flight` refuses that -- but they may follow one another
         closely enough that the earlier one's report is still on the wire.
         """
+        if self._offload_cold_first:
+            return self._take_cold_offload_stores(max_inflight)
         out: list[tuple[StateStoreOperationId, tuple[int, ...]]] = []
         # Nominations whose hash is transiently in flight: held aside and
         # re-queued after the pass, NOT dropped (see below).
@@ -802,6 +809,41 @@ class PageUnitCheckpointStore:
         # back at the front, preserving their original oldest-first order.
         if deferred:
             self._offload_ready.extendleft(reversed(deferred))
+        return out
+
+    def _take_cold_offload_stores(
+        self, max_inflight: int
+    ) -> list[tuple[StateStoreOperationId, tuple[int, ...]]]:
+        """`take_offload_stores` under ATOM_STATE_OFFLOAD_COLD_FIRST: the coldest
+        READY images of the LRU's colder half not yet offered, coldest first.
+
+        Offered at READY, every image reaches the CPU tier while it is still
+        the newest in HBM, and a tier smaller than the store then keeps a copy
+        of what HBM holds anyway: its LRU spends the oldest stores first, which
+        are the images HBM spends next. Offered from the cold end, the tier
+        receives each image shortly before HBM evicts it and holds what HBM no
+        longer does, so the two add up. The hot half is left alone: an image
+        there may be read or spent before it would ever need the tier. Each
+        image is offered once.
+        """
+        out: list[tuple[StateStoreOperationId, tuple[int, ...]]] = []
+        window = len(self._lru) // 2
+        for scanned, checkpoint_id in enumerate(self._lru):
+            if scanned >= window or len(self._offload_pins) >= max_inflight:
+                break
+            record = self.records.get(checkpoint_id)
+            if (
+                record is None
+                or record.state != READY
+                or record.offered
+                or record.pin_count
+                or self._hash_in_flight(record.prefix_hash)
+            ):
+                continue
+            record.offered = True
+            out.append(
+                self._pin_offload_source(checkpoint_id, timeout_reclaimable=True)
+            )
         return out
 
     def acquire_checkpoint_source(

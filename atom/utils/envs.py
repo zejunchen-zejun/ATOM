@@ -522,6 +522,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "ATOM_STATE_CHECKPOINT_REFRESH_FIRST_RESTORE": lambda: (
         os.getenv("ATOM_STATE_CHECKPOINT_REFRESH_FIRST_RESTORE", "1") == "1"
     ),
+    # Set to 1 so a PAGE-backed state checkpoint store with a CPU tier offers
+    # the tier its coldest images (the colder half of its LRU, coldest first)
+    # instead of every image as it becomes READY. Offered at READY, a tier
+    # smaller than the store holds copies of what HBM holds anyway; offered
+    # just before HBM spends them, the two tiers' images add up.
+    "ATOM_STATE_OFFLOAD_COLD_FIRST": lambda: (
+        os.getenv("ATOM_STATE_OFFLOAD_COLD_FIRST", "0") == "1"
+    ),
     # Tokens kept between the prompt-end state checkpoint and the prompt end,
     # at least; the backend's own successor room still applies when it is
     # larger. A chat template rewrites the tail of an assistant turn when the
