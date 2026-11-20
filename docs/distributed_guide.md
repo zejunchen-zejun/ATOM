@@ -841,10 +841,20 @@ must reach those addresses too.
 - Every stage's TP group stays on its node (a TP group across nodes is refused
   with PP), and DP, DP-attention, PCP, RapidServe and `--fake-eplb` are
   refused.
-- A KV offload tier is refused. An LMCache tier's scheduler asks every
-  worker's lookup server, which listens on an `ipc://` path of its own host, and
-  a store-backed tier times each save from the head's `CLOCK_MONOTONIC`, which a
-  worker on another host cannot read.
+- A KV offload tier is refused, except in-process LMCache (`lmcache_offload`)
+  with its lookup servers on the head's host. An LMCache tier's scheduler asks
+  every worker's lookup server, which listens on an `ipc://` path of its own
+  host, and a store-backed tier times each save from the head's
+  `CLOCK_MONOTONIC`, which a worker on another host cannot read; `lmcache_mp`
+  refuses PP on its own. For `lmcache_offload`, set
+  `LMCACHE_LOOKUP_SERVER_WORKER_IDS` (or `lmcache.lookup_server_worker_ids` in
+  `kv_connector_extra_config`) to worker ids the head's host runs: global ranks
+  `0 .. pipeline_parallel_size_local * tp - 1`, e.g. `0,1,2,3` for PP8 x TP1 on
+  two 4-GPU nodes. Every stage still stores and loads its own layers in its own
+  host's DRAM; a load any stage misses fails across the pipeline
+  (`PPKVAggregator`) and is recomputed, so a chunk a stage on another host
+  evicted costs a recompute, never a wrong load. Kimi-K3's state tier keeps its
+  index in the engine and asks no lookup server.
 - Set `GLOO_SOCKET_IFNAME` / `NCCL_SOCKET_IFNAME` where the default interface is
   not the one the nodes reach each other on, and the same environment on every
   node: `ATOM_PP_SEND_ALLGATHER`, for one, decides what a stage sends the next,

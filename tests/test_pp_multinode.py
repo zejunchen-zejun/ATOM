@@ -231,17 +231,21 @@ def test_a_plugin_run_is_one_whole_pipeline_on_one_node():
 _MOONCAKE_PRODUCER = {"kv_connector": "mooncake", "kv_role": "kv_producer"}
 
 
-@pytest.mark.parametrize("tier", ["lmcache_offload", "mooncake_store", "lmcache_mp"])
+def _offload_config(tier, multi, extra=None):
+    offload = {"kv_connector": tier, "kv_role": "offload"}
+    if extra is not None:
+        offload["kv_connector_extra_config"] = extra
+    if multi:
+        return {"kv_connector": "multi", "connectors": [_MOONCAKE_PRODUCER, offload]}
+    return offload
+
+
+@pytest.mark.parametrize("tier", ["mooncake_store", "lmcache_mp"])
 @pytest.mark.parametrize("multi", [False, True])
 def test_a_pipeline_across_nodes_refuses_a_kv_offload_tier(tier, multi):
-    # An LMCache tier's lookups reach its workers over ipc:// paths, and a
+    # An LMCache MP server's lookups reach the GPUs of its own host, and a
     # store tier times its saves on the head's clock: neither crosses a node.
-    offload = {"kv_connector": tier, "kv_role": "offload"}
-    kv_transfer_config = (
-        {"kv_connector": "multi", "connectors": [_MOONCAKE_PRODUCER, offload]}
-        if multi
-        else offload
-    )
+    kv_transfer_config = _offload_config(tier, multi)
     for start in (0, 4):
         config = _config(4, start, kv_transfer_config=kv_transfer_config)
         with pytest.raises(ValueError, match=rf"KV offload tier \({tier}\)"):
@@ -252,6 +256,49 @@ def test_a_pipeline_across_nodes_refuses_a_kv_offload_tier(tier, multi):
     )._check_multinode_pp_offload()
 
 
+@pytest.mark.parametrize("multi", [False, True])
+def test_in_process_lmcache_across_nodes_needs_its_lookups_on_the_head_host(
+    multi, monkeypatch
+):
+    # Its lookup servers listen on ipc:// paths of their own host, so the
+    # engine on the head's host reaches only the head's workers: stages 0-3
+    # of PP8 x TP1, worker ids 0-3.
+    monkeypatch.delenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS", raising=False)
+    kv_transfer_config = _offload_config("lmcache_offload", multi)
+    for start in (0, 4):
+        config = _config(4, start, kv_transfer_config=kv_transfer_config)
+        with pytest.raises(
+            ValueError, match=r"LMCACHE_LOOKUP_SERVER_WORKER_IDS.*0,1,2,3"
+        ):
+            config._check_multinode_pp_offload()
+    for ids in ("0,1,2,3", "0", "[0, 3]"):
+        monkeypatch.setenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS", ids)
+        for start in (0, 4):
+            _config(
+                4, start, kv_transfer_config=kv_transfer_config
+            )._check_multinode_pp_offload()
+    for ids in ("0,1,2,3,4", "4,5,6,7"):
+        monkeypatch.setenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS", ids)
+        with pytest.raises(ValueError, match=r"worker ids in \[0, 4\)"):
+            _config(
+                4, 0, kv_transfer_config=kv_transfer_config
+            )._check_multinode_pp_offload()
+    # The connector's extra config wins over the environment, as in LMCache.
+    monkeypatch.setenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS", "4")
+    extra = {"lmcache.lookup_server_worker_ids": [0, 1]}
+    _config(
+        4, 0, kv_transfer_config=_offload_config("lmcache_offload", multi, extra)
+    )._check_multinode_pp_offload()
+    # PP4 x TP2 over two hosts: the head's host runs stages 0-1, workers 0-3
+    # (stage-major: pp_rank * tp + tp_rank).
+    tp2 = {"pp": 4, "tp": 2, "kv_transfer_config": kv_transfer_config}
+    monkeypatch.setenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS", "0,3")
+    _config(2, 0, **tp2)._check_multinode_pp_offload()
+    monkeypatch.setenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS", "0,4")
+    with pytest.raises(ValueError, match=r"worker ids in \[0, 4\)"):
+        _config(2, 0, **tp2)._check_multinode_pp_offload()
+
+
 def test_a_pipeline_across_nodes_keeps_its_pd_transport():
     for start in (0, 4):
         config = _config(4, start, kv_transfer_config=_MOONCAKE_PRODUCER)
@@ -259,9 +306,10 @@ def test_a_pipeline_across_nodes_keeps_its_pd_transport():
         _config(4, start)._check_multinode_pp_offload()
 
 
-def test_config_refuses_an_offload_tier_before_loading_anything(tmp_path):
+def test_config_refuses_an_offload_tier_before_loading_anything(tmp_path, monkeypatch):
     # Config.__post_init__ runs it once the CLI's JSON is parsed, still ahead
     # of the model and AITER.
+    monkeypatch.delenv("LMCACHE_LOOKUP_SERVER_WORKER_IDS", raising=False)
     (tmp_path / "config.json").write_text(
         '{"architectures": ["LlamaForCausalLM"], "model_type": "llama", '
         '"num_hidden_layers": 8}'
@@ -273,7 +321,9 @@ def test_config_refuses_an_offload_tier_before_loading_anything(tmp_path):
         pipeline_parallel_rank=4,
         pipeline_parallel_node_ips=list(NODE_IPS),
     )
-    with pytest.raises(ValueError, match=r"KV offload tier \(lmcache_offload\)"):
+    with pytest.raises(
+        ValueError, match=r"lmcache_offload only with its lookup servers"
+    ):
         Config(
             model=str(tmp_path),
             pipeline_parallel_size=8,
