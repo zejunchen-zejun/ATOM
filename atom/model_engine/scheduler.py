@@ -4068,7 +4068,12 @@ class Scheduler:
             "cached": cached,
             "offload": offload,
             "demand": getattr(seq, "checkpoint_demand_pos", 0),
+            "end": getattr(seq, "checkpoint_end_pos", 0),
             "replays_hit": bool(seq.replays_hit),
+            # The agentic client's X-Session-ID: links a conversation's turns,
+            # so a turn's resume point can be read against the anchors its
+            # earlier turns filed at their `end`.
+            "session": getattr(seq, "dp_session_id", None),
         }
         path = f"{envs.ATOM_PREFIX_CACHE_TRACE}.{os.getpid()}.jsonl"
         with open(path, "a") as trace:
