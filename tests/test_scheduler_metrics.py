@@ -763,3 +763,4 @@ def test_prefix_cache_trace_writes_one_line_per_prefill(tmp_path, monkeypatch):
     assert row["seq"] == seq.id and row["full"] == len(prompt)
     assert row["full"] >= row["reusable"] >= row["compressed"] >= row["wanted"]
     assert row["wanted"] >= row["cached"] == 0 and row["offload"] == 0
+    assert {"end", "session"} <= row.keys()
