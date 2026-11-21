@@ -549,6 +549,18 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "ATOM_STATE_CHECKPOINT_REFRESH_FIRST_RESTORE": lambda: (
         os.getenv("ATOM_STATE_CHECKPOINT_REFRESH_FIRST_RESTORE", "1") == "1"
     ),
+    # Set to 1, with ATOM_STATE_CHECKPOINT_REFRESH_FIRST_RESTORE=0, so that an
+    # image's first restore moves it to the cold end of the store's LRU: a
+    # session's anchor, read by its next turn -- which files the anchor that
+    # supersedes it -- is spent before every image not yet read. Left where it
+    # was filed, it still outlives the live anchors filed before it, so a
+    # session whose turn runs longer than the store's turnover loses its newest
+    # anchor (Kimi-K3 PP8 1P1D c1024, 11-21: 15% of follow-up turns resumed from
+    # an older anchor, 43% of the prefill's recompute). An image read a second
+    # time is shared and refreshed as before.
+    "ATOM_STATE_CHECKPOINT_DEMOTE_FIRST_RESTORE": lambda: (
+        os.getenv("ATOM_STATE_CHECKPOINT_DEMOTE_FIRST_RESTORE", "0") == "1"
+    ),
     # Set to 1 so a PAGE-backed state checkpoint store with a CPU tier offers
     # the tier its coldest images (the colder half of its LRU, coldest first)
     # instead of every image as it becomes READY. Offered at READY, a tier
